@@ -207,8 +207,7 @@ for store_id, year, month, file, file_path in audit_entries:
 
 # ✅ Populate medians
 # Store-monthly median
-for row in cursor.execute("SELECT store_id, year, month FROM audits GROUP BY store_id, year, month").fetchall():
-    store_id, year, month = row
+for store_id, year, month in cursor.execute("SELECT store_id, year, month FROM audits GROUP BY store_id, year, month").fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
         FROM scores sc
@@ -220,8 +219,14 @@ for row in cursor.execute("SELECT store_id, year, month FROM audits GROUP BY sto
                    (store_id, year, month, med))
 
 # Category-store median
-for row in cursor.execute("SELECT s.store_id, c.category FROM scores sc JOIN audits a ON sc.audit_id=a.audit_id JOIN stores s ON a.store_id=s.store_id JOIN criteria c ON sc.criteria_id=c.criteria_id GROUP BY s.store_id, c.category").fetchall():
-    store_id, category = row
+for store_id, category in cursor.execute("""
+    SELECT s.store_id, c.category
+    FROM scores sc
+    JOIN audits a ON sc.audit_id=a.audit_id
+    JOIN stores s ON a.store_id=s.store_id
+    JOIN criteria c ON sc.criteria_id=c.criteria_id
+    GROUP BY s.store_id, c.category
+""").fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
         FROM scores sc
@@ -234,8 +239,12 @@ for row in cursor.execute("SELECT s.store_id, c.category FROM scores sc JOIN aud
                    (store_id, category, med))
 
 # Category-global median
-for row in cursor.execute("SELECT c.category FROM scores sc JOIN criteria c ON sc.criteria_id=c.criteria_id GROUP BY c.category").fetchall():
-    category = row[0]
+for (category,) in cursor.execute("""
+    SELECT c.category
+    FROM scores sc
+    JOIN criteria c ON sc.criteria_id=c.criteria_id
+    GROUP BY c.category
+""").fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
         FROM scores sc
@@ -244,4 +253,8 @@ for row in cursor.execute("SELECT c.category FROM scores sc JOIN criteria c ON s
     """, (category,)).fetchall()]
     med = median(scores)
     cursor.execute("INSERT INTO category_global_median (category, median_score) VALUES (?,?)",
-                   (category
+                   (category, med))
+
+conn.commit()
+conn.close()
+print("Audit data imported.")
