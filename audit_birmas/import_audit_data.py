@@ -2,7 +2,8 @@ import os
 import sqlite3
 import pandas as pd
 
-root_folder = "D:\\audit-dashboard\\audit_birmas"
+# Adjust path for your droplet
+root_folder = "/root/audit_birmas"
 db_path = os.path.join(root_folder, "audit_birmas.db")
 
 conn = sqlite3.connect(db_path)
@@ -10,6 +11,10 @@ cursor = conn.cursor()
 
 # Tables
 cursor.executescript("""
+DROP TABLE IF EXISTS store_monthly_avg;
+DROP TABLE IF EXISTS category_store_avg;
+DROP TABLE IF EXISTS category_global_avg;
+
 CREATE TABLE IF NOT EXISTS stores (
     store_id INTEGER PRIMARY KEY,
     name TEXT UNIQUE NOT NULL
@@ -142,8 +147,8 @@ for store_name in sorted(os.listdir(root_folder)):
                     continue
                 audit_entries.append((store_id, int(year), norm_month, file, os.path.join(month_path, file)))
 
-# ✅ Sort audits before inserting
-audit_entries.sort(key=lambda x: (x[0], x[1], x[2]))
+# ✅ Sort audits before inserting (year → month → store)
+audit_entries.sort(key=lambda x: (x[1], x[2], x[0]))
 
 # Insert audits in order
 for store_id, year, month, file, file_path in audit_entries:
@@ -205,9 +210,15 @@ for store_id, year, month, file, file_path in audit_entries:
     """, (audit_id, len(df), passed_count, not_null_count,
           round((passed_count / not_null_count), 2) if not_null_count > 0 else None))
 
-# ✅ Populate medians
+# ✅ Populate medians (restricted to 2025, months 7–12)
 # Store-monthly median
-for store_id, year, month in cursor.execute("SELECT store_id, year, month FROM audits GROUP BY store_id, year, month").fetchall():
+for store_id, year, month in cursor.execute("""
+    SELECT store_id, year, month
+    FROM audits
+    WHERE year = 2025 AND month BETWEEN 7 AND 12
+    GROUP BY year, month, store_id
+    ORDER BY year, month, store_id
+""").fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
         FROM scores sc
@@ -228,8 +239,10 @@ for store_id, category in cursor.execute("""
     JOIN audits a ON sc.audit_id=a.audit_id
     JOIN stores s ON a.store_id=s.store_id
     JOIN criteria c ON sc.criteria_id=c.criteria_id
-    WHERE LOWER(c.category) != 'maintenance'
+    WHERE a.year = 2025 AND a.month BETWEEN 7 AND 12
+      AND LOWER(c.category) != 'maintenance'
     GROUP BY s.store_id, c.category
+    ORDER BY c.category, s.store_id
 """).fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
@@ -237,6 +250,7 @@ for store_id, category in cursor.execute("""
         JOIN audits a ON sc.audit_id=a.audit_id
         JOIN criteria c ON sc.criteria_id=c.criteria_id
         WHERE a.store_id=? AND c.category=? 
+          AND a.year=2025 AND a.month BETWEEN 7 AND 12
           AND sc.score IS NOT NULL
           AND LOWER(c.category) != 'maintenance'
     """, (store_id, category)).fetchall()]
@@ -248,15 +262,20 @@ for store_id, category in cursor.execute("""
 for (category,) in cursor.execute("""
     SELECT c.category
     FROM scores sc
+    JOIN audits a ON sc.audit_id=a.audit_id
     JOIN criteria c ON sc.criteria_id=c.criteria_id
-    WHERE LOWER(c.category) != 'maintenance'
+    WHERE a.year = 2025 AND a.month BETWEEN 7 AND 12
+      AND LOWER(c.category) != 'maintenance'
     GROUP BY c.category
+    ORDER BY c.category
 """).fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
         FROM scores sc
+        JOIN audits a ON sc.audit_id=a.audit_id
         JOIN criteria c ON sc.criteria_id=c.criteria_id
         WHERE c.category=? 
+          AND a.year=2025 AND a.month BETWEEN 7 AND 12
           AND sc.score IS NOT NULL
           AND LOWER(c.category) != 'maintenance'
     """, (category,)).fetchall()]
@@ -266,4 +285,4 @@ for (category,) in cursor.execute("""
 
 conn.commit()
 conn.close()
-print("Audit data imported.")
+print("Audit data imported succesfully.")
