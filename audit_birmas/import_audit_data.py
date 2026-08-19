@@ -84,9 +84,9 @@ DELETE FROM audits;
 DELETE FROM scores;
 DELETE FROM criteria;
 DELETE FROM audit_summary;
-DELETE FROM store_monthly_avg;
-DELETE FROM category_store_avg;
-DELETE FROM category_global_avg;
+DELETE FROM store_monthly_median;
+DELETE FROM category_store_median;
+DELETE FROM category_global_median;
 """)
 
 # Month map
@@ -100,6 +100,16 @@ def normalize_month(month_str):
     parts = month_str.strip().split()
     month_name = parts[0]
     return month_map.get(month_name, None)
+
+def median(values):
+    if not values:
+        return None
+    values = sorted(values)
+    mid = len(values) // 2
+    if len(values) % 2 == 0:
+        return round((values[mid - 1] + values[mid]) / 2, 2)
+    else:
+        return round(values[mid], 2)
 
 # Collect audits first
 audit_entries = []
@@ -152,7 +162,8 @@ for store_id, year, month, file, file_path in audit_entries:
         category = str(row.get("Category", "")).strip()
         name = str(row.get("Criteria", "")).strip()
 
-        if category.lower() == "absensi":
+        # Skip Absensi and Maintenance
+        if category.lower() in ["absensi", "maintenance"]:
             continue
 
         passing_grade = row.get("Passing Grade", None)
@@ -194,36 +205,43 @@ for store_id, year, month, file, file_path in audit_entries:
     """, (audit_id, len(df), passed_count, not_null_count,
           round((passed_count / not_null_count), 2) if not_null_count > 0 else None))
 
-# Populate averages (rounded to 2 decimals)
-cursor.execute("""
-INSERT INTO store_monthly_avg (store_id, year, month, avg_score)
-SELECT a.store_id, a.year, a.month, ROUND(AVG(sc.score), 2)
-FROM scores sc
-JOIN audits a ON sc.audit_id = a.audit_id
-GROUP BY a.store_id, a.year, a.month
-ORDER BY a.store_id, a.year, a.month;
-""")
+# ✅ Populate medians
+# Store-monthly median
+for row in cursor.execute("SELECT store_id, year, month FROM audits GROUP BY store_id, year, month").fetchall():
+    store_id, year, month = row
+    scores = [r[0] for r in cursor.execute("""
+        SELECT sc.score
+        FROM scores sc
+        JOIN audits a ON sc.audit_id = a.audit_id
+        WHERE a.store_id=? AND a.year=? AND a.month=? AND sc.score IS NOT NULL
+    """, (store_id, year, month)).fetchall()]
+    med = median(scores)
+    cursor.execute("INSERT INTO store_monthly_median (store_id, year, month, median_score) VALUES (?,?,?,?)",
+                   (store_id, year, month, med))
 
-cursor.execute("""
-INSERT INTO category_store_avg (store_id, category, avg_score)
-SELECT s.store_id, c.category, ROUND(AVG(sc.score), 2)
-FROM scores sc
-JOIN audits a ON sc.audit_id = a.audit_id
-JOIN stores s ON a.store_id = s.store_id
-JOIN criteria c ON sc.criteria_id = c.criteria_id
-GROUP BY s.store_id, c.category
-ORDER BY s.store_id, c.category;
-""")
+# Category-store median
+for row in cursor.execute("SELECT s.store_id, c.category FROM scores sc JOIN audits a ON sc.audit_id=a.audit_id JOIN stores s ON a.store_id=s.store_id JOIN criteria c ON sc.criteria_id=c.criteria_id GROUP BY s.store_id, c.category").fetchall():
+    store_id, category = row
+    scores = [r[0] for r in cursor.execute("""
+        SELECT sc.score
+        FROM scores sc
+        JOIN audits a ON sc.audit_id=a.audit_id
+        JOIN criteria c ON sc.criteria_id=c.criteria_id
+        WHERE a.store_id=? AND c.category=? AND sc.score IS NOT NULL
+    """, (store_id, category)).fetchall()]
+    med = median(scores)
+    cursor.execute("INSERT INTO category_store_median (store_id, category, median_score) VALUES (?,?,?)",
+                   (store_id, category, med))
 
-cursor.execute("""
-INSERT INTO category_global_avg (category, avg_score)
-SELECT c.category, ROUND(AVG(sc.score), 2)
-FROM scores sc
-JOIN criteria c ON sc.criteria_id = c.criteria_id
-GROUP BY c.category
-ORDER BY c.category;
-""")
-
-conn.commit()
-conn.close()
-print("Audit data wiped, re-imported, sorted, and rounded to 2 decimals with safe float conversion.")
+# Category-global median
+for row in cursor.execute("SELECT c.category FROM scores sc JOIN criteria c ON sc.criteria_id=c.criteria_id GROUP BY c.category").fetchall():
+    category = row[0]
+    scores = [r[0] for r in cursor.execute("""
+        SELECT sc.score
+        FROM scores sc
+        JOIN criteria c ON sc.criteria_id=c.criteria_id
+        WHERE c.category=? AND sc.score IS NOT NULL
+    """, (category,)).fetchall()]
+    med = median(scores)
+    cursor.execute("INSERT INTO category_global_median (category, median_score) VALUES (?,?)",
+                   (category
