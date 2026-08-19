@@ -212,7 +212,10 @@ for store_id, year, month in cursor.execute("SELECT store_id, year, month FROM a
         SELECT sc.score
         FROM scores sc
         JOIN audits a ON sc.audit_id = a.audit_id
-        WHERE a.store_id=? AND a.year=? AND a.month=? AND sc.score IS NOT NULL
+        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        WHERE a.store_id=? AND a.year=? AND a.month=? 
+          AND sc.score IS NOT NULL
+          AND LOWER(c.category) != 'maintenance'
     """, (store_id, year, month)).fetchall()]
     med = median(scores)
     cursor.execute("INSERT INTO store_monthly_median (store_id, year, month, median_score) VALUES (?,?,?,?)",
@@ -225,6 +228,7 @@ for store_id, category in cursor.execute("""
     JOIN audits a ON sc.audit_id=a.audit_id
     JOIN stores s ON a.store_id=s.store_id
     JOIN criteria c ON sc.criteria_id=c.criteria_id
+    WHERE LOWER(c.category) != 'maintenance'
     GROUP BY s.store_id, c.category
 """).fetchall():
     scores = [r[0] for r in cursor.execute("""
@@ -232,7 +236,9 @@ for store_id, category in cursor.execute("""
         FROM scores sc
         JOIN audits a ON sc.audit_id=a.audit_id
         JOIN criteria c ON sc.criteria_id=c.criteria_id
-        WHERE a.store_id=? AND c.category=? AND sc.score IS NOT NULL
+        WHERE a.store_id=? AND c.category=? 
+          AND sc.score IS NOT NULL
+          AND LOWER(c.category) != 'maintenance'
     """, (store_id, category)).fetchall()]
     med = median(scores)
     cursor.execute("INSERT INTO category_store_median (store_id, category, median_score) VALUES (?,?,?)",
@@ -243,13 +249,16 @@ for (category,) in cursor.execute("""
     SELECT c.category
     FROM scores sc
     JOIN criteria c ON sc.criteria_id=c.criteria_id
+    WHERE LOWER(c.category) != 'maintenance'
     GROUP BY c.category
 """).fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
         FROM scores sc
         JOIN criteria c ON sc.criteria_id=c.criteria_id
-        WHERE c.category=? AND sc.score IS NOT NULL
+        WHERE c.category=? 
+          AND sc.score IS NOT NULL
+          AND LOWER(c.category) != 'maintenance'
     """, (category,)).fetchall()]
     med = median(scores)
     cursor.execute("INSERT INTO category_global_median (category, median_score) VALUES (?,?)",
