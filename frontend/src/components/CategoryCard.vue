@@ -9,12 +9,6 @@
     <div class="chart-row">
       <canvas ref="passChart"></canvas>
     </div>
-
-    <div class="legend">
-      <span v-for="s in visibleStores" :key="s" class="legend-item">
-        <input type="checkbox" v-model="visibleStores" :value="s" /> {{ stores[s] }}
-      </span>
-    </div>
   </div>
 </template>
 
@@ -27,7 +21,7 @@ Chart.register(...registerables)
 export default {
   props: {
     category: { type: String, required: true },
-    stores: { type: Object, required: true },
+    storesMap: { type: Object, required: true },
     selectedStores: { type: Array, required: true },
     useNormalized: { type: Boolean, default: false }
   },
@@ -36,32 +30,6 @@ export default {
     const passChart = ref(null)
     let medianInstance = null
     let passInstance = null
-    const visibleStores = ref([...props.selectedStores])
-
-    async function fetchSeries(metric='raw') {
-      const storesParam = visibleStores.value.join(',')
-      const url = `/api/category/${encodeURIComponent(props.category)}/monthly?stores=${storesParam}&metric=${metric}`
-      const res = await axios.get(url)
-      return res.data // {store_id: [{x,y}, ...], ...}
-    }
-
-    async function fetchPass() {
-      const storesParam = visibleStores.value.join(',')
-      const url = `/api/category/${encodeURIComponent(props.category)}/passrate?stores=${storesParam}`
-      const res = await axios.get(url)
-      return res.data
-    }
-
-    function buildDatasets(series, colorFn) {
-      return Object.keys(series).map((storeId, idx) => ({
-        label: props.stores[storeId] || `Store ${storeId}`,
-        data: series[storeId],
-        borderColor: colorFn(idx),
-        backgroundColor: colorFn(idx, 0.15),
-        tension: 0.2,
-        spanGaps: true
-      }))
-    }
 
     function colorFn(i, alpha=1) {
       const palette = [
@@ -75,6 +43,43 @@ export default {
       return palette[i % palette.length].replace('ALPHA', alpha)
     }
 
+    function rowsToSeries(rows) {
+      const out = {}
+      for (const r of rows) {
+        const storeId = String(r[0])
+        const label = `${String(r[1]).padStart(4,'0')}-${String(r[2]).padStart(2,'0')}`
+        if (!out[storeId]) out[storeId] = []
+        out[storeId].push({ x: label, y: r[3] === null ? null : Number(r[3]) })
+      }
+      for (const k in out) out[k].sort((a,b) => a.x.localeCompare(b.x))
+      return out
+    }
+
+    async function fetchSeries(metric='raw') {
+      const storesParam = props.selectedStores.join(',')
+      const url = `/api/category/${encodeURIComponent(props.category)}/monthly?stores=${storesParam}&metric=${metric}`
+      const res = await axios.get(url)
+      return res.data
+    }
+
+    async function fetchPass() {
+      const storesParam = props.selectedStores.join(',')
+      const url = `/api/category/${encodeURIComponent(props.category)}/passrate?stores=${storesParam}`
+      const res = await axios.get(url)
+      return res.data
+    }
+
+    function buildDatasets(series, colorFn) {
+      return Object.keys(series).map((storeId, idx) => ({
+        label: props.storesMap[storeId] || `Store ${storeId}`,
+        data: series[storeId],
+        borderColor: colorFn(idx),
+        backgroundColor: colorFn(idx, 0.15),
+        tension: 0.2,
+        spanGaps: true
+      }))
+    }
+
     async function renderCharts() {
       const metric = props.useNormalized ? 'norm' : 'raw'
       const series = await fetchSeries(metric)
@@ -83,7 +88,6 @@ export default {
       const medianDatasets = buildDatasets(series, colorFn)
       const passDatasets = buildDatasets(passSeries, colorFn)
 
-      // Destroy previous instances
       if (medianInstance) medianInstance.destroy()
       if (passInstance) passInstance.destroy()
 
@@ -118,12 +122,11 @@ export default {
       renderCharts()
     })
 
-    watch(() => [props.category, props.selectedStores, props.useNormalized, visibleStores.value], () => {
-      visibleStores.value = props.selectedStores.slice()
+    watch(() => [props.category, props.selectedStores, props.useNormalized], () => {
       renderCharts()
     }, { deep: true })
 
-    return { medianChart, passChart, visibleStores }
+    return { medianChart, passChart }
   }
 }
 </script>
@@ -131,6 +134,4 @@ export default {
 <style>
 .card { border: 1px solid #ddd; padding: 16px; border-radius: 6px; background:#fff; }
 .chart-row { margin: 12px 0; }
-.legend { margin-top: 8px; display:flex; gap:8px; flex-wrap:wrap; }
-.legend-item { font-size: 13px; }
 </style>
