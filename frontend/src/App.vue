@@ -1,54 +1,76 @@
 <template>
-  <div>
-    <h1>Audit Dashboard</h1>
-    <button @click="load2025">Load 2025</button>
-    <button @click="loadOthers">Load Others</button>
-    <canvas id="chart"></canvas>
+  <div class="container">
+    <header>
+      <h1>Audit Dashboard — Categories</h1>
+      <div class="controls">
+        <select v-model="selectedCategory" @change="loadData">
+          <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
+        </select>
+
+        <label>
+          <input type="checkbox" v-model="useNormalized" @change="loadData" />
+          Use Normalized
+        </label>
+
+        <div class="stores">
+          <label v-for="s in stores" :key="s.store_id">
+            <input type="checkbox" v-model="selectedStores" :value="s.store_id" @change="loadData" />
+            {{ s.name }}
+          </label>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <CategoryCard
+        v-if="selectedCategory"
+        :category="selectedCategory"
+        :stores="storesMap"
+        :selected-stores="selectedStores"
+        :use-normalized="useNormalized"
+      />
+    </main>
   </div>
 </template>
 
-<script setup>
-import axios from 'axios';
-import { Chart } from 'chart.js/auto';
+<script>
+import axios from 'axios'
+import CategoryCard from './components/CategoryCard.vue'
 
-let chart;
-
-async function load2025() {
-  const res = await axios.get('http://localhost:3000/api/median/2025');
-  renderChart(res.data);
-}
-
-async function loadOthers() {
-  const res = await axios.get('http://localhost:3000/api/median/others');
-  renderChart(res.data);
-}
-
-function renderChart(data) {
-  const labels = [...new Set(data.map(d => d.month))].sort((a,b)=>a-b);
-  const datasets = [];
-
-  const categories = [...new Set(data.map(d => d.category))];
-  categories.forEach(cat => {
-    const catData = labels.map(m => {
-      const entry = data.find(d => d.category === cat && d.month === m);
-      return entry ? entry.median : null;
-    });
-    datasets.push({
-      label: cat,
-      data: catData,
-      borderColor: getRandomColor(),
-      fill: false
-    });
-  });
-
-  if (chart) chart.destroy();
-  chart = new Chart(document.getElementById('chart'), {
-    type: 'line',
-    data: { labels, datasets }
-  });
-}
-
-function getRandomColor() {
-  return '#' + Math.floor(Math.random()*16777215).toString(16);
+export default {
+  components: { CategoryCard },
+  data() {
+    return {
+      categories: [],
+      stores: [],
+      storesMap: {},
+      selectedCategory: null,
+      selectedStores: [],
+      useNormalized: false
+    }
+  },
+  async created() {
+    const [catsRes, storesRes] = await Promise.all([
+      axios.get('/api/categories'),
+      axios.get('/api/stores')
+    ])
+    this.categories = catsRes.data
+    this.stores = storesRes.data
+    this.storesMap = this.stores.reduce((m, s) => { m[s.store_id] = s.name; return m }, {})
+    if (this.categories.length) this.selectedCategory = this.categories[0]
+    this.selectedStores = this.stores.map(s => s.store_id) // default all
+    this.loadData()
+  },
+  methods: {
+    loadData() {
+      // CategoryCard will fetch its own data based on props
+    }
+  }
 }
 </script>
+
+<style>
+.container { padding: 20px; font-family: Arial, sans-serif; }
+.controls { display:flex; gap:20px; align-items:center; margin-bottom:16px; }
+.stores { display:flex; gap:8px; flex-wrap:wrap; }
+</style>

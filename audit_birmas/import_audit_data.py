@@ -1,16 +1,51 @@
+#!/usr/bin/env python3
 import os
 import sqlite3
 import pandas as pd
 
-# Adjust path for your droplet
-root_folder = "/root/audit-dashboard/audit_birmas"
-db_path = os.path.join(root_folder, "audit_birmas.db")
+# -------------------------
+# Configuration
+# -------------------------
+root_folder = "/root/audit_birmas"                     # folder with CSVs and import script
+db_path = os.path.join(root_folder, "audit_birmas.db") # SQLite DB path
 
+# Optional filters: set FILTER_YEAR to an int and MONTH_RANGE to (start, end) to restrict calculations.
+# Set FILTER_YEAR = None and MONTH_RANGE = None to include all data.
+FILTER_YEAR = None        # e.g., 2025 or None
+MONTH_RANGE = None        # e.g., (7, 12) or None
+
+# -------------------------
+# Helpers
+# -------------------------
+def _year_month_filter(alias="a"):
+    parts = []
+    if FILTER_YEAR is not None:
+        parts.append(f"{alias}.year = {int(FILTER_YEAR)}")
+    if MONTH_RANGE is not None:
+        start, end = int(MONTH_RANGE[0]), int(MONTH_RANGE[1])
+        parts.append(f"{alias}.month BETWEEN {start} AND {end}")
+    if parts:
+        return " AND " + " AND ".join(parts)
+    return ""
+
+def median(values):
+    if not values:
+        return None
+    values = sorted(values)
+    mid = len(values) // 2
+    if len(values) % 2 == 0:
+        return round((values[mid - 1] + values[mid]) / 2, 2)
+    else:
+        return round(values[mid], 2)
+
+# -------------------------
+# Connect DB and create tables
+# -------------------------
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 
-# Tables
 cursor.executescript("""
+-- Drop old average tables if any (safe)
 DROP TABLE IF EXISTS store_monthly_avg;
 DROP TABLE IF EXISTS category_store_avg;
 DROP TABLE IF EXISTS category_global_avg;
@@ -81,9 +116,35 @@ CREATE TABLE IF NOT EXISTS category_global_median (
     category TEXT NOT NULL,
     median_score REAL
 );
+
+-- Per-category monthly summaries (detailed)
+CREATE TABLE IF NOT EXISTS category_store_monthly_median (
+    id INTEGER PRIMARY KEY,
+    store_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    median_score REAL,
+    median_normalized REAL,
+    sample_size INTEGER,
+    FOREIGN KEY (store_id) REFERENCES stores(store_id)
+);
+
+CREATE TABLE IF NOT EXISTS category_store_monthly_passrate (
+    id INTEGER PRIMARY KEY,
+    store_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    pass_rate REAL,
+    sample_size INTEGER,
+    FOREIGN KEY (store_id) REFERENCES stores(store_id)
+);
 """)
 
-# 🔥 Wipe old data before re-import
+# -------------------------
+# Wipe old import data (audits, scores, criteria, summaries)
+# -------------------------
 cursor.executescript("""
 DELETE FROM audits;
 DELETE FROM scores;
@@ -92,9 +153,13 @@ DELETE FROM audit_summary;
 DELETE FROM store_monthly_median;
 DELETE FROM category_store_median;
 DELETE FROM category_global_median;
+DELETE FROM category_store_monthly_median;
+DELETE FROM category_store_monthly_passrate;
 """)
 
-# Month map
+# -------------------------
+# Month map and normalization helper
+# -------------------------
 month_map = {
     "Januari": 1, "Februari": 2, "Maret": 3, "April": 4,
     "Mei": 5, "Juni": 6, "Juli": 7, "Agustus": 8,
@@ -106,17 +171,9 @@ def normalize_month(month_str):
     month_name = parts[0]
     return month_map.get(month_name, None)
 
-def median(values):
-    if not values:
-        return None
-    values = sorted(values)
-    mid = len(values) // 2
-    if len(values) % 2 == 0:
-        return round((values[mid - 1] + values[mid]) / 2, 2)
-    else:
-        return round(values[mid], 2)
-
-# Collect audits first
+# -------------------------
+# Collect audit CSV entries (store, year, month, file, path)
+# -------------------------
 audit_entries = []
 
 for store_name in sorted(os.listdir(root_folder)):
@@ -139,7 +196,7 @@ for store_name in sorted(os.listdir(root_folder)):
 
             norm_month = normalize_month(month)
             if norm_month is None:
-                print(f"⚠️ Skipped unknown month: {month}")
+                print(f"⚠️ Skipped unknown month folder: {month}")
                 continue
 
             for file in sorted(os.listdir(month_path)):
@@ -147,10 +204,12 @@ for store_name in sorted(os.listdir(root_folder)):
                     continue
                 audit_entries.append((store_id, int(year), norm_month, file, os.path.join(month_path, file)))
 
-# ✅ Sort audits before inserting (year → month → store)
+# Sort audits by year → month → store
 audit_entries.sort(key=lambda x: (x[1], x[2], x[0]))
 
-# Insert audits in order
+# -------------------------
+# Insert audits and scores
+# -------------------------
 for store_id, year, month, file, file_path in audit_entries:
     df = pd.read_csv(file_path)
 
@@ -208,73 +267,15 @@ for store_id, year, month, file, file_path in audit_entries:
         INSERT INTO audit_summary (audit_id, total_criteria, passed_count, not_null_count, pass_rate)
         VALUES (?,?,?,?,?)
     """, (audit_id, len(df), passed_count, not_null_count,
-          round((passed_count / not_null_count), 2) if not_null_count > 0 else None))
+          round((passed_count / not_null_count), 3) if not_null_count > 0 else None))
 
-# ---------------------------
-# ✅ Populate medians and pass rates (after audits have been inserted)
-# ---------------------------
-
-# Configuration: set FILTER_YEAR to an int (e.g., 2025) and MONTH_RANGE to a tuple (start, end)
-# to restrict calculations. Set FILTER_YEAR = None and MONTH_RANGE = None to include all data.
-FILTER_YEAR = None        # e.g., 2025 or None
-MONTH_RANGE = None        # e.g., (7, 12) or None
-
-def _year_month_filter(alias="a"):
-    """
-    Returns SQL fragment for optional year/month filtering and a tuple of params.
-    alias: table alias for audits (default "a")
-    """
-    parts = []
-    if FILTER_YEAR is not None:
-        parts.append(f"{alias}.year = {int(FILTER_YEAR)}")
-    if MONTH_RANGE is not None:
-        start, end = int(MONTH_RANGE[0]), int(MONTH_RANGE[1])
-        parts.append(f"{alias}.month BETWEEN {start} AND {end}")
-    if parts:
-        return " AND " + " AND ".join(parts)
-    return ""
-
-# Ensure the per-category monthly summary tables exist
-cursor.executescript("""
-CREATE TABLE IF NOT EXISTS category_store_monthly_median (
-    id INTEGER PRIMARY KEY,
-    store_id INTEGER NOT NULL,
-    category TEXT NOT NULL,
-    year INTEGER NOT NULL,
-    month INTEGER NOT NULL,
-    median_score REAL,
-    median_normalized REAL,
-    sample_size INTEGER,
-    FOREIGN KEY (store_id) REFERENCES stores(store_id)
-);
-
-CREATE TABLE IF NOT EXISTS category_store_monthly_passrate (
-    id INTEGER PRIMARY KEY,
-    store_id INTEGER NOT NULL,
-    category TEXT NOT NULL,
-    year INTEGER NOT NULL,
-    month INTEGER NOT NULL,
-    pass_rate REAL,
-    sample_size INTEGER,
-    FOREIGN KEY (store_id) REFERENCES stores(store_id)
-);
-""")
-
-# Clear previous median/passrate rows so re-running replaces old summaries
-cursor.executescript("""
-DELETE FROM store_monthly_median;
-DELETE FROM category_store_median;
-DELETE FROM category_global_median;
-DELETE FROM category_store_monthly_median;
-DELETE FROM category_store_monthly_passrate;
-""")
-
-# ---------------------------
-# 1) Store-monthly median (month → store ordering)
-# ---------------------------
-# Build filter fragment for audits selection
+# -------------------------
+# Populate medians and pass rates (store-monthly, category-store-monthly, aggregates)
+# Uses optional FILTER_YEAR and MONTH_RANGE
+# -------------------------
 audit_filter = _year_month_filter(alias="a")
 
+# 1) Store-monthly median (ordered year→month→store)
 for store_id, year, month in cursor.execute(f"""
     SELECT a.store_id, a.year, a.month
     FROM audits a
@@ -297,9 +298,7 @@ for store_id, year, month in cursor.execute(f"""
         (store_id, year, month, med)
     )
 
-# ---------------------------
-# 2) Category-store-monthly median + pass rate (per category × store × month)
-# ---------------------------
+# 2) Category-store-monthly median + normalized median + pass rate
 groups = cursor.execute(f"""
     SELECT a.store_id, a.year, a.month, c.category
     FROM scores sc
@@ -308,13 +307,12 @@ groups = cursor.execute(f"""
     WHERE sc.score IS NOT NULL
       AND LOWER(c.category) != 'maintenance'
       AND LOWER(c.category) != 'absensi'
-      { _year_month_filter(alias='a') }
+      {audit_filter}
     GROUP BY a.year, a.month, a.store_id, c.category
     ORDER BY a.year, a.month, a.store_id, c.category
 """).fetchall()
 
 for store_id, year, month, category in groups:
-    # Raw scores for this group
     rows = cursor.execute("""
         SELECT sc.score
         FROM scores sc
@@ -326,7 +324,6 @@ for store_id, year, month, category in groups:
     sample_size = len(scores)
     med_raw = median(scores) if sample_size > 0 else None
 
-    # Normalized scores (score / passing_grade) when passing_grade > 0
     norm_rows = cursor.execute("""
         SELECT sc.score, c.passing_grade
         FROM scores sc
@@ -345,14 +342,12 @@ for store_id, year, month, category in groups:
 
     med_norm = median(normalized) if normalized else None
 
-    # Insert median summary row
     cursor.execute("""
         INSERT INTO category_store_monthly_median
         (store_id, category, year, month, median_score, median_normalized, sample_size)
         VALUES (?,?,?,?,?,?,?)
     """, (store_id, category, year, month, med_raw, med_norm, sample_size))
 
-    # Compute pass rate for this group
     passed = cursor.execute("""
         SELECT COUNT(*)
         FROM scores sc
@@ -377,11 +372,7 @@ for store_id, year, month, category in groups:
         VALUES (?,?,?,?,?,?)
     """, (store_id, category, year, month, pass_rate, total))
 
-# ---------------------------
-# 3) Category-store aggregate median (across all included months) and global median
-#    These are useful for summary views (store-level and global-level medians)
-# ---------------------------
-# category_store_median: median per store across the filtered months
+# 3) Aggregates: category_store_median and category_global_median (across included months)
 for store_id, category in cursor.execute(f"""
     SELECT s.store_id, c.category
     FROM scores sc
@@ -390,7 +381,7 @@ for store_id, category in cursor.execute(f"""
     JOIN criteria c ON sc.criteria_id = c.criteria_id
     WHERE LOWER(c.category) != 'maintenance'
       AND LOWER(c.category) != 'absensi'
-      { _year_month_filter(alias='a') }
+      {audit_filter}
     GROUP BY s.store_id, c.category
     ORDER BY s.store_id, c.category
 """).fetchall():
@@ -407,7 +398,6 @@ for store_id, category in cursor.execute(f"""
         VALUES (?,?,?)
     """, (store_id, category, med))
 
-# category_global_median: median across all stores for each category (filtered months)
 for (category,) in cursor.execute(f"""
     SELECT c.category
     FROM scores sc
@@ -415,7 +405,7 @@ for (category,) in cursor.execute(f"""
     JOIN criteria c ON sc.criteria_id = c.criteria_id
     WHERE LOWER(c.category) != 'maintenance'
       AND LOWER(c.category) != 'absensi'
-      { _year_month_filter(alias='a') }
+      {audit_filter}
     GROUP BY c.category
     ORDER BY c.category
 """).fetchall():
