@@ -3,7 +3,7 @@ import sqlite3
 import pandas as pd
 
 # Adjust path for your droplet
-root_folder = "/root/audit_birmas"
+root_folder = "/root/audit-dashboard/audit_birmas"
 db_path = os.path.join(root_folder, "audit_birmas.db")
 
 conn = sqlite3.connect(db_path)
