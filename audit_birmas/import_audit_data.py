@@ -210,79 +210,226 @@ for store_id, year, month, file, file_path in audit_entries:
     """, (audit_id, len(df), passed_count, not_null_count,
           round((passed_count / not_null_count), 2) if not_null_count > 0 else None))
 
-# ✅ Populate medians (restricted to 2025, months 7–12)
-# Store-monthly median
-for store_id, year, month in cursor.execute("""
-    SELECT store_id, year, month
-    FROM audits
-    WHERE year = 2025 AND month BETWEEN 7 AND 12
-    GROUP BY year, month, store_id
-    ORDER BY year, month, store_id
+# ---------------------------
+# ✅ Populate medians and pass rates (after audits have been inserted)
+# ---------------------------
+
+# Configuration: set FILTER_YEAR to an int (e.g., 2025) and MONTH_RANGE to a tuple (start, end)
+# to restrict calculations. Set FILTER_YEAR = None and MONTH_RANGE = None to include all data.
+FILTER_YEAR = None        # e.g., 2025 or None
+MONTH_RANGE = None        # e.g., (7, 12) or None
+
+def _year_month_filter(alias="a"):
+    """
+    Returns SQL fragment for optional year/month filtering and a tuple of params.
+    alias: table alias for audits (default "a")
+    """
+    parts = []
+    if FILTER_YEAR is not None:
+        parts.append(f"{alias}.year = {int(FILTER_YEAR)}")
+    if MONTH_RANGE is not None:
+        start, end = int(MONTH_RANGE[0]), int(MONTH_RANGE[1])
+        parts.append(f"{alias}.month BETWEEN {start} AND {end}")
+    if parts:
+        return " AND " + " AND ".join(parts)
+    return ""
+
+# Ensure the per-category monthly summary tables exist
+cursor.executescript("""
+CREATE TABLE IF NOT EXISTS category_store_monthly_median (
+    id INTEGER PRIMARY KEY,
+    store_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    median_score REAL,
+    median_normalized REAL,
+    sample_size INTEGER,
+    FOREIGN KEY (store_id) REFERENCES stores(store_id)
+);
+
+CREATE TABLE IF NOT EXISTS category_store_monthly_passrate (
+    id INTEGER PRIMARY KEY,
+    store_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    pass_rate REAL,
+    sample_size INTEGER,
+    FOREIGN KEY (store_id) REFERENCES stores(store_id)
+);
+""")
+
+# Clear previous median/passrate rows so re-running replaces old summaries
+cursor.executescript("""
+DELETE FROM store_monthly_median;
+DELETE FROM category_store_median;
+DELETE FROM category_global_median;
+DELETE FROM category_store_monthly_median;
+DELETE FROM category_store_monthly_passrate;
+""")
+
+# ---------------------------
+# 1) Store-monthly median (month → store ordering)
+# ---------------------------
+# Build filter fragment for audits selection
+audit_filter = _year_month_filter(alias="a")
+
+for store_id, year, month in cursor.execute(f"""
+    SELECT a.store_id, a.year, a.month
+    FROM audits a
+    WHERE 1=1 {audit_filter}
+    GROUP BY a.year, a.month, a.store_id
+    ORDER BY a.year, a.month, a.store_id
 """).fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
         FROM scores sc
         JOIN audits a ON sc.audit_id = a.audit_id
         JOIN criteria c ON sc.criteria_id = c.criteria_id
-        WHERE a.store_id=? AND a.year=? AND a.month=? 
+        WHERE a.store_id=? AND a.year=? AND a.month=?
           AND sc.score IS NOT NULL
           AND LOWER(c.category) != 'maintenance'
     """, (store_id, year, month)).fetchall()]
     med = median(scores)
-    cursor.execute("INSERT INTO store_monthly_median (store_id, year, month, median_score) VALUES (?,?,?,?)",
-                   (store_id, year, month, med))
+    cursor.execute(
+        "INSERT INTO store_monthly_median (store_id, year, month, median_score) VALUES (?,?,?,?)",
+        (store_id, year, month, med)
+    )
 
-# Category-store median
-for store_id, category in cursor.execute("""
+# ---------------------------
+# 2) Category-store-monthly median + pass rate (per category × store × month)
+# ---------------------------
+groups = cursor.execute(f"""
+    SELECT a.store_id, a.year, a.month, c.category
+    FROM scores sc
+    JOIN audits a ON sc.audit_id = a.audit_id
+    JOIN criteria c ON sc.criteria_id = c.criteria_id
+    WHERE sc.score IS NOT NULL
+      AND LOWER(c.category) != 'maintenance'
+      AND LOWER(c.category) != 'absensi'
+      { _year_month_filter(alias='a') }
+    GROUP BY a.year, a.month, a.store_id, c.category
+    ORDER BY a.year, a.month, a.store_id, c.category
+""").fetchall()
+
+for store_id, year, month, category in groups:
+    # Raw scores for this group
+    rows = cursor.execute("""
+        SELECT sc.score
+        FROM scores sc
+        JOIN audits a ON sc.audit_id = a.audit_id
+        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        WHERE a.store_id=? AND a.year=? AND a.month=? AND c.category=? AND sc.score IS NOT NULL
+    """, (store_id, year, month, category)).fetchall()
+    scores = [r[0] for r in rows]
+    sample_size = len(scores)
+    med_raw = median(scores) if sample_size > 0 else None
+
+    # Normalized scores (score / passing_grade) when passing_grade > 0
+    norm_rows = cursor.execute("""
+        SELECT sc.score, c.passing_grade
+        FROM scores sc
+        JOIN audits a ON sc.audit_id = a.audit_id
+        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        WHERE a.store_id=? AND a.year=? AND a.month=? AND c.category=? AND sc.score IS NOT NULL
+    """, (store_id, year, month, category)).fetchall()
+
+    normalized = []
+    for score_val, pg in norm_rows:
+        try:
+            if pg is not None and float(pg) > 0:
+                normalized.append(float(score_val) / float(pg))
+        except (ValueError, TypeError):
+            continue
+
+    med_norm = median(normalized) if normalized else None
+
+    # Insert median summary row
+    cursor.execute("""
+        INSERT INTO category_store_monthly_median
+        (store_id, category, year, month, median_score, median_normalized, sample_size)
+        VALUES (?,?,?,?,?,?,?)
+    """, (store_id, category, year, month, med_raw, med_norm, sample_size))
+
+    # Compute pass rate for this group
+    passed = cursor.execute("""
+        SELECT COUNT(*)
+        FROM scores sc
+        JOIN audits a ON sc.audit_id = a.audit_id
+        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        WHERE a.store_id=? AND a.year=? AND a.month=? AND c.category=? AND LOWER(sc.pass_fail) = 'pass'
+    """, (store_id, year, month, category)).fetchone()[0]
+
+    total = cursor.execute("""
+        SELECT COUNT(*)
+        FROM scores sc
+        JOIN audits a ON sc.audit_id = a.audit_id
+        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        WHERE a.store_id=? AND a.year=? AND a.month=? AND c.category=?
+    """, (store_id, year, month, category)).fetchone()[0]
+
+    pass_rate = round(passed / total, 3) if total and total > 0 else None
+
+    cursor.execute("""
+        INSERT INTO category_store_monthly_passrate
+        (store_id, category, year, month, pass_rate, sample_size)
+        VALUES (?,?,?,?,?,?)
+    """, (store_id, category, year, month, pass_rate, total))
+
+# ---------------------------
+# 3) Category-store aggregate median (across all included months) and global median
+#    These are useful for summary views (store-level and global-level medians)
+# ---------------------------
+# category_store_median: median per store across the filtered months
+for store_id, category in cursor.execute(f"""
     SELECT s.store_id, c.category
     FROM scores sc
-    JOIN audits a ON sc.audit_id=a.audit_id
-    JOIN stores s ON a.store_id=s.store_id
-    JOIN criteria c ON sc.criteria_id=c.criteria_id
-    WHERE a.year = 2025 AND a.month BETWEEN 7 AND 12
-      AND LOWER(c.category) != 'maintenance'
+    JOIN audits a ON sc.audit_id = a.audit_id
+    JOIN stores s ON a.store_id = s.store_id
+    JOIN criteria c ON sc.criteria_id = c.criteria_id
+    WHERE LOWER(c.category) != 'maintenance'
+      AND LOWER(c.category) != 'absensi'
+      { _year_month_filter(alias='a') }
     GROUP BY s.store_id, c.category
-    ORDER BY c.category, s.store_id
+    ORDER BY s.store_id, c.category
 """).fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
         FROM scores sc
-        JOIN audits a ON sc.audit_id=a.audit_id
-        JOIN criteria c ON sc.criteria_id=c.criteria_id
-        WHERE a.store_id=? AND c.category=? 
-          AND a.year=2025 AND a.month BETWEEN 7 AND 12
-          AND sc.score IS NOT NULL
-          AND LOWER(c.category) != 'maintenance'
+        JOIN audits a ON sc.audit_id = a.audit_id
+        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        WHERE a.store_id=? AND c.category=? AND sc.score IS NOT NULL
     """, (store_id, category)).fetchall()]
     med = median(scores)
-    cursor.execute("INSERT INTO category_store_median (store_id, category, median_score) VALUES (?,?,?)",
-                   (store_id, category, med))
+    cursor.execute("""
+        INSERT INTO category_store_median (store_id, category, median_score)
+        VALUES (?,?,?)
+    """, (store_id, category, med))
 
-# Category-global median
-for (category,) in cursor.execute("""
+# category_global_median: median across all stores for each category (filtered months)
+for (category,) in cursor.execute(f"""
     SELECT c.category
     FROM scores sc
-    JOIN audits a ON sc.audit_id=a.audit_id
-    JOIN criteria c ON sc.criteria_id=c.criteria_id
-    WHERE a.year = 2025 AND a.month BETWEEN 7 AND 12
-      AND LOWER(c.category) != 'maintenance'
+    JOIN audits a ON sc.audit_id = a.audit_id
+    JOIN criteria c ON sc.criteria_id = c.criteria_id
+    WHERE LOWER(c.category) != 'maintenance'
+      AND LOWER(c.category) != 'absensi'
+      { _year_month_filter(alias='a') }
     GROUP BY c.category
     ORDER BY c.category
 """).fetchall():
     scores = [r[0] for r in cursor.execute("""
         SELECT sc.score
         FROM scores sc
-        JOIN audits a ON sc.audit_id=a.audit_id
-        JOIN criteria c ON sc.criteria_id=c.criteria_id
-        WHERE c.category=? 
-          AND a.year=2025 AND a.month BETWEEN 7 AND 12
-          AND sc.score IS NOT NULL
-          AND LOWER(c.category) != 'maintenance'
+        JOIN audits a ON sc.audit_id = a.audit_id
+        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        WHERE c.category=? AND sc.score IS NOT NULL
     """, (category,)).fetchall()]
     med = median(scores)
-    cursor.execute("INSERT INTO category_global_median (category, median_score) VALUES (?,?)",
-                   (category, med))
+    cursor.execute("INSERT INTO category_global_median (category, median_score) VALUES (?,?)", (category, med))
 
+# Commit and close
 conn.commit()
 conn.close()
-print("Audit data imported succesfully.")
+print("Audit data imported successfully.")

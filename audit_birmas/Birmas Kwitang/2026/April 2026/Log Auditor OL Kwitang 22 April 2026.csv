@@ -1,0 +1,322 @@
+No,Category,Criteria,Metrics,Score,Passing Grade,Pass/Not Pass,Infraction Details
+1,Absensi,Absensi awal auditor,,,,,
+2,Inventaris,Tablet,"3 - Tablet ada, kondisi baik, menyala
+2 - Tablet ada, kondisi baik, tidak menyala
+1 - Tablet ada, kondisi rusak, menyala/tidak menyala
+0 - Tablet hilang",3,3.0,Pass,1 Unit
+3,Inventaris,Charger tablet,"3 - Charger ada, kondisi baik, tercolok
+2 - Charger ada, kondisi baik, tidak tercolok
+1 - Charger ada, kondisi rusak, tercolok/tidak tercolok
+0 - Charger hilang",0,3.0,Not Pass,Ngecas Tablet memakai Charger pribadi Crew
+4,Inventaris,"Chiller (1 x 3 pintu, 1 x 1 pintu, 1 x rusak)","2 - Seluruh chiller dalam kondisi baik
+1 - Sebagian chiller dalam kondisi baik
+0 - Seluruh chiller dalam kondisi tidak baik",1,2.0,Not Pass,"Birmas 1 Unit, OT 2 Unit (1 Nyala & 1 Mati)"
+5,Inventaris,Freezer,"2 - Seluruh freezer dalam kondisi baik
+1 - Sebagian freezer dalam kondisi baik
+0 - Seluruh freezer dalam kondisi tidak baik",2,2.0,Pass,1 Unit
+6,Inventaris,Kipas,"2 - Seluruh kipas dalam kondisi baik
+1 - Sebagian kipas dalam kondisi baik
+0 - Seluruh kipas dalam kondisi tidak baik",2,2.0,Pass,2 Unit (Posisi atas & bawah)
+7,Inventaris,Modem,"1 - Fisik modem dalam keadaan baik
+0 - Fisik modem rusak",1,1.0,Pass,1 Unit
+8,Inventaris,CCTV,"2 - Fisik CCTV baik, tercolok
+1 - Fisik CCTV baik, tidak tercolok
+0 - Fisik CCTV rusak / hilang",2,2.0,Pass,2 Unit (Di dalam & Di luar)
+9,Inventaris,Remote AC,"3 - Remote ada, kondisi baik, menyala
+2 - Remote ada, kondisi baik, tidak menyala
+1 - Remote ada, kondisi rusak, menyala/tidak menyala
+0 - Remote hilang",-,3.0,Not Pass,Tidak ada AC
+10,Inventaris,QRIS sticker,"1 - Sticker ada
+0 - Sticker tidak ada",1,1.0,Pass,1 Unit
+11,Inventaris,Cash register,"2 - Kondisi cash register normal
+1 - Kondisi cash register abnormal
+0 - Cash register hilang",2,2.0,Pass,1 box kotak hitam
+12,Inventaris,Sapu,"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",2,2.0,Pass,1 pcs
+13,Inventaris,Tongkat pel,"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",2,2.0,Pass,1 pcs
+14,Inventaris,Sekop es batu,"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",2,2.0,Pass,1 pcs
+15,Inventaris,Pembuka botol,"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",2,2.0,Pass,1 pcs
+16,Inventaris,Tempat sampah,"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",2,2.0,Pass,1 pcs
+17,Inventaris,Gunting,"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",2,2.0,Pass,1 pcs
+18,Inventaris,Meja,"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",2,2.0,Pass,Meja (Bufet)
+19,Inventaris,Kursi (2),"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",1,2.0,Not Pass,Kursi agak goyang (1)
+20,Inventaris,Dokumen,"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",2,2.0,Pass,-
+21,Inventaris,NIB,"2 - Inventaris ada dalam keadaan baik
+1 - Inventaris ada dalam keadaan rusak / buruk
+0 - Inventaris hilang",2,2.0,Pass,-
+22,Inventaris,Plastik sampah,"2 - Penyimpanan benar, stok cukup
+1 - Penyimpanan salah, stok cukup
+0 - Stok habis",2,1.0,Pass,3 pcs
+23,Inventaris,Plastik kresek,"2 - Penyimpanan benar, stok cukup
+1 - Penyimpanan salah, stok cukup
+0 - Stok habis",2,1.0,Pass,5 bungkus
+24,Inventaris,Gelas plastik,"2 - Penyimpanan benar, stok cukup
+1 - Penyimpanan salah, stok cukup
+0 - Stok habis",2,1.0,Pass,27 pcs
+25,Inventaris,Tissue dapur,"2 - Penyimpanan benar, stok cukup
+1 - Penyimpanan salah, stok cukup
+0 - Stok habis",-,1.0,Not Pass,-
+26,Inventaris,ATK - Pulpen,"2 - Penyimpanan benar, stok cukup
+1 - Penyimpanan salah, stok cukup
+0 - Stok habis",-,1.0,Not Pass,Hilang
+27,Inventaris,ATK - Kertas,"2 - Penyimpanan benar, stok cukup
+1 - Penyimpanan salah, stok cukup
+0 - Stok habis",-,1.0,Not Pass,-
+28,Kebersihan Outlet,Chiller - Kaca luar,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+29,Kebersihan Outlet,Chiller - Kaca dalam,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+30,Kebersihan Outlet,Chiller - Permukaan atas,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+31,Kebersihan Outlet,Chiller - Tepi pintu,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+32,Kebersihan Outlet,Chiller - Rak paling bawah,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+33,Kebersihan Outlet,Chiller - Lantai sekitar,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+34,Kebersihan Outlet,Chiller - Tray air,"2 - Tray air kosong
+1 - Tray air terisi > 50%
+0 - Tray air overflow",2,2.0,Pass,Pembuangan air setiap 2 - 3 hari
+35,Kebersihan Outlet,Meja - Permukaan,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+36,Kebersihan Outlet,Meja - Kaki meja,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+37,Kebersihan Outlet,Meja - Kolong meja,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+38,Kebersihan Outlet,Kursi - Permukaan,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+39,Kebersihan Outlet,Kursi - Kaki kursi,"2 - Seluruh kaki kursi kencang
+1 - Sebagian kaki kursi longgar
+0 - Seluruh kaki kursi longgar",1,1.0,Pass,Kaki kursi Goyang
+40,Kebersihan Outlet,Lantai - Permukaan,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+41,Kebersihan Outlet,Asbak - Puntung rokok,"2 - Kondisi bersih
+1 - Ada puntung rokok segar
+0 - Banyak puntung / ada puntung rokok lama",1,2.0,Not Pass,Puntung rokok kru
+42,Kebersihan Outlet,Asbak - Kebersihan,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",1,2.0,Not Pass,Bahan kayu
+43,Kebersihan Outlet,Kebersihan gelas,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",-,2.0,Not Pass,Tidak pakai gelas
+44,Kebersihan Outlet,Pembuka botol,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+45,Kebersihan Outlet,Gunting,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+46,Kebersihan Outlet,Tablet - Permukaan,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+47,Kebersihan Outlet,Cash register - Permukaan,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+48,Kebersihan Outlet,Rak display - permukaan,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",-,2.0,Not Pass,-
+49,Kebersihan Outlet,Rak display - produk,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",-,2.0,Not Pass,-
+50,Kebersihan Outlet,Kaca pintu,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+51,Kebersihan Outlet,Kaca jendela,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+52,Kebersihan Outlet,Kusen,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+53,Kebersihan Outlet,Kamar mandi - lantai,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",2,2.0,Pass,-
+54,Kebersihan Outlet,Kamar mandi - kloset,"3 - Bersih, wangi, tidak tersumbat
+2 - Salah satu kriteria di atas tidak terpenuhi
+1 - Dua kriteria di atas tidak terpenuhi
+0 - Seluruh kriteria di atas tidak terpenuhi",2,3.0,Not Pass,Tidak wangi
+55,Kebersihan Outlet,Kamar mandi - lubang air,"2 - Tidak tersumbat, tidak ada kotoran
+1 - Salah satu kriteria di atas tidak terpenuhi
+0 - Kedua kriteria di atas tidak terpenuhi",2,2.0,Pass,-
+56,Kebersihan Outlet,Kamar mandi - wastafel,"2 - Tidak tersumbat, tidak ada kotoran
+1 - Salah satu kriteria di atas tidak terpenuhi
+0 - Kedua kriteria di atas tidak terpenuhi",-,2.0,Not Pass,-
+57,Kebersihan Outlet,Kamar mandi - tissue toilet,"1 - Tersedia tissue
+0 - Tidak tersedia tissue",-,1.0,Not Pass,-
+58,Kebersihan Outlet,Freezer - bunga es,"1 - Bunga es ≤ 2 cm
+0 - Bunga es > 2 cm",0,1.0,Not Pass,Pembersihan sekali dalam 3 minggu
+59,Kebersihan Outlet,Freezer - penyimpanan,"2 - Penyimpanan barang sesuai standar
+1 - Penyimpanan barang tidak sesuai standar
+0 - Penyimpanan barang eksternal di freezer",2,2.0,Pass,Menyimpan es batu
+60,Kebersihan Outlet,Taps - permukaan,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",-,2.0,Not Pass,-
+61,Kebersihan Outlet,AC - Pembuangan air,"2 - Kosong atau terisi < 25%
+1 - Terisi 25 - 99%
+0 - Overflow",-,1.0,Not Pass,-
+62,Kebersihan Outlet,Kipas angin,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",1,2.0,Not Pass,-
+63,Kebersihan Outlet,Lingkungan sekitar outlet,"2 - Kondisi bersih
+1 - Kondisi kotor, baru dibersihkan
+0 - Kondisi kotor, tampak jarang dibersihkan",1,2.0,Not Pass,-
+64,Kebersihan Outlet,Tempat sampah,"2 - Terisi < 75%, tidak berbau
+1 - Terisi 75-100%, tidak berbau
+0 - Overflow atau berbau",1,1.0,Pass,-
+92,Higiene Staf,Bau badan,"1 - Tidak berbau
+0 - Bau badan tercium jelas",1,1.0,Pass,-
+93,Higiene Staf,Deodoran,"1 - Menggunakan deodoran
+0 - Tidak menggunakan deodoran",0,1.0,Not Pass,-
+94,Higiene Staf,Rambut,"2 - Rambut bersih dan rapi
+1 - Rambut tidak bersih atau tidak rapi
+0 - Rambut tidak bersih dan tidak rapi",2,1.0,Pass,Cat warna pirang
+95,Higiene Staf,Kumis/janggut,"2 - Rambut bersih dan rapi
+1 - Rambut tidak bersih atau tidak rapi
+0 - Rambut tidak bersih dan tidak rapi",2,1.0,Pass,-
+96,Higiene Staf,Kuku,"1 - Kuku tangan terpotong pendek
+0 - Kuku tangan panjang",1,1.0,Pass,-
+97,Higiene Staf,Seragam,"3 - Seragam bersih, atribut benar
+2 - Salah satu kriteria di atas tidak terpenuhi
+1 - Dua kriteria di atas tidak terpenuhi
+0 - Tidak mengenakan seragam",-,2.0,Not Pass,Selalu memakai celana pendek
+98,Higiene Staf,Aksesoris,"1 - Tidak ada atau 1 aksesoris
+0 - Lebih dari 1 aksesoris",0,1.0,Not Pass,Memakai kalung & gelang
+99,Higiene Staf,Mencuci tangan,"1 - Mencuci tangan sesuai standar
+0 - Tidak mencuci tangan",1,1.0,Pass,Menyesuaikan kondisi
+100,Aplikasi,Grabfood - Menu,"1 - Menu sesuai dengan stok
+0 - Menu tidak sesuai dengan stok",1,1.0,Pass,-
+101,Aplikasi,Grabfood - Review,"Hanya nilai review dalam 1 minggu terakhir.
+2 - Mayoritas review positif
+1 - Ada review negatif
+0 - Mayoritas review negatif",-,2.0,Not Pass,Tidak ada review terbaru dalam 7 hari terakhir
+102,Aplikasi,Gofood - Menu,"1 - Menu sesuai dengan stok
+0 - Menu tidak sesuai dengan stok",1,1.0,Pass,-
+103,Aplikasi,Gofood - Review,"Hanya nilai review dalam 1 minggu terakhir.
+2 - Mayoritas review positif
+1 - Ada review negatif
+0 - Mayoritas review negatif",-,2.0,Not Pass,Tidak ada review terbaru dalam 7 hari terakhir
+104,Aplikasi,Shopeefood - Menu,"1 - Menu sesuai dengan stok
+0 - Menu tidak sesuai dengan stok",1,1.0,Pass,-
+105,Aplikasi,Shopeefood - Review,"Hanya nilai review dalam 1 minggu terakhir.
+2 - Mayoritas review positif
+1 - Ada review negatif
+0 - Mayoritas review negatif",2,2.0,Pass,"Tidak banyak, tapi mayoritas positif"
+106,Aplikasi,Google Maps - Review,"Hanya nilai review dalam 1 minggu terakhir.
+2 - Mayoritas review positif
+1 - Ada review negatif
+0 - Mayoritas review negatif",-,2.0,Not Pass,-
+107,Maintenance,Air conditioner - Status,Cek AC menyala atau tidak.,,,,
+108,Maintenance,Air conditioner - Suhu remote,Cek suhu yang ditampilkan di remote.,,,,
+109,Maintenance,Air conditioner - Suhu ruangan,"Cek suhu ruangan, selisih dengan suhu remote.",,,,
+110,Maintenance,Air conditioner - Menetes,Cek apakah terdapat air menetes dari mesin AC.,,,,
+111,Maintenance,Air conditioner - Visual,"Cek kondisi visual AC, bersih atau berdebu.",,,,
+112,Maintenance,Exhaust fan - Status,Cek exhaust fan menyala atau tidak.,,,,
+113,Maintenance,Exhaust fan - Visual,"Cek kondisi visual exhaust fan, bersih atau berdebu.",,,,
+114,Maintenance,Chiller - Status,"Untuk setiap chiller, cek apakah chiller menyala dan terasa dingin.",,,,
+115,Maintenance,Chiller - Indikator,"Untuk setiap chiller, catat suhu yang tampil di indikator.",,,,
+116,Maintenance,Chiller - Suhu internal,"Untuk setiap chiller, cek suhu produk paling belakang di setiap rak, berapa selisih dengan suhu indikator.",,,,
+117,Maintenance,Chiller - Lampu,"Untuk setiap chiller, cek lampu menyala atau tidak.",,,,
+118,Maintenance,Chiller - Suara kompresor,"Untuk setiap chiller, cek apakah terdapat suara yang tidak normal dari kompresor.",,,,
+119,Maintenance,Freezer - Status,Cek freezer menyala atau tidak.,,,,
+120,Maintenance,Freezer - Suhu internal,Cek suhu internal freezer dengan termometer.,,,,
+121,Maintenance,Freezer - Suara kompresor,Cek apakah terdapat suara yang tidak normal dari kompresor.,,,,
+122,Maintenance,Freezer - Bunga es,Cek apakah bunga es melebihi 2 cm dan harus dilakukan defrost.,,,,
+123,Maintenance,Lighting - Switches,"Untuk setiap saklar lampu, cek apakah saklar beroperasi.",,,,
+124,Maintenance,Lighting - Lampu berkedip,Cek apakah terdapat lampu yang berkedip di seluruh outlet.,,,,
+125,Maintenance,Lighting - Lampu padam,Cek apakah terdapat lampu yang padam di seluruh outlet.,,,,
+126,Maintenance,CCTV - Charger,Cek apakah charger tercolok dan menyala.,,,,
+127,Maintenance,CCTV - Visual,Cek apakah terdapat tanda kerusakan yang jelas pada CCTV.,,,,
+128,Maintenance,Tablet - Layar,Cek apakah terdapat keretakan atau defek pada layar.,,,,
+129,Maintenance,Tablet - Ringtone,Cek apakah ringtone berbunyi di tablet.,,,,
+130,Maintenance,Tablet - Charger,Cek apakah charger tercolok dan menyala.,,,,
+131,Maintenance,Tablet - Charging,Cek apakah baterai mengisi normal saat tercolok.,,,,
+132,Maintenance,Taps - Tekanan,"Cek tekanan yang bir yang keluar dari taps, apakah tampak pelan atau normal.",,,,
+133,Maintenance,Taps - Suhu produk,"Cek suhu bir yang baru keluar dari taps, normal antara 2-8 C.",,,,
+134,Maintenance,Taps - Suhu keg,Cek suhu keg. Normal antara 2-8 C.,,,,
+135,Customer Service,Sapa customer,"2 - Menyapa customer baru datang dengan ramah
+1 - Menyapa customer baru datang, kurang ramah
+0 - Tidak menyapa customer baru datang",2,2.0,Pass,-
+136,Customer Service,Tanya pesanan,"1 - Menanyakan pesanan yang diinginkan customer
+0 - Tidak menanyakan / menelantarkan customer",1,1.0,Pass,-
+137,Customer Service,Upselling,"2 - Menawarkan upselling sesuai SOP
+1 - Menawarkan upselling, tidak sesuai SOP
+0 - Tidak menawarkan upselling",2,2.0,Pass,-
+138,Customer Service,Product knowledge,"2 - Dapat menjawab seluruh pertanyaan produk
+1 - Menjawab sebagian pertanyaan dengan salah
+0 - Menjawab mayoritas pertanyaan dengan salah",2,2.0,Pass,-
+139,Customer Service,Input ESB,"2 - Menginput produk pesanan di ESB dengan benar
+1 - Menginput produk pesanan dengan kesalahan, diperbaiki segera
+0 - Salah menginput produk hingga pembayaran",2,2.0,Pass,-
+140,Customer Service,Review checkout,"1 - Menunjukkan review produk di ESB sebelum pembayaran
+0 - Tidak menunjukkan review produk",0,1.0,Not Pass,Langsung serahkan produk lalu customer bayar sesuai nominal yang disebutkan
+141,Customer Service,Menawarkan QRIS,"1 - Menawarkan QRIS sebagai preferred method
+0 - Membiarkan customer membayar dengan metode tunai tanpa menawarkan QRIS",1,1.0,Pass,-
+142,Customer Service,Keramahan dan kesopanan,"2 - Ramah dan sopan pada seluruh interaksi
+1 - Ramah dan sopan pada sebagian interaksi
+0 - Tidak ramah dan tidak sopan pada seluruh interaksi",2,2.0,Pass,-
+143,Customer Service,Terima kasih,"1 - Mengucapkan terima kasih kepada customer
+0 - Tidak mengucapkan terima kasih",1,1.0,Pass,-
+144,Stock Opname,Jumlah produk riil,"1 - Jumlah produk riil sesuai dengan ESB
+0 - Jumlah produk riil tidak sesuai dengan ESB",1,1.0,Pass,-
+145,Stock Opname,Jumlah produk dalam kartu SO,"1 - Jumlah produk di kartu SO sesuai dengan ESB
+0 - Jumlah produk di kartu SO tidak sesuai dengan ESB",1,1.0,Pass,-
+146,Stock Opname,"Kecocokan kartu SO
+(1 minggu terakhir)","3 - Kontinuitas SO terjaga di setiap kartu
+2 - Kurang dari 2 ketidakcocokan dalam 1 minggu
+1 - Lebih dari 2 ketidakcocokan dalam 1 minggu
+0 - Terdapat produk minus signifikan dalam SO",-,3.0,Not Pass,-
+147,Stock Opname,Kerusakan produk,"1 - Tidak ada produk rusak atau produk rusak terlaporkan dengan baik dalam SO
+0 - Ada produk rusak yang tidak terlaporkan dalam SO",1,1.0,Pass,-
+148,Stock Opname,Expiry produk,"1 - Tidak ada produk expired atau produk expired terlaporkan dengan baik dalam SO
+0 - Ada produk expired yang tidak terlaporkan dalam SO",1,1.0,Pass,-
+149,Showcase,Produk habis,"1 - Tidak ada produk habis atau produk habis terlaporkan dengan baik dalam SO
+0 - Ada produk habis yang tidak terlaporkan dalam SO",1,1.0,Pass,-
+150,Showcase,Urutan produk,"3 - Urutan produk di setiap rak sesuai SOP
+2 - < 10% urutan produk di rak yang tidak sesuai
+1 - 10 - 25% urutan produk di rak yang tidak sesuai
+0 - > 25% urutan produk di rak yang tidak sesuai",2,2.0,Pass,Menyesuaikan stock
+151,Showcase,Orientasi produk,"3 - Seluruh label atau nama produk menghadap depan
+2 - < 10% produk dengan orientasi salah
+1 - 10 - 25 % produk dengan orientasi salah
+0 - > 25% produk dengan orientasi salah",2,2.0,Pass,-
+152,Showcase,Jumlah produk per baris,"3 - Seluruh rak terisi sesuai SOP
+2 - < 10% jumlah produk salah (terlalu penuh/kurang)
+1 - 10 - 25 % jumlah produk salah (terlalu penuh/kurang)
+0 - > 25% jumlah produk salah (terlalu penuh/kurang)",3,2.0,Pass,Menyesuaikan stock
+153,Showcase,FIFO,"3 - Seluruh kolom produk terisi sesuai FIFO
+2 - < 10% kolom produk tidak memenuhi FIFO
+1 - 10 - 25 % kolom produk tidak memenuhi FIFO
+0 - > 25% kolom produk tidak memenuhi FIFO",3,2.0,Pass,-
+154,Showcase,Label harga,"3 - Seluruh kolom produk dilabeli dengan benar
+2 - < 10% kolom produk salah label / tidak ada label
+1 - 10 - 25 % kolom produk salah label / tidak ada label
+0 - > 25% kolom produk salah label / tidak ada label",-,2.0,Not Pass,Tidak memiliki label harga karena take away
+155,Showcase,Label promosi,"1 - Seluruh label promosi ditampilkan dengan benar
+0 - Terdapat kesalahan label promosi",-,1.0,Not Pass,-
+156,Absensi,Absensi pulang auditor,,,,,
