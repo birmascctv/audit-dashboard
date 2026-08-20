@@ -6,7 +6,7 @@ import pandas as pd
 # -------------------------
 # Configuration
 # -------------------------
-root_folder = "/root/audit_birmas"                     # folder with CSVs and import script
+root_folder = "/root/audit-dashboard/audit_birmas"                     # folder with CSVs and import script
 db_path = os.path.join(root_folder, "audit_birmas.db") # SQLite DB path
 
 # Optional filters: set FILTER_YEAR to an int and MONTH_RANGE to (start, end) to restrict calculations.
