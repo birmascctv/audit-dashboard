@@ -19,8 +19,11 @@
 
     <!-- Passing rate chart -->
     <ChartCard
-      type="bar"
-      :endpoint="`/api/stats/passing-rate?year!=2025&stores=${selectedStores.join(',')}`"
+      v-for="cat in categories"
+      :key="cat + '-passing-rate'"
+      type="line"
+      :endpoint="`/api/category/${cat}/monthly?stores=${selectedStores.join(',')}`"
+      :passing-grade="passingGrades[cat]"
     />
   </div>
 </template>
