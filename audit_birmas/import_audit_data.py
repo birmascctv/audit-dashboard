@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import os
 import sqlite3
 import sys
@@ -62,7 +61,7 @@ try:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Ensure foreign keys (optional)
+    # Ensure foreign keys
     cursor.execute("PRAGMA foreign_keys = ON;")
 
     # -------------------------
@@ -168,21 +167,52 @@ try:
     print("Schema created/ensured and committed.")
 
     # -------------------------
-    # Wipe old import data (audits, scores, criteria, summaries)
+    # Compatibility: create view/table for legacy references if needed
+    # -------------------------
+    # Some older code or DB objects may reference `criteria_old`. Create a harmless view
+    # that points to the current `criteria` table so legacy queries don't fail.
+    try:
+        cursor.executescript("""
+        CREATE VIEW IF NOT EXISTS criteria_old AS
+          SELECT criteria_id, year, category, name, passing_grade FROM criteria;
+        """)
+        conn.commit()
+        print("Compatibility view criteria_old ensured.")
+    except Exception:
+        # If view creation fails for any reason, continue — it's non-fatal
+        conn.rollback()
+        print("Warning: could not create criteria_old view (continuing).")
+
+    # -------------------------
+    # Wipe old import data (child tables first, then parents)
     # -------------------------
     cursor.executescript("""
+    -- delete child tables first to avoid FK violations
     DELETE FROM scores;
     DELETE FROM audit_summary;
-    DELETE FROM store_monthly_median;
+    DELETE FROM category_store_monthly_passrate;
+    DELETE FROM category_store_monthly_median;
     DELETE FROM category_store_median;
     DELETE FROM category_global_median;
-    DELETE FROM category_store_monthly_median;
-    DELETE FROM category_store_monthly_passrate;
+    DELETE FROM store_monthly_median;
+
+    -- now safe to delete audits and criteria
     DELETE FROM audits;
     DELETE FROM criteria;
+
+    -- keep stores if you want to preserve store list; uncomment to wipe stores
+    -- DELETE FROM stores;
     """)
     conn.commit()
-    print("Old import data wiped and committed.")
+    print("Old import data wiped and committed (ordered deletes).")
+
+    # verify no FK violations remain
+    cursor.execute("PRAGMA foreign_key_check;")
+    fk_violations = cursor.fetchall()
+    if fk_violations:
+        print("ERROR: foreign key violations after delete:", fk_violations, file=sys.stderr)
+        conn.rollback()
+        raise RuntimeError("FK violations after delete")
 
     # -------------------------
     # Month map and normalization helper
