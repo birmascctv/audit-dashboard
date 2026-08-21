@@ -1,7 +1,12 @@
 <template>
   <div class="flex flex-wrap gap-2 mb-4">
-    <label v-for="store in stores" :key="store.id" class="flex items-center gap-1">
-      <input type="checkbox" v-model="modelValue" :value="store.id" />
+    <label v-for="store in stores" :key="store.store_id" class="flex items-center gap-1">
+      <input
+        type="checkbox"
+        :value="store.store_id"
+        :checked="modelValue.includes(store.store_id)"
+        @change="toggleStore(store.store_id)"
+      />
       {{ store.name }}
     </label>
   </div>
@@ -10,7 +15,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 
-const props = defineProps({ modelValue: Array })
+const props = defineProps({ modelValue: { type: Array, default: () => [] } })
 const emit = defineEmits(['update:modelValue'])
 
 const stores = ref([])
@@ -19,4 +24,11 @@ onMounted(async () => {
   const res = await fetch('/api/stores')
   stores.value = await res.json()
 })
+
+function toggleStore(id) {
+  const newVal = props.modelValue.includes(id)
+    ? props.modelValue.filter(s => s !== id)
+    : [...props.modelValue, id]
+  emit('update:modelValue', newVal)
+}
 </script>
