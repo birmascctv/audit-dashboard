@@ -171,15 +171,15 @@ try:
     # Wipe old import data (audits, scores, criteria, summaries)
     # -------------------------
     cursor.executescript("""
-    DELETE FROM audits;
     DELETE FROM scores;
-    DELETE FROM criteria;
     DELETE FROM audit_summary;
     DELETE FROM store_monthly_median;
     DELETE FROM category_store_median;
     DELETE FROM category_global_median;
     DELETE FROM category_store_monthly_median;
     DELETE FROM category_store_monthly_passrate;
+    DELETE FROM audits;
+    DELETE FROM criteria;
     """)
     conn.commit()
     print("Old import data wiped and committed.")
