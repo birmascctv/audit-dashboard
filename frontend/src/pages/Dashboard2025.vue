@@ -1,7 +1,7 @@
-<!-- src/pages/Dashboard.vue -->
+<!-- src/pages/Dashboard2025.vue -->
 <template>
   <div>
-    <h2 class="text-xl font-bold mb-4">Audit Dashboard — Other Years</h2>
+    <h2 class="text-xl font-bold mb-4">Audit Dashboard — Year 2025</h2>
 
     <!-- Store filter -->
     <StoreFilter v-model="selectedStores" />
@@ -12,7 +12,7 @@
         v-for="cat in categories"
         :key="cat"
         type="line"
-        :endpoint="`/api/category/${cat}/monthly?stores=${selectedStores.join(',')}&year!=2025`"
+        :endpoint="`/api/category/${cat}/monthly?stores=${selectedStores.join(',')}`"
         :passing-grade="passingGrades[cat]"
       />
     </div>
@@ -20,7 +20,7 @@
     <!-- Passing rate chart -->
     <ChartCard
       type="bar"
-      :endpoint="`/api/stats/passing-rate?year!=2025&stores=${selectedStores.join(',')}`"
+      :endpoint="`/api/stats/passing-rate?year=2025&stores=${selectedStores.join(',')}`"
     />
   </div>
 </template>
