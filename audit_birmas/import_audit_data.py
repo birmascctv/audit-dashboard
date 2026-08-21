@@ -1,3 +1,14 @@
+#!/usr/bin/env python3
+"""
+Robust import script for audit_birmas CSVs -> SQLite.
+
+Fixes:
+ - ordered deletes (children first) to avoid FK errors
+ - compatibility: create real table criteria_old if needed (not a view)
+ - safe schema creation + immediate commits
+ - defensive CSV parsing and safe inserts
+ - FK verification and clear logging
+"""
 import os
 import sqlite3
 import sys
@@ -167,21 +178,34 @@ try:
     print("Schema created/ensured and committed.")
 
     # -------------------------
-    # Compatibility: create view/table for legacy references if needed
+    # Compatibility: ensure a real table criteria_old exists if referenced by FKs
     # -------------------------
-    # Some older code or DB objects may reference `criteria_old`. Create a harmless view
-    # that points to the current `criteria` table so legacy queries don't fail.
+    # If the DB has objects (tables) that reference criteria_old, create a real table
+    # named criteria_old with the same columns as criteria and populate it from criteria.
+    # This avoids "foreign key mismatch" when scores or other tables reference criteria_old.
     try:
+        # Create criteria_old table if it doesn't exist
         cursor.executescript("""
-        CREATE VIEW IF NOT EXISTS criteria_old AS
-          SELECT criteria_id, year, category, name, passing_grade FROM criteria;
+        CREATE TABLE IF NOT EXISTS criteria_old (
+            criteria_id INTEGER PRIMARY KEY,
+            year INTEGER,
+            category TEXT,
+            name TEXT,
+            passing_grade REAL
+        );
         """)
+        # Populate criteria_old from criteria if empty
+        cnt = cursor.execute("SELECT COUNT(*) FROM criteria_old").fetchone()[0]
+        if cnt == 0:
+            cursor.executescript("""
+            INSERT OR IGNORE INTO criteria_old (criteria_id, year, category, name, passing_grade)
+              SELECT criteria_id, year, category, name, passing_grade FROM criteria;
+            """)
         conn.commit()
-        print("Compatibility view criteria_old ensured.")
+        print("Compatibility table criteria_old ensured and populated (if needed).")
     except Exception:
-        # If view creation fails for any reason, continue — it's non-fatal
         conn.rollback()
-        print("Warning: could not create criteria_old view (continuing).")
+        print("Warning: could not create/populate criteria_old compatibility table (continuing).", file=sys.stderr)
 
     # -------------------------
     # Wipe old import data (child tables first, then parents)
