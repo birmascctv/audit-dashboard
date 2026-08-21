@@ -5,7 +5,6 @@ Unified backend for audit-dashboard
 Endpoints
 - GET  /api/stats/categories?year=&month=&top=
 - GET  /api/stats/store-trend?store_id=&limit=
-- GET  /api/audits/recent?limit=
 - GET  /api/categories
 - GET  /api/stores
 - GET  /api/category/<category>/monthly?stores=&metric=
@@ -155,35 +154,6 @@ def store_trend():
         ]
     })
 
-
-@app.route("/api/audits/recent")
-def audits_recent():
-    limit = request.args.get("limit", default=DEFAULT_LIMIT_RECENT, type=int)
-    rows = query_rows("""
-        SELECT a.audit_id, s.name AS store_name, a.year, a.month, asu.total_criteria,
-               asu.passed_count, asu.pass_rate, a.file_name
-        FROM audits a
-        JOIN stores s ON a.store_id = s.store_id
-        LEFT JOIN audit_summary asu ON asu.audit_id = a.audit_id
-        ORDER BY a.year DESC, a.month DESC, a.audit_id DESC
-        LIMIT ?
-    """, (limit,))
-
-    out = []
-    for r in rows:
-        out.append({
-            "audit_id": r["audit_id"],
-            "store_name": r["store_name"],
-            "year": int(r["year"]),
-            "month": int(r["month"]),
-            "total_criteria": r["total_criteria"],
-            "passed_count": r["passed_count"],
-            "pass_rate": None if r["pass_rate"] is None else float(r["pass_rate"]),
-            "file_name": r["file_name"]
-        })
-    return jsonify(out)
-
-
 # -------------------------
 # Endpoints from api.py
 # -------------------------
@@ -247,6 +217,17 @@ def category_passrate(category):
     rows = query_rows(sql, params)
     series = rows_to_series(rows)
     return jsonify(series)
+
+
+@app.route("/api/passing-grades")
+def passing_grades():
+    rows = query_rows("""
+        SELECT DISTINCT category, passing_grade
+        FROM criteria
+        ORDER BY category
+    """)
+    result = {r["category"]: r["passing_grade"] for r in rows}
+    return jsonify(result)
 
 
 @app.route("/api/drilldown")
