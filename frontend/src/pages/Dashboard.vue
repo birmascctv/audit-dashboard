@@ -2,41 +2,6 @@
   <div class="dashboard min-h-screen px-4 py-4">
     <Header />
 
-    <section class="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
-      <div class="card">
-        <div class="flex items-center gap-2 mb-3">
-          <h2 class="brand">Selected Camera</h2>
-          <select v-model="selectedCam" class="ml-auto select-cam">
-            <option v-for="c in cameras" :key="c.id" :value="c.id">{{ c.name }}</option>
-          </select>
-        </div>
-        <div class="relative w-full rounded-md overflow-hidden bg-black" style="padding-top:56.25%">
-          <div class="absolute inset-0 flex items-center justify-center text-white">
-            <div v-if="selectedCam">Live stream for {{ selectedCam }}</div>
-            <div v-else>No camera selected</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2 class="brand mb-3">All Cameras</h2>
-        <div class="grid grid-cols-3 gap-2">
-          <div v-for="cam in cameras" :key="cam.id"
-               class="relative aspect-video rounded-md overflow-hidden cursor-pointer border-2"
-               :class="selectedCam === cam.id ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'"
-               @click="selectedCam = cam.id">
-            <img :src="cam.thumbnail" alt="Camera thumbnail" class="w-full h-full object-cover" />
-            <span class="absolute bottom-0.5 left-0.5 text-xs font-medium px-1 py-0.5 rounded leading-tight"
-                  :class="selectedCam === cam.id ? 'bg-red-600 text-white' : 'bg-black bg-opacity-60 text-white'">
-              {{ cam.name }}
-            </span>
-            <span class="absolute top-0.5 right-0.5 w-2 h-2 rounded-full border border-white shadow"
-                  :class="cameraOnline(cam.id) ? 'bg-green-500 animate-pulse' : 'bg-red-500'"></span>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <div class="flex items-center gap-2 mb-3">
       <label class="text-sm font-medium">Year</label>
       <select v-model="year" class="filter-select">
