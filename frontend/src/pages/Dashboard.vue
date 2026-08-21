@@ -1,27 +1,31 @@
-<!-- src/pages/Dashboard.vue -->
 <template>
   <div>
-    <h2 class="text-xl font-bold mb-4">Audit Dashboard — 2026</h2>
+    <h2 class="text-xl font-bold mb-4">Audit Dashboard</h2>
 
     <!-- Store filter -->
     <StoreFilter v-model="selectedStores" />
 
-    <!-- Category charts -->
-    <div class="grid grid-cols-2 gap-4">
+    <!-- Monthly charts -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <ChartCard
         v-for="cat in categories"
         :key="cat"
         type="line"
-        :endpoint="`/api/category/${cat}/monthly?stores=${selectedStores.join(',')}&year!=2025`"
+        :endpoint="`/api/category/${cat}/monthly?stores=${selectedStores.join(',')}`"
         :passingGrade="passingGrades[cat]"
+        :options="{ title: { text: cat } }"
       />
+    </div>
 
+    <!-- Pass rate charts -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
       <ChartCard
         v-for="cat in categories"
-        :key="cat + '-passing-rate'"
+        :key="cat + '-passrate'"
         type="bar"
-        :endpoint="`/api/category/${cat}/passrate?stores=${selectedStores.join(',')}&year!=2025`"
+        :endpoint="`/api/category/${cat}/passrate?stores=${selectedStores.join(',')}`"
         :passingGrade="passingGrades[cat]"
+        :options="{ title: { text: cat + ' Pass Rate' } }"
       />
     </div>
   </div>

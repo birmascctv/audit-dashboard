@@ -16,6 +16,7 @@ from flask_cors import CORS
 import sqlite3
 import os
 from collections import defaultdict
+from urlib.parse import unquote
 
 # Configuration
 DB_PATH = os.environ.get("AUDIT_DB_PATH", "/root/audit-dashboard/audit_birmas/audit_birmas.db")
@@ -171,6 +172,7 @@ def stores():
 
 @app.route("/api/category/<category>/monthly")
 def category_monthly(category):
+    category = unquote(category)
     stores_param = request.args.get("stores", "")
     year = request.args.get("year", type=int)
     metric = request.args.get("metric", "raw")  # raw or norm
