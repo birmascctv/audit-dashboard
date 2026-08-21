@@ -12,6 +12,7 @@ import { ref, onMounted, watch, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import { Chart, registerables } from 'chart.js'
 import annotationPlugin from 'chartjs-plugin-annotation'
+import { baseOptions } from '../chart-config.js'
 
 Chart.register(...registerables, annotationPlugin)
 
@@ -20,7 +21,7 @@ const props = defineProps({
   type: { type: String, default: 'line' }, // line or bar
   options: { type: Object, default: () => ({}) },
   refreshKey: { type: [String, Number], default: null },
-  passingGrade: { type: Number, default: null } // NEW: optional threshold line
+  passingGrade: { type: Number, default: null } // optional threshold line
 })
 
 const canvas = ref(null)
@@ -36,23 +37,12 @@ async function loadData() {
 
     if (chart) chart.destroy()
 
-    // base options
-    let baseOptions = {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: true },
-        tooltip: { mode: 'index', intersect: false }
-      },
-      scales: {
-        x: { grid: { display: false } },
-        y: { beginAtZero: true, grid: { color: 'rgba(15,23,42,0.06)' } }
-      }
-    }
+    // clone base options
+    let options = JSON.parse(JSON.stringify(baseOptions))
 
     // add passing grade line if provided
     if (props.passingGrade !== null) {
-      baseOptions.plugins.annotation = {
+      options.plugins.annotation = {
         annotations: {
           passing: {
             type: 'line',
@@ -61,11 +51,25 @@ async function loadData() {
             borderColor: 'red',
             borderWidth: 2,
             label: {
-              content: 'Passing Grade',
+              content: `Passing Grade ${props.passingGrade}`,
               enabled: true,
-              position: 'end'
+              position: 'end',
+              color: '#f1f5f9'
             }
           }
+        }
+      }
+    }
+
+    // merge with incoming props.options (e.g. title override)
+    options = {
+      ...options,
+      plugins: {
+        ...options.plugins,
+        ...props.options.plugins,
+        title: {
+          ...options.plugins.title,
+          ...(props.options.title || {})
         }
       }
     }
@@ -73,7 +77,7 @@ async function loadData() {
     chart = new Chart(canvas.value, {
       type: props.type,
       data: payload,
-      options: Object.assign(baseOptions, props.options)
+      options
     })
   } catch (err) {
     error.value = err.message
@@ -89,6 +93,13 @@ onBeforeUnmount(() => chart?.destroy())
 </script>
 
 <style scoped>
-.card { padding: 1rem; border-radius: 0.75rem; background: var(--panel); box-shadow: var(--card-shadow); border: 1px solid var(--panel-border); }
+.card {
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: #1e293b; /* dark slate */
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  border: 1px solid #334155;
+  color: #f1f5f9;
+}
 canvas { display:block; }
 </style>
