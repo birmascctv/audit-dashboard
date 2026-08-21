@@ -8,7 +8,11 @@
       />
       All Stores
     </label>
-    <label v-for="store in stores" :key="store.store_id" class="flex items-center gap-1">
+    <label
+      v-for="store in stores"
+      :key="store.store_id"
+      class="flex items-center gap-1"
+    >
       <input
         type="checkbox"
         :value="store.store_id"
@@ -21,7 +25,11 @@
 </template>
 
 <script setup>
-const props = defineProps({ modelValue: { type: Array, default: () => [] } })
+import { ref, onMounted } from 'vue'
+
+const props = defineProps({
+  modelValue: { type: Array, default: () => [] }
+})
 const emit = defineEmits(['update:modelValue'])
 const stores = ref([])
 
