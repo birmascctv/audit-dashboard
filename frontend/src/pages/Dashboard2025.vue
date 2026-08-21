@@ -12,6 +12,7 @@
         type="line"
         :endpoint="`/api/category/${cat}/monthly?stores=${selectedStores.join(',')}&year=2025`"
         :passingGrade="passingGrades[cat]"
+        :options="{ title: { text: cat } }"
       />
     </div>
 
@@ -22,6 +23,7 @@
         type="bar"
         :endpoint="`/api/category/${cat}/passrate?stores=${selectedStores.join(',')}&year=2025`"
         :passingGrade="passingGrades[cat]"
+        :options="{ title: { text: cat + ' Pass Rate' } }"
       />
     </div>
   </div>

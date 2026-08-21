@@ -188,33 +188,31 @@ def category_monthly(category):
         params.append(year)
 
     sql = f"""
-        SELECT store_id, year, month, {col}
-        FROM category_store_monthly_median
-        WHERE category = ?
+        SELECT m.store_id, s.name AS store_name, m.year, m.month, {col}
+        FROM category_store_monthly_median m
+        JOIN stores s ON m.store_id = s.store_id
+        WHERE m.category = ?
         {where_store}
         {where_year}
-        ORDER BY year, month, store_id
+        ORDER BY m.year, m.month, m.store_id
     """
     rows = query_rows(sql, params)
 
-    # Build Chart.js payload
     labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
-    datasets = []
-    stores_seen = {}
+    datasets = {}
     for r in rows:
         sid = r["store_id"]
-        if sid not in stores_seen:
-            stores_seen[sid] = []
-        stores_seen[sid].append(None if r[col] is None else float(r[col]))
-    for sid, data in stores_seen.items():
-        datasets.append({
-            "label": f"Store {sid}",
-            "data": data,
-            "borderColor": "#ef4444",
-            "fill": False
-        })
+        name = r["store_name"]
+        if sid not in datasets:
+            datasets[sid] = {
+                "label": name,
+                "data": [],
+                "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",  # consistent color per store_id
+                "fill": False
+            }
+        datasets[sid]["data"].append(None if r[col] is None else float(r[col]))
 
-    return jsonify({"labels": labels, "datasets": datasets})
+    return jsonify({"labels": labels, "datasets": list(datasets.values())})
 
 
 @app.route("/api/category/<category>/passrate")
@@ -234,32 +232,31 @@ def category_passrate(category):
         params.append(year)
 
     sql = f"""
-        SELECT store_id, year, month, pass_rate
-        FROM category_store_monthly_passrate
-        WHERE category = ?
+        SELECT m.store_id, s.name AS store_name, m.year, m.month, m.pass_rate
+        FROM category_store_monthly_passrate m
+        JOIN stores s ON m.store_id = s.store_id
+        WHERE m.category = ?
         {where_store}
         {where_year}
-        ORDER BY year, month, store_id
+        ORDER BY m.year, m.month, m.store_id
     """
     rows = query_rows(sql, params)
 
     labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
-    datasets = []
-    stores_seen = {}
+    datasets = {}
     for r in rows:
         sid = r["store_id"]
-        if sid not in stores_seen:
-            stores_seen[sid] = []
-        stores_seen[sid].append(None if r["pass_rate"] is None else float(r["pass_rate"]))
-    for sid, data in stores_seen.items():
-        datasets.append({
-            "label": f"Store {sid} Pass Rate",
-            "data": data,
-            "borderColor": "#3b82f6",
-            "fill": False
-        })
+        name = r["store_name"]
+        if sid not in datasets:
+            datasets[sid] = {
+                "label": f"{name} Pass Rate",
+                "data": [],
+                "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",
+                "fill": False
+            }
+        datasets[sid]["data"].append(None if r["pass_rate"] is None else float(r["pass_rate"]))
 
-    return jsonify({"labels": labels, "datasets": datasets})
+    return jsonify({"labels": labels, "datasets": list(datasets.values())})
 
 
 @app.route("/api/passing-grades")
