@@ -66,10 +66,10 @@ async function loadData() {
       ...options,
       plugins: {
         ...options.plugins,
-        ...props.options.plugins,
         title: {
           ...options.plugins.title,
-          ...(props.options.title || {})
+          display: true, // ✅ always show title
+          text: props.options?.title?.text || '' // use category name
         }
       }
     }
@@ -100,6 +100,8 @@ onBeforeUnmount(() => chart?.destroy())
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
   border: 1px solid #334155;
   color: #f1f5f9;
+  height: 250px;
+  width: 100%;       /* allow grid to size it */
 }
-canvas { display:block; }
+canvas { display:block; width:100%; height:100%; }
 </style>

@@ -5,7 +5,9 @@
 
     <!-- Store filter -->
     <StoreFilter v-model="selectedStores" />
-    <div class="grid grid-cols-2 gap-4">
+
+    <!-- Monthly charts -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <ChartCard
         v-for="cat in categories"
         :key="cat"
@@ -16,7 +18,8 @@
       />
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <!-- Pass rate charts -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
       <ChartCard
         v-for="cat in categories"
         :key="cat + '-passing-rate'"
