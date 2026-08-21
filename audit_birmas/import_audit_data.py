@@ -2,12 +2,11 @@
 """
 Robust import script for audit_birmas CSVs -> SQLite.
 
-Fixes:
- - ordered deletes (children first) to avoid FK errors
- - compatibility: create real table criteria_old if needed (not a view)
- - safe schema creation + immediate commits
- - defensive CSV parsing and safe inserts
- - FK verification and clear logging
+Key fixes:
+ - Detect and repair foreign-key mismatch where scores referenced criteria_old.
+ - Recreate scores table to reference criteria if needed, copying existing rows.
+ - Ordered deletes (children first) to avoid FK errors.
+ - Safe schema creation + commits, defensive CSV parsing, and final verification.
 """
 import os
 import sqlite3
@@ -19,12 +18,11 @@ from datetime import datetime
 # -------------------------
 # Configuration
 # -------------------------
-root_folder = "/root/audit-dashboard/audit_birmas"                     # folder with CSVs and import script
-db_path = os.path.join(root_folder, "audit_birmas.db")               # SQLite DB path
+root_folder = "/root/audit-dashboard/audit_birmas"
+db_path = os.path.join(root_folder, "audit_birmas.db")
 
-# Optional filters
-FILTER_YEAR = None        # e.g., 2025 or None
-MONTH_RANGE = None        # e.g., (7, 12) or None
+FILTER_YEAR = None
+MONTH_RANGE = None
 
 # -------------------------
 # Helpers
@@ -59,7 +57,6 @@ def safe_fetchone_first(colrow):
 if not os.path.isdir(root_folder):
     print(f"ERROR: root_folder does not exist: {root_folder}", file=sys.stderr)
     sys.exit(1)
-
 if not os.access(root_folder, os.W_OK):
     print(f"ERROR: no write permission for folder: {root_folder}", file=sys.stderr)
     sys.exit(1)
@@ -72,14 +69,82 @@ try:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Ensure foreign keys
+    # Ensure foreign keys on for normal operations
     cursor.execute("PRAGMA foreign_keys = ON;")
 
     # -------------------------
-    # Create schema (commit immediately)
+    # Detect if existing scores FK references criteria_old
+    # If so, recreate scores to reference criteria instead.
+    # -------------------------
+    def scores_references_criteria_old():
+        try:
+            fk_rows = cursor.execute("PRAGMA foreign_key_list('scores')").fetchall()
+            # PRAGMA foreign_key_list returns rows where the 3rd column is the referenced table name
+            for r in fk_rows:
+                # r format: (id, seq, table, from, to, on_update, on_delete, match)
+                if len(r) >= 3 and r[2] == 'criteria_old':
+                    return True
+            return False
+        except sqlite3.OperationalError:
+            # scores table may not exist yet
+            return False
+
+    if scores_references_criteria_old():
+        print("Detected scores -> criteria_old foreign key. Repairing schema to reference criteria.")
+        # Temporarily disable FK enforcement to perform schema change
+        cursor.execute("PRAGMA foreign_keys = OFF;")
+        conn.commit()
+
+        # Rename existing scores to scores_old (if exists)
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scores';")
+        if cursor.fetchone():
+            cursor.execute("ALTER TABLE scores RENAME TO scores_old;")
+            conn.commit()
+            print("Renamed existing scores -> scores_old")
+
+        # Create new scores table referencing criteria(criteria_id)
+        cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS scores (
+            score_id INTEGER PRIMARY KEY,
+            audit_id INTEGER NOT NULL,
+            criteria_id INTEGER NOT NULL,
+            score REAL,
+            pass_fail TEXT,
+            notes TEXT,
+            FOREIGN KEY (audit_id) REFERENCES audits(audit_id),
+            FOREIGN KEY (criteria_id) REFERENCES criteria(criteria_id)
+        );
+        """)
+        conn.commit()
+        print("Created new scores table referencing criteria(criteria_id).")
+
+        # If scores_old exists, copy rows across (criteria_id values are preserved)
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scores_old';")
+        if cursor.fetchone():
+            # Copy rows where columns match; ignore conflicts
+            cursor.executescript("""
+            INSERT OR IGNORE INTO scores (score_id, audit_id, criteria_id, score, pass_fail, notes)
+              SELECT score_id, audit_id, criteria_id, score, pass_fail, notes FROM scores_old;
+            """)
+            conn.commit()
+            print("Copied rows from scores_old into new scores table (if any).")
+
+            # Drop the old table
+            cursor.executescript("""
+            DROP TABLE IF EXISTS scores_old;
+            """)
+            conn.commit()
+            print("Dropped scores_old.")
+
+        # Re-enable foreign keys
+        cursor.execute("PRAGMA foreign_keys = ON;")
+        conn.commit()
+        print("Foreign key enforcement re-enabled after schema repair.")
+
+    # -------------------------
+    # Create schema (idempotent) and commit
     # -------------------------
     cursor.executescript("""
-    -- Drop old average tables if any (safe)
     DROP TABLE IF EXISTS store_monthly_avg;
     DROP TABLE IF EXISTS category_store_avg;
     DROP TABLE IF EXISTS category_global_avg;
@@ -178,40 +243,42 @@ try:
     print("Schema created/ensured and committed.")
 
     # -------------------------
-    # Compatibility: ensure a real table criteria_old exists if referenced by FKs
+    # If some DB objects still reference criteria_old, create a compatibility table
+    # (only if necessary). This avoids 'no such table' errors for legacy objects.
     # -------------------------
-    # If the DB has objects (tables) that reference criteria_old, create a real table
-    # named criteria_old with the same columns as criteria and populate it from criteria.
-    # This avoids "foreign key mismatch" when scores or other tables reference criteria_old.
     try:
-        # Create criteria_old table if it doesn't exist
-        cursor.executescript("""
-        CREATE TABLE IF NOT EXISTS criteria_old (
-            criteria_id INTEGER PRIMARY KEY,
-            year INTEGER,
-            category TEXT,
-            name TEXT,
-            passing_grade REAL
-        );
-        """)
-        # Populate criteria_old from criteria if empty
-        cnt = cursor.execute("SELECT COUNT(*) FROM criteria_old").fetchone()[0]
-        if cnt == 0:
+        # If criteria_old does not exist, create it with same columns as criteria
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='criteria_old';")
+        if not cursor.fetchone():
             cursor.executescript("""
-            INSERT OR IGNORE INTO criteria_old (criteria_id, year, category, name, passing_grade)
-              SELECT criteria_id, year, category, name, passing_grade FROM criteria;
+            CREATE TABLE IF NOT EXISTS criteria_old (
+                criteria_id INTEGER PRIMARY KEY,
+                year INTEGER,
+                category TEXT,
+                name TEXT,
+                passing_grade REAL
+            );
             """)
-        conn.commit()
-        print("Compatibility table criteria_old ensured and populated (if needed).")
+            # populate from criteria if criteria has rows
+            cursor.execute("SELECT COUNT(*) FROM criteria;")
+            ccount = cursor.fetchone()[0]
+            if ccount > 0:
+                cursor.executescript("""
+                INSERT OR IGNORE INTO criteria_old (criteria_id, year, category, name, passing_grade)
+                  SELECT criteria_id, year, category, name, passing_grade FROM criteria;
+                """)
+            conn.commit()
+            print("Compatibility table criteria_old created and populated (if criteria had rows).")
+        else:
+            print("criteria_old table already exists; leaving as-is.")
     except Exception:
         conn.rollback()
-        print("Warning: could not create/populate criteria_old compatibility table (continuing).", file=sys.stderr)
+        print("Warning: could not ensure criteria_old compatibility table (continuing).", file=sys.stderr)
 
     # -------------------------
     # Wipe old import data (child tables first, then parents)
     # -------------------------
     cursor.executescript("""
-    -- delete child tables first to avoid FK violations
     DELETE FROM scores;
     DELETE FROM audit_summary;
     DELETE FROM category_store_monthly_passrate;
@@ -219,13 +286,8 @@ try:
     DELETE FROM category_store_median;
     DELETE FROM category_global_median;
     DELETE FROM store_monthly_median;
-
-    -- now safe to delete audits and criteria
     DELETE FROM audits;
     DELETE FROM criteria;
-
-    -- keep stores if you want to preserve store list; uncomment to wipe stores
-    -- DELETE FROM stores;
     """)
     conn.commit()
     print("Old import data wiped and committed (ordered deletes).")
@@ -246,7 +308,6 @@ try:
         "Mei": 5, "Juni": 6, "Juli": 7, "Agustus": 8,
         "September": 9, "Oktober": 10, "November": 11, "Desember": 12
     }
-
     def normalize_month(month_str):
         if not month_str:
             return None
@@ -255,16 +316,13 @@ try:
         return month_map.get(month_name, None)
 
     # -------------------------
-    # Collect audit CSV entries (store, year, month, file, path)
+    # Collect audit CSV entries
     # -------------------------
     audit_entries = []
-
     for store_name in sorted(os.listdir(root_folder)):
         store_path = os.path.join(root_folder, store_name)
-        # skip files and common virtualenv names
         if not os.path.isdir(store_path) or store_name in ("venv", ".venv"):
             continue
-
         cursor.execute("INSERT OR IGNORE INTO stores (name) VALUES (?)", (store_name,))
         conn.commit()
         store_id_row = cursor.execute("SELECT store_id FROM stores WHERE name=?", (store_name,)).fetchone()
@@ -272,35 +330,29 @@ try:
         if store_id is None:
             print(f"WARNING: could not get store_id for {store_name}, skipping", file=sys.stderr)
             continue
-
         for year in sorted(os.listdir(store_path)):
             year_path = os.path.join(store_path, year)
             if not os.path.isdir(year_path):
                 continue
-            # year should be numeric
             try:
                 year_int = int(year)
             except ValueError:
                 print(f"Skipping non-year folder {year} under {store_name}")
                 continue
-
             for month in sorted(os.listdir(year_path)):
                 month_path = os.path.join(year_path, month)
                 if not os.path.isdir(month_path):
                     continue
-
                 norm_month = normalize_month(month)
                 if norm_month is None:
                     print(f"⚠️ Skipped unknown month folder: {month} (store {store_name} / year {year})")
                     continue
-
                 for file in sorted(os.listdir(month_path)):
                     if not file.lower().endswith(".csv"):
                         continue
                     file_path = os.path.join(month_path, file)
                     audit_entries.append((store_id, year_int, norm_month, file, file_path))
 
-    # Sort audits by year → month → store
     audit_entries.sort(key=lambda x: (x[1], x[2], x[0]))
     print(f"Found {len(audit_entries)} CSV audit files to import.")
 
@@ -314,11 +366,8 @@ try:
             print(f"ERROR reading CSV {file_path}: {e}", file=sys.stderr)
             continue
 
-        # insert audit row
-        cursor.execute("""
-            INSERT INTO audits (store_id, year, month, file_name)
-            VALUES (?,?,?,?)
-        """, (store_id, year, month, file))
+        cursor.execute("INSERT INTO audits (store_id, year, month, file_name) VALUES (?,?,?,?)",
+                       (store_id, year, month, file))
         audit_id = cursor.lastrowid
 
         passed_count = 0
@@ -329,65 +378,44 @@ try:
             row_count += 1
             category = str(row.get("Category", "")).strip()
             name = str(row.get("Criteria", "")).strip()
-
-            # Skip Absensi and Maintenance
             if category.lower() in ["absensi", "maintenance"]:
                 continue
-
             passing_grade = row.get("Passing Grade", None)
-
-            cursor.execute("""
-                INSERT OR IGNORE INTO criteria (year, category, name, passing_grade)
-                VALUES (?,?,?,?)
-            """, (year, category, name, passing_grade))
+            cursor.execute("INSERT OR IGNORE INTO criteria (year, category, name, passing_grade) VALUES (?,?,?,?)",
+                           (year, category, name, passing_grade))
             criteria_row = cursor.execute("SELECT criteria_id FROM criteria WHERE year=? AND name=?", (year, name)).fetchone()
             criteria_id = safe_fetchone_first(criteria_row)
             if criteria_id is None:
                 print(f"WARNING: criteria_id missing for {name} (year {year})", file=sys.stderr)
                 continue
-
-            # Safe float conversion
             raw_score = row.get("Score", None)
             try:
                 score_val = float(raw_score) if raw_score is not None and str(raw_score).strip() != "" else None
             except (ValueError, TypeError):
                 score_val = None
-
             pass_fail = row.get("Pass/Not Pass", None)
-
-            cursor.execute("""
-                INSERT INTO scores (audit_id, criteria_id, score, pass_fail, notes)
-                VALUES (?,?,?,?,?)
-            """, (
-                audit_id,
-                criteria_id,
-                round(score_val, 2) if score_val is not None else None,
-                str(pass_fail) if pass_fail is not None else None,
-                row.get("Infraction Details", None)
-            ))
-
+            cursor.execute("INSERT INTO scores (audit_id, criteria_id, score, pass_fail, notes) VALUES (?,?,?,?,?)",
+                           (audit_id, criteria_id,
+                            round(score_val, 2) if score_val is not None else None,
+                            str(pass_fail) if pass_fail is not None else None,
+                            row.get("Infraction Details", None)))
             if score_val is not None:
                 not_null_count += 1
             if isinstance(pass_fail, str) and pass_fail.lower() == "pass":
                 passed_count += 1
 
-        # Insert audit summary (use row_count as total_criteria to match CSV rows)
         pass_rate = round((passed_count / not_null_count), 3) if not_null_count > 0 else None
-        cursor.execute("""
-            INSERT INTO audit_summary (audit_id, total_criteria, passed_count, not_null_count, pass_rate)
-            VALUES (?,?,?,?,?)
-        """, (audit_id, row_count, passed_count, not_null_count, pass_rate))
+        cursor.execute("INSERT INTO audit_summary (audit_id, total_criteria, passed_count, not_null_count, pass_rate) VALUES (?,?,?,?,?)",
+                       (audit_id, row_count, passed_count, not_null_count, pass_rate))
 
     conn.commit()
     print("Inserted audits, criteria, scores, and summaries. Committed.")
 
     # -------------------------
-    # Populate medians and pass rates (store-monthly, category-store-monthly, aggregates)
-    # Uses optional FILTER_YEAR and MONTH_RANGE
+    # Compute medians and pass rates (store-monthly, category-store-monthly, aggregates)
     # -------------------------
     audit_filter = _year_month_filter(alias="a")
 
-    # 1) Store-monthly median (ordered year→month→store)
     rows = cursor.execute(f"""
         SELECT a.store_id, a.year, a.month
         FROM audits a
@@ -407,15 +435,11 @@ try:
               AND LOWER(c.category) != 'maintenance'
         """, (store_id, year, month)).fetchall()]
         med = median(scores)
-        cursor.execute(
-            "INSERT INTO store_monthly_median (store_id, year, month, median_score) VALUES (?,?,?,?)",
-            (store_id, year, month, med)
-        )
-
+        cursor.execute("INSERT INTO store_monthly_median (store_id, year, month, median_score) VALUES (?,?,?,?)",
+                       (store_id, year, month, med))
     conn.commit()
     print("Computed and inserted store_monthly_median.")
 
-    # 2) Category-store-monthly median + normalized median + pass rate
     groups = cursor.execute(f"""
         SELECT a.store_id, a.year, a.month, c.category
         FROM scores sc
@@ -492,7 +516,6 @@ try:
     conn.commit()
     print("Computed and inserted category_store_monthly_median and passrate.")
 
-    # 3) Aggregates: category_store_median and category_global_median (across included months)
     agg_rows = cursor.execute(f"""
         SELECT s.store_id, c.category
         FROM scores sc
@@ -515,10 +538,8 @@ try:
             WHERE a.store_id=? AND c.category=? AND sc.score IS NOT NULL
         """, (store_id, category)).fetchall()]
         med = median(scores)
-        cursor.execute("""
-            INSERT INTO category_store_median (store_id, category, median_score)
-            VALUES (?,?,?)
-        """, (store_id, category, med))
+        cursor.execute("INSERT INTO category_store_median (store_id, category, median_score) VALUES (?,?,?)",
+                       (store_id, category, med))
 
     conn.commit()
     print("Inserted category_store_median aggregates.")
@@ -549,13 +570,10 @@ try:
     conn.commit()
     print("Inserted category_global_median aggregates.")
 
-    # -------------------------
-    # Final verification: list tables and row counts
-    # -------------------------
+    # Final verification
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
     tables = [r[0] for r in cursor.fetchall()]
     print("Tables in DB:", tables)
-
     for t in tables:
         try:
             cnt = cursor.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
