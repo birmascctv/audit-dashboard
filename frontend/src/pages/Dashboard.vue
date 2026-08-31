@@ -11,7 +11,8 @@
         v-for="cat in categories"
         :key="cat"
         type="line"
-        :endpoint="`/api/category/${cat}/monthly?stores=${selectedStores.join(',')}`"
+        :category="cat"
+        :selected-stores="selectedStores"
         :passingGrade="passingGrades[cat]"
         :options="{ title: { text: cat } }"
       />
@@ -23,7 +24,8 @@
         v-for="cat in categories"
         :key="cat + '-passrate'"
         type="bar"
-        :endpoint="`/api/category/${cat}/passrate?stores=${selectedStores.join(',')}`"
+        :category="cat"
+        :selected-stores="selectedStores"
         :passingGrade="passingGrades[cat]"
         :options="{ title: { text: cat + ' Pass Rate' } }"
       />
@@ -49,3 +51,8 @@ onMounted(async () => {
   passingGrades.value = await gradeRes.json()
 })
 </script>
+
+<style scoped>
+/* optional: small spacing tweak for chart cards */
+.chart-card { min-height: 220px; }
+</style>

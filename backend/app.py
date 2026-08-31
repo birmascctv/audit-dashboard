@@ -16,7 +16,7 @@ from flask_cors import CORS
 import sqlite3
 import os
 from collections import defaultdict
-from urlib.parse import unquote
+from urllib.parse import unquote
 
 # Configuration
 DB_PATH = os.environ.get("AUDIT_DB_PATH", "/root/audit-dashboard/audit_birmas/audit_birmas.db")
@@ -63,6 +63,31 @@ def latest_year_month(conn):
     if row:
         return int(row["year"]), int(row["month"])
     return None, None
+
+
+def parse_stores_param(raw):
+    """
+    Robust parsing for the 'stores' query parameter.
+    Accepts:
+      - empty string -> None (means all stores)
+      - "1" -> [1]
+      - "1,2,3" -> [1,2,3]
+      - "1:1" or "1,2:1" -> strips trailing colon-suffix and parses numbers
+    Returns None if no valid store ids found.
+    """
+    if not raw:
+        return None
+    # strip any trailing colon-suffix like ":1"
+    raw = raw.split(':', 1)[0]
+    parts = [p.strip() for p in raw.split(',') if p.strip()]
+    ids = []
+    for p in parts:
+        if p.isdigit():
+            ids.append(int(p))
+        else:
+            # ignore non-numeric parts
+            app.logger.warning('Ignoring non-numeric store id part: %s', p)
+    return ids if ids else None
 
 
 # -------------------------
@@ -176,7 +201,8 @@ def category_monthly(category):
     stores_param = request.args.get("stores", "")
     year = request.args.get("year", type=int)
     metric = request.args.get("metric", "raw")  # raw or norm
-    store_ids = [int(s) for s in stores_param.split(",") if s.strip().isdigit()]
+
+    store_ids = parse_stores_param(stores_param)
     col = "median_score" if metric == "raw" else "median_normalized"
 
     params = [category]
@@ -219,9 +245,11 @@ def category_monthly(category):
 
 @app.route("/api/category/<category>/passrate")
 def category_passrate(category):
+    category = unquote(category)
     stores_param = request.args.get("stores", "")
     year = request.args.get("year", type=int)
-    store_ids = [int(s) for s in stores_param.split(",") if s.strip().isdigit()]
+
+    store_ids = parse_stores_param(stores_param)
 
     params = [category]
     where_store = ""
