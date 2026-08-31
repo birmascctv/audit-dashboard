@@ -23,18 +23,19 @@ Chart.register(...registerables, annotationPlugin)
 
 const props = defineProps({
   category: { type: String, required: true },
+  // optional: criterion id for single-criterion line view
+  criterion: { type: [String, Number], default: null },
+
   selectedStores: { type: Array, default: () => [] },
 
-  type: { type: String, default: 'line' }, // 'line' or 'bar'
+  // type: 'line' or 'bar'
+  type: { type: String, default: 'line' },
   options: { type: Object, default: () => ({}) },
   refreshKey: { type: [String, Number], default: null },
   passingGrade: { type: Number, default: null },
 
   year: { type: Number, default: null },
   excludeYear: { type: Number, default: null }
-
-  // If you want all line charts to share the same y max, add:
-  // yMax: { type: Number, default: null }
 })
 
 const emit = defineEmits(['loading'])
@@ -44,41 +45,28 @@ let chart = null
 const loading = ref(false)
 const error = ref(null)
 
+/** Build URL depending on chart type and whether a criterion is selected.
+ *  - Line (criterion): /api/category/:category/criterion/:criterion/monthly
+ *  - Line (no criterion): fallback to /api/category/:category/monthly
+ *  - Bar (passrate): /api/category/:category/passrate
+ */
 function buildUrl(kind = 'monthly') {
   const cat = encodeURIComponent(props.category)
   const storesParam = (props.selectedStores && props.selectedStores.length) ? props.selectedStores.join(',') : ''
-  let url = storesParam
-    ? `/api/category/${cat}/${kind}?stores=${storesParam}`
-    : `/api/category/${cat}/${kind}`
+  let url = ''
+
+  if (props.type === 'line' && props.criterion) {
+    url = `/api/category/${cat}/criterion/${encodeURIComponent(props.criterion)}/monthly`
+  } else {
+    url = storesParam
+      ? `/api/category/${cat}/${kind}?stores=${storesParam}`
+      : `/api/category/${cat}/${kind}`
+  }
 
   if (props.year) {
     url += (url.includes('?') ? '&' : '?') + `year=${props.year}`
   }
   return url
-}
-
-function applyPassingGrade(options) {
-  if (props.passingGrade !== null) {
-    options.plugins = options.plugins || {}
-    options.plugins.annotation = {
-      annotations: {
-        passing: {
-          type: 'line',
-          yMin: props.passingGrade,
-          yMax: props.passingGrade,
-          borderColor: 'red',
-          borderWidth: 2,
-          label: {
-            content: `Passing Grade ${props.passingGrade}`,
-            enabled: true,
-            position: 'end',
-            color: '#f1f5f9'
-          }
-        }
-      }
-    }
-  }
-  return options
 }
 
 /** Deterministic color generator for fallback when dataset has no color. */
@@ -95,14 +83,21 @@ function backgroundFromBorder(border) {
   if (!border) return border
   const s = String(border).trim()
   if (s.startsWith('hsl(')) {
-    // convert hsl(...) -> hsla(..., 0.85)
     return s.replace(/^hsl\(/, 'hsla(').replace(/\)$/, ',0.85)')
   }
   if (s.startsWith('rgb(')) {
     return s.replace(/^rgb\(/, 'rgba(').replace(/\)$/, ',0.85)')
   }
-  // hex or other: return as-is (Chart.js will render it)
   return s
+}
+
+/** Median helper for arrays of numbers */
+function medianOfArray(arr) {
+  if (!Array.isArray(arr)) return null
+  const nums = arr.filter(v => v !== null && v !== undefined).map(Number).filter(n => !isNaN(n)).sort((a,b)=>a-b)
+  if (!nums.length) return null
+  const mid = Math.floor(nums.length / 2)
+  return (nums.length % 2 === 1) ? nums[mid] : (nums[mid-1] + nums[mid]) / 2
 }
 
 /**
@@ -132,6 +127,52 @@ function filterPayloadByExcludeYear(payload) {
   return { labels: newLabels, datasets: newDatasets }
 }
 
+/** Normalize passing grade for chart type:
+ *  - For bar charts, convert 0..1 -> 0..100 if needed
+ *  - For line charts, return as-is (assumed same unit as line data)
+ */
+function normalizePassingGradeForChart(passingGrade, chartType) {
+  if (passingGrade === null || passingGrade === undefined) return null
+  if (chartType === 'bar') {
+    if (typeof passingGrade === 'number' && passingGrade >= 0 && passingGrade <= 1) {
+      return Math.round(passingGrade * 1000) / 10
+    }
+    return passingGrade
+  }
+  return passingGrade
+}
+
+/** Apply passing grade annotation(s).
+ *  For line charts we draw a single green line at the normalized passing grade.
+ *  For bar charts we intentionally do not draw a red/green annotation here (per new requirement).
+ */
+function applyPassingGrade(options, normalizedPassingGrade) {
+  if (normalizedPassingGrade === null || normalizedPassingGrade === undefined) return options
+  options.plugins = options.plugins || {}
+  options.plugins.annotation = options.plugins.annotation || { annotations: {} }
+
+  // Only draw for line charts (single criterion view). Use green color.
+  if (props.type === 'line') {
+    options.plugins.annotation.annotations.passing = {
+      type: 'line',
+      yMin: normalizedPassingGrade,
+      yMax: normalizedPassingGrade,
+      borderColor: 'green',
+      borderWidth: 2,
+      label: {
+        content: `${String(normalizedPassingGrade)}`,
+        enabled: true,
+        position: 'end',
+        color: '#0f172a',
+        backgroundColor: 'rgba(34,197,94,0.95)',
+        font: { weight: '600' }
+      }
+    }
+  }
+
+  return options
+}
+
 async function loadData() {
   loading.value = true
   error.value = null
@@ -148,12 +189,25 @@ async function loadData() {
     // ensure payload structure
     payload = payload || { labels: [], datasets: [] }
 
+    // If datasets contain arrays per label (raw samples), compute medians per label
+    if (Array.isArray(payload.datasets)) {
+      payload.datasets = payload.datasets.map(ds => {
+        if (!Array.isArray(ds.data)) return ds
+        const first = ds.data[0]
+        // if first item is an array, assume each label contains samples
+        if (Array.isArray(first)) {
+          const medians = ds.data.map(item => medianOfArray(item))
+          return { ...ds, data: medians }
+        }
+        return ds
+      })
+    }
+
     // --- Normalize passrate values when type === 'bar' ---
     if (props.type === 'bar') {
       payload.datasets = (payload.datasets || []).map(ds => {
         const data = (ds.data || []).map(v => {
           if (v === null || v === undefined) return null
-          // if value looks like fraction 0..1 convert to percentage 0..100
           if (typeof v === 'number' && v >= 0 && v <= 1) {
             return Math.round(v * 1000) / 10 // keep one decimal
           }
@@ -176,12 +230,44 @@ async function loadData() {
         // line chart defaults
         copy.backgroundColor = copy.backgroundColor || 'transparent'
         copy.borderWidth = copy.borderWidth ?? 2
-        // ensure points are visible on dark background
         copy.pointRadius = copy.pointRadius ?? 0
         copy.pointHoverRadius = copy.pointHoverRadius ?? 4
       }
       return copy
     })
+
+    // For line charts showing a single criterion: compute an "Average" series across stores
+    if (props.type === 'line') {
+      // compute average per label across datasets (ignore nulls)
+      const labels = Array.isArray(payload.labels) ? payload.labels : []
+      if (payload.datasets && payload.datasets.length) {
+        const avgData = labels.map((_, idx) => {
+          let sum = 0, count = 0
+          for (const ds of payload.datasets) {
+            const v = Array.isArray(ds.data) ? ds.data[idx] : undefined
+            if (v !== null && v !== undefined && !isNaN(Number(v))) {
+              sum += Number(v)
+              count++
+            }
+          }
+          return count ? (sum / count) : null
+        })
+
+        // add average dataset as a red line
+        const avgDataset = {
+          label: 'Average',
+          data: avgData,
+          borderColor: 'red',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.2
+        }
+
+        // keep store datasets (colored) and append average as last dataset
+        payload.datasets = payload.datasets.concat([avgDataset])
+      }
+    }
 
     // destroy previous chart
     if (chart) chart.destroy()
@@ -213,8 +299,12 @@ async function loadData() {
       options.elements.point.radius = options.elements.point.radius ?? 0
       options.elements.point.hoverRadius = options.elements.point.hoverRadius ?? 4
 
-      // If you want to force the same y max across line charts, pass a prop and set:
-      // if (props.yMax) options.scales.y.max = props.yMax
+      // keep legend visible for line charts (stores + average)
+      options.plugins = options.plugins || {}
+      options.plugins.legend = options.plugins.legend || {}
+      options.plugins.legend.display = true
+      options.plugins.legend.labels = options.plugins.legend.labels || {}
+      options.plugins.legend.labels.usePointStyle = true
     }
 
     // bar chart specific options: treat as percentage axis 0..100
@@ -241,14 +331,15 @@ async function loadData() {
       options.datasets.bar.categoryPercentage = options.datasets.bar.categoryPercentage ?? 0.8
       options.datasets.bar.barPercentage = options.datasets.bar.barPercentage ?? 0.9
 
-      // legend label style
+      // per new requirement: remove per-store pass rate legend (hide legend)
+      options.plugins = options.plugins || {}
       options.plugins.legend = options.plugins.legend || {}
-      options.plugins.legend.labels = options.plugins.legend.labels || {}
-      options.plugins.legend.labels.usePointStyle = false
+      options.plugins.legend.display = false
     }
 
-    // apply passing grade annotation if present
-    options = applyPassingGrade(options)
+    // normalize and apply passing grade for line charts (green)
+    const normalizedPassingGrade = normalizePassingGradeForChart(props.passingGrade, props.type)
+    options = applyPassingGrade(options, normalizedPassingGrade)
 
     // merge title from props.options (keeps existing behavior)
     options.plugins = options.plugins || {}
@@ -280,7 +371,7 @@ async function loadData() {
 onMounted(loadData)
 
 watch(
-  () => [props.category, props.selectedStores, props.type, props.year, props.excludeYear],
+  () => [props.category, props.criterion, props.selectedStores, props.type, props.year, props.excludeYear],
   () => {
     loadData()
   },
