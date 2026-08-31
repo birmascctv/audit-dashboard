@@ -47,7 +47,7 @@
 
       <div class="year-select">
         <label class="block text-sm text-slate-300 mb-1">Year</label>
-        <select v-model="year" class="px-3 py-2 rounded bg-slate-800 text-slate-100 border border-slate-700">
+        <select v-model="yearLocal" class="px-3 py-2 rounded bg-slate-800 text-slate-100 border border-slate-700">
           <option :value="null">All</option>
           <option v-for="y in availableYears" :key="y" :value="y">{{ y }}</option>
         </select>
@@ -66,9 +66,9 @@
           :selected-stores="selectedStores"
           :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
           :options="{ title: { text: selectedCriterion.label } }"
-          :year="year"
+          :year="yearLocal"
           :exclude-year="excludeYear"
-          :key="selectedCriterion.id + '-' + year + '-' + selectedStores.join(',')"
+          :key="selectedCriterion.id + '-' + String(yearLocal) + '-' + selectedStores.join(',')"
         />
       </div>
 
@@ -128,7 +128,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import ChartCard from '../components/ChartCard.vue'
 import StoreFilter from '../components/StoreFilter.vue'
 
@@ -136,6 +136,14 @@ const props = defineProps({
   year: { type: Number, default: null },
   excludeYear: { type: Number, default: 2025 }
 })
+
+/**
+ * Local writable copy of the year prop.
+ * Using v-model on a prop is invalid; yearLocal is writable and initialized from props.year.
+ * Keep it in sync if the parent updates the prop.
+ */
+const yearLocal = ref(props.year)
+watch(() => props.year, (v) => { yearLocal.value = v })
 
 const criteria = ref([])            // list of all criteria { id, label, category, unit }
 const categories = ref([])          // optional, kept for compatibility

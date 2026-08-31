@@ -285,25 +285,30 @@ def category_criterion_monthly(category, criterion):
     """
     try:
         category = unquote(category)
-        crit_raw = request.args.get("criterion") or criterion
+        # criterion may be passed in path or as query param; prefer path param
+        crit_raw = criterion if criterion is not None else request.args.get("criterion")
         stores_param = request.args.get("stores", "")
         year = request.args.get("year", type=int)
 
         store_ids = parse_stores_param(stores_param)
 
-        # resolve criterion id if a name was provided
         conn = get_conn()
         try:
             crit_id = None
-            if str(crit_raw).isdigit():
+            # if numeric, treat as id
+            if crit_raw is not None and str(crit_raw).isdigit():
                 crit_id = int(crit_raw)
             else:
-                row = conn.execute("SELECT criteria_id FROM criteria WHERE name = ? AND category = ? LIMIT 1", (crit_raw, category)).fetchone()
+                # try to resolve by name within the category
+                row = conn.execute(
+                    "SELECT criteria_id FROM criteria WHERE name = ? AND category = ? LIMIT 1",
+                    (crit_raw, category)
+                ).fetchone()
                 if row:
                     crit_id = int(row["criteria_id"])
 
+            # fallback: try direct id lookup if still not found
             if not crit_id:
-                # try to find by id in path param
                 row = conn.execute("SELECT criteria_id FROM criteria WHERE criteria_id = ? LIMIT 1", (crit_raw,)).fetchone()
                 if row:
                     crit_id = int(row["criteria_id"])
