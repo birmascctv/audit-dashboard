@@ -30,7 +30,11 @@ const props = defineProps({
   type: { type: String, default: 'line' }, // line or bar
   options: { type: Object, default: () => ({}) },
   refreshKey: { type: [String, Number], default: null },
-  passingGrade: { type: Number, default: null } // optional threshold line
+  passingGrade: { type: Number, default: null }, // optional threshold line
+
+  // new props for year filtering
+  year: { type: Number, default: null },        // request a single year from backend
+  excludeYear: { type: Number, default: null }  // client-side exclude of a year (e.g., 2025)
 })
 
 const emit = defineEmits(['loading'])
@@ -44,9 +48,15 @@ const error = ref(null)
 function buildUrl(kind = 'monthly') {
   const cat = encodeURIComponent(props.category)
   const storesParam = (props.selectedStores && props.selectedStores.length) ? props.selectedStores.join(',') : ''
-  return storesParam
+  let url = storesParam
     ? `/api/category/${cat}/${kind}?stores=${storesParam}`
     : `/api/category/${cat}/${kind}`
+
+  // include year param if explicitly requested
+  if (props.year) {
+    url += (url.includes('?') ? '&' : '?') + `year=${props.year}`
+  }
+  return url
 }
 
 function applyPassingGrade(options) {
@@ -73,6 +83,40 @@ function applyPassingGrade(options) {
   return options
 }
 
+/**
+ * Filter payload to remove labels/dataset points that belong to excludeYear.
+ * Assumes backend returns payload with:
+ *  { labels: [...], datasets: [{ data: [...] }, ...] }
+ *
+ * This function keeps label order and removes any label that starts with `${excludeYear}-`.
+ */
+function filterPayloadByExcludeYear(payload) {
+  if (!props.excludeYear || !payload || !Array.isArray(payload.labels)) return payload
+
+  const excludePrefix = `${props.excludeYear}-`
+  // find indices to keep
+  const keepIdx = payload.labels
+    .map((lbl, idx) => ({ lbl, idx }))
+    .filter(x => !String(x.lbl).startsWith(excludePrefix))
+    .map(x => x.idx)
+
+  // if nothing to keep, return empty chart structure
+  if (!keepIdx.length) {
+    return { labels: [], datasets: payload.datasets ? payload.datasets.map(ds => ({ ...ds, data: [] })) : [] }
+  }
+
+  const newLabels = keepIdx.map(i => payload.labels[i])
+
+  const newDatasets = (payload.datasets || []).map(ds => {
+    // if dataset.data shorter/longer than labels, guard by mapping label values by index
+    const data = Array.isArray(ds.data) ? ds.data : []
+    const newData = keepIdx.map(i => (i < data.length ? data[i] : null))
+    return { ...ds, data: newData }
+  })
+
+  return { labels: newLabels, datasets: newDatasets }
+}
+
 async function loadData() {
   loading.value = true
   error.value = null
@@ -81,7 +125,10 @@ async function loadData() {
     const kind = props.type === 'bar' ? 'passrate' : 'monthly'
     const url = buildUrl(kind)
     const res = await axios.get(url)
-    const payload = res.data
+    let payload = res.data
+
+    // apply excludeYear filter client-side if requested
+    payload = filterPayloadByExcludeYear(payload)
 
     // destroy previous chart
     if (chart) chart.destroy()
@@ -121,10 +168,14 @@ async function loadData() {
 
 onMounted(loadData)
 
-// react to category, selectedStores, refreshKey changes
-watch(() => [props.category, props.selectedStores, props.type], () => {
-  loadData()
-}, { immediate: false, deep: true })
+// react to category, selectedStores, type, year, excludeYear changes
+watch(
+  () => [props.category, props.selectedStores, props.type, props.year, props.excludeYear],
+  () => {
+    loadData()
+  },
+  { immediate: false, deep: true }
+)
 
 watch(() => props.refreshKey, () => {
   loadData()
