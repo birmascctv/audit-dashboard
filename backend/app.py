@@ -47,6 +47,17 @@ def query_rows(sql, params=()):
         conn.close()
 
 
+def table_has_column(table, column):
+    """Return True if SQLite table has the given column."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(f"PRAGMA table_info({table})")
+        cols = [r["name"] for r in cur.fetchall()]
+        return column in cols
+    finally:
+        conn.close()
+
+
 def rows_to_series(rows):
     out = defaultdict(list)
     for store_id, year, month, val in rows:
@@ -204,21 +215,42 @@ def criteria_list():
     """
     Return list of criteria with id, label (name), category, unit (if available) and passing_grade.
     """
-    rows = query_rows("""
-        SELECT criteria_id, name, category, passing_grade, unit
-        FROM criteria
-        ORDER BY category, name
-    """)
-    out = []
-    for r in rows:
-        out.append({
-            "id": r["criteria_id"],
-            "label": r["name"],
-            "category": r["category"],
-            "passing_grade": r["passing_grade"],
-            "unit": r["unit"] if "unit" in r.keys() else None
-        })
-    return jsonify(out)
+    try:
+        include_unit = table_has_column("criteria", "unit")
+        if include_unit:
+            rows = query_rows("""
+                SELECT criteria_id, name, category, passing_grade, unit
+                FROM criteria
+                ORDER BY category, name
+            """)
+            out = []
+            for r in rows:
+                out.append({
+                    "id": r["criteria_id"],
+                    "label": r["name"],
+                    "category": r["category"],
+                    "passing_grade": r["passing_grade"],
+                    "unit": r["unit"] if "unit" in r.keys() else None
+                })
+        else:
+            rows = query_rows("""
+                SELECT criteria_id, name, category, passing_grade
+                FROM criteria
+                ORDER BY category, name
+            """)
+            out = []
+            for r in rows:
+                out.append({
+                    "id": r["criteria_id"],
+                    "label": r["name"],
+                    "category": r["category"],
+                    "passing_grade": r["passing_grade"],
+                    "unit": None
+                })
+        return jsonify(out)
+    except Exception:
+        app.logger.exception("criteria_list failed")
+        return jsonify([]), 500
 
 
 @app.route("/api/category/<category>/monthly")
@@ -427,11 +459,19 @@ def passing_grades():
     when an explicit category-level value is not available.
     """
     try:
-        rows = query_rows("""
-            SELECT criteria_id, name, category, passing_grade, unit
-            FROM criteria
-            ORDER BY category, name
-        """)
+        include_unit = table_has_column("criteria", "unit")
+        if include_unit:
+            rows = query_rows("""
+                SELECT criteria_id, name, category, passing_grade, unit
+                FROM criteria
+                ORDER BY category, name
+            """)
+        else:
+            rows = query_rows("""
+                SELECT criteria_id, name, category, passing_grade
+                FROM criteria
+                ORDER BY category, name
+            """)
         by_cat = {}
         for r in rows:
             cat = r["category"]
@@ -445,7 +485,7 @@ def passing_grades():
                     by_cat[cat]["values"].append(float(val))
                 except Exception:
                     pass
-            if by_cat[cat]["unit"] is None and "unit" in r.keys():
+            if by_cat[cat]["unit"] is None and include_unit and "unit" in r.keys():
                 by_cat[cat]["unit"] = r["unit"]
 
         result = {}
