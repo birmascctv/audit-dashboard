@@ -18,7 +18,7 @@
     <StoreFilter v-model="selectedStores" />
 
     <!-- Monthly charts (2025 only) -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+    <div class="charts-grid mt-4">
       <ChartCard
         v-for="cat in categories"
         :key="cat"
@@ -32,7 +32,7 @@
     </div>
 
     <!-- Pass rate charts (2025 only) -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+    <div class="charts-grid mt-6">
       <ChartCard
         v-for="cat in categories"
         :key="cat + '-passing-rate'"
@@ -67,7 +67,14 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+@media (min-width: 768px) {
+  .charts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .header { margin-bottom: 0.5rem; }
-.chart-card { min-height: 220px; }
 .btn { display: inline-flex; align-items: center; justify-content: center; }
 </style>

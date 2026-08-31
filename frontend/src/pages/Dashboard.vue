@@ -4,7 +4,6 @@
       <h2 class="text-xl font-bold">Audit Dashboard</h2>
 
       <div class="controls flex items-center gap-3">
-        <!-- Navigate to the 2025-only dashboard -->
         <router-link
           to="/dashboard2025"
           class="btn bg-sky-600 text-white px-3 py-1 rounded hover:bg-sky-700"
@@ -12,7 +11,6 @@
           View 2025 Dashboard
         </router-link>
 
-        <!-- Optional: quick link back to main dashboard (if on /dashboard2025) -->
         <router-link
           v-if="$route.path !== '/dashboard'"
           to="/dashboard"
@@ -26,8 +24,8 @@
     <!-- Store filter -->
     <StoreFilter v-model="selectedStores" />
 
-    <!-- Monthly charts (responsive grid: 1 column on small, 2 on md+) -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+    <!-- Monthly charts: use explicit CSS grid class for reliable 2-column layout -->
+    <div class="charts-grid mt-4">
       <ChartCard
         v-for="cat in categories"
         :key="cat"
@@ -42,7 +40,7 @@
     </div>
 
     <!-- Pass rate charts -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+    <div class="charts-grid mt-6">
       <ChartCard
         v-for="cat in categories"
         :key="cat + '-passrate'"
@@ -63,14 +61,6 @@ import { ref, onMounted } from 'vue'
 import ChartCard from '../components/ChartCard.vue'
 import StoreFilter from '../components/StoreFilter.vue'
 
-/**
- * Router can pass props to this page:
- * - year: number (show only this year)
- * - excludeYear: number (client-side exclude this year)
- *
- * Default behavior for the main Dashboard is to exclude 2025.
- * When you create a /dashboard2025 route, pass { year: 2025 } as route props.
- */
 const props = defineProps({
   year: { type: Number, default: null },
   excludeYear: { type: Number, default: 2025 }
@@ -81,7 +71,6 @@ const passingGrades = ref({})
 const selectedStores = ref([])
 
 onMounted(async () => {
-  // fetch categories and passing grades
   const [catRes, gradeRes] = await Promise.all([
     fetch('/api/categories'),
     fetch('/api/passing-grades')
@@ -92,9 +81,20 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* optional: small spacing tweak for chart cards */
-.chart-card { min-height: 220px; }
+/* reliable responsive grid: 1 column on small, 2 columns on md+ */
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
 
-/* simple button styles if your project doesn't already provide them */
+@media (min-width: 768px) {
+  .charts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* small tweaks */
+.header { margin-bottom: 0.5rem; }
 .btn { display: inline-flex; align-items: center; justify-content: center; }
 </style>
