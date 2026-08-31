@@ -197,96 +197,106 @@ def stores():
 
 @app.route("/api/category/<category>/monthly")
 def category_monthly(category):
-    category = unquote(category)
-    stores_param = request.args.get("stores", "")
-    year = request.args.get("year", type=int)
-    metric = request.args.get("metric", "raw")  # raw or norm
+    try:
+        category = unquote(category)
+        stores_param = request.args.get("stores", "")
+        year = request.args.get("year", type=int)
+        metric = request.args.get("metric", "raw")  # raw or norm
 
-    store_ids = parse_stores_param(stores_param)
-    col = "median_score" if metric == "raw" else "median_normalized"
+        store_ids = parse_stores_param(stores_param)
+        col = "median_score" if metric == "raw" else "median_normalized"
 
-    params = [category]
-    where_store = ""
-    if store_ids:
-        where_store = "AND store_id IN ({})".format(",".join("?" * len(store_ids)))
-        params.extend(store_ids)
-    where_year = ""
-    if year:
-        where_year = "AND year = ?"
-        params.append(year)
+        params = [category]
+        where_store = ""
+        if store_ids:
+            # qualify the column with the table alias to avoid ambiguity
+            where_store = "AND m.store_id IN ({})".format(",".join("?" * len(store_ids)))
+            params.extend(store_ids)
+        where_year = ""
+        if year:
+            where_year = "AND m.year = ?"
+            params.append(year)
 
-    sql = f"""
-        SELECT m.store_id, s.name AS store_name, m.year, m.month, {col}
-        FROM category_store_monthly_median m
-        JOIN stores s ON m.store_id = s.store_id
-        WHERE m.category = ?
-        {where_store}
-        {where_year}
-        ORDER BY m.year, m.month, m.store_id
-    """
-    rows = query_rows(sql, params)
+        sql = f"""
+            SELECT m.store_id, s.name AS store_name, m.year, m.month, {col}
+            FROM category_store_monthly_median m
+            JOIN stores s ON m.store_id = s.store_id
+            WHERE m.category = ?
+            {where_store}
+            {where_year}
+            ORDER BY m.year, m.month, m.store_id
+        """
+        rows = query_rows(sql, params)
 
-    labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
-    datasets = {}
-    for r in rows:
-        sid = r["store_id"]
-        name = r["store_name"]
-        if sid not in datasets:
-            datasets[sid] = {
-                "label": name,
-                "data": [],
-                "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",  # consistent color per store_id
-                "fill": False
-            }
-        datasets[sid]["data"].append(None if r[col] is None else float(r[col]))
+        labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
+        datasets = {}
+        for r in rows:
+            sid = r["store_id"]
+            name = r["store_name"]
+            if sid not in datasets:
+                datasets[sid] = {
+                    "label": name,
+                    "data": [],
+                    "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",  # consistent color per store_id
+                    "fill": False
+                }
+            datasets[sid]["data"].append(None if r[col] is None else float(r[col]))
 
-    return jsonify({"labels": labels, "datasets": list(datasets.values())})
+        return jsonify({"labels": labels, "datasets": list(datasets.values())})
+    except Exception:
+        app.logger.exception("category_monthly failed for category=%s stores=%s year=%s", category, request.args.get("stores"), request.args.get("year"))
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/api/category/<category>/passrate")
 def category_passrate(category):
-    category = unquote(category)
-    stores_param = request.args.get("stores", "")
-    year = request.args.get("year", type=int)
+    try:
+        category = unquote(category)
+        stores_param = request.args.get("stores", "")
+        year = request.args.get("year", type=int)
 
-    store_ids = parse_stores_param(stores_param)
+        store_ids = parse_stores_param(stores_param)
 
-    params = [category]
-    where_store = ""
-    if store_ids:
-        where_store = "AND store_id IN ({})".format(",".join("?" * len(store_ids)))
-        params.extend(store_ids)
-    where_year = ""
-    if year:
-        where_year = "AND year = ?"
-        params.append(year)
+        params = [category]
+        where_store = ""
+        if store_ids:
+            # qualify the column with the table alias to avoid ambiguity
+            where_store = "AND m.store_id IN ({})".format(",".join("?" * len(store_ids)))
+            params.extend(store_ids)
+        where_year = ""
+        if year:
+            where_year = "AND m.year = ?"
+            params.append(year)
 
-    sql = f"""
-        SELECT m.store_id, s.name AS store_name, m.year, m.month, m.pass_rate
-        FROM category_store_monthly_passrate m
-        JOIN stores s ON m.store_id = s.store_id
-        WHERE m.category = ?
-        {where_store}
-        {where_year}
-        ORDER BY m.year, m.month, m.store_id
-    """
-    rows = query_rows(sql, params)
+        sql = f"""
+            SELECT m.store_id, s.name AS store_name, m.year, m.month, m.pass_rate
+            FROM category_store_monthly_passrate m
+            JOIN stores s ON m.store_id = s.store_id
+            WHERE m.category = ?
+            {where_store}
+            {where_year}
+            ORDER BY m.year, m.month, m.store_id
+        """
+        rows = query_rows(sql, params)
 
-    labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
-    datasets = {}
-    for r in rows:
-        sid = r["store_id"]
-        name = r["store_name"]
-        if sid not in datasets:
-            datasets[sid] = {
-                "label": f"{name} Pass Rate",
-                "data": [],
-                "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",
-                "fill": False
-            }
-        datasets[sid]["data"].append(None if r["pass_rate"] is None else float(r["pass_rate"]))
+        labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
+        datasets = {}
+        for r in rows:
+            sid = r["store_id"]
+            name = r["store_name"]
+            if sid not in datasets:
+                datasets[sid] = {
+                    "label": f"{name} Pass Rate",
+                    "data": [],
+                    "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",
+                    "fill": False
+                }
+            datasets[sid]["data"].append(None if r["pass_rate"] is None else float(r["pass_rate"]))
 
-    return jsonify({"labels": labels, "datasets": list(datasets.values())})
+        return jsonify({"labels": labels, "datasets": list(datasets.values())})
+    except Exception:
+        app.logger.exception("category_passrate failed for category=%s stores=%s year=%s", category, request.args.get("stores"), request.args.get("year"))
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/api/passing-grades")
