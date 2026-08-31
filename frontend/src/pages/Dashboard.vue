@@ -24,34 +24,31 @@
     <!-- Store filter -->
     <StoreFilter v-model="selectedStores" />
 
-    <!-- Monthly charts: use explicit CSS grid class for reliable 2-column layout -->
-    <div class="charts-grid mt-4">
-      <ChartCard
-        v-for="cat in categories"
-        :key="cat"
-        type="line"
-        :category="cat"
-        :selected-stores="selectedStores"
-        :passingGrade="passingGrades[cat]"
-        :options="{ title: { text: cat } }"
-        :year="year"
-        :exclude-year="excludeYear"
-      />
-    </div>
+    <!-- Render pairs: left = line chart, right = bar (pass rate) -->
+    <div class="pairs-grid mt-4">
+      <div v-for="cat in categories" :key="cat" class="pair-row">
+        <!-- Left: time series line chart -->
+        <ChartCard
+          :category="cat"
+          type="line"
+          :selected-stores="selectedStores"
+          :passingGrade="passingGrades[cat]"
+          :options="{ title: { text: cat } }"
+          :year="year"
+          :exclude-year="excludeYear"
+        />
 
-    <!-- Pass rate charts -->
-    <div class="charts-grid mt-6">
-      <ChartCard
-        v-for="cat in categories"
-        :key="cat + '-passrate'"
-        type="bar"
-        :category="cat"
-        :selected-stores="selectedStores"
-        :passingGrade="passingGrades[cat]"
-        :options="{ title: { text: cat + ' Pass Rate' } }"
-        :year="year"
-        :exclude-year="excludeYear"
-      />
+        <!-- Right: pass rate bar chart (percentage) -->
+        <ChartCard
+          :category="cat"
+          type="bar"
+          :selected-stores="selectedStores"
+          :passingGrade="passingGrades[cat]"
+          :options="{ title: { text: cat + ' Pass Rate (%)' } }"
+          :year="year"
+          :exclude-year="excludeYear"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -81,15 +78,23 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* reliable responsive grid: 1 column on small, 2 columns on md+ */
-.charts-grid {
-  display: grid;
-  grid-template-columns: 1fr;
+/* pair-row: two columns on md+, stacked on small screens */
+.pairs-grid {
+  display: block;
   gap: 1rem;
 }
 
+/* each pair is a two-column grid on medium+ screens */
+.pair-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* two columns side-by-side on medium and larger screens */
 @media (min-width: 768px) {
-  .charts-grid {
+  .pair-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

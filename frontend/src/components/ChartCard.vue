@@ -25,13 +25,16 @@ const props = defineProps({
   category: { type: String, required: true },
   selectedStores: { type: Array, default: () => [] },
 
-  type: { type: String, default: 'line' }, // line or bar
+  type: { type: String, default: 'line' }, // 'line' or 'bar'
   options: { type: Object, default: () => ({}) },
   refreshKey: { type: [String, Number], default: null },
   passingGrade: { type: Number, default: null },
 
   year: { type: Number, default: null },
   excludeYear: { type: Number, default: null }
+
+  // If you want all line charts to share the same y max, add:
+  // yMax: { type: Number, default: null }
 })
 
 const emit = defineEmits(['loading'])
@@ -78,16 +81,28 @@ function applyPassingGrade(options) {
   return options
 }
 
-/**
- * Deterministic color generator for fallback when dataset has no color.
- * Produces an HSL string based on the label text.
- */
+/** Deterministic color generator for fallback when dataset has no color. */
 function colorForLabel(label) {
   if (!label) return 'hsl(210,70%,50%)'
   let sum = 0
   for (let i = 0; i < label.length; i++) sum += label.charCodeAt(i)
   const hue = (sum * 37) % 360
   return `hsl(${hue},70%,50%)`
+}
+
+/** Convert a border color into a slightly translucent background if possible. */
+function backgroundFromBorder(border) {
+  if (!border) return border
+  const s = String(border).trim()
+  if (s.startsWith('hsl(')) {
+    // convert hsl(...) -> hsla(..., 0.85)
+    return s.replace(/^hsl\(/, 'hsla(').replace(/\)$/, ',0.85)')
+  }
+  if (s.startsWith('rgb(')) {
+    return s.replace(/^rgb\(/, 'rgba(').replace(/\)$/, ',0.85)')
+  }
+  // hex or other: return as-is (Chart.js will render it)
+  return s
 }
 
 /**
@@ -130,25 +145,40 @@ async function loadData() {
     // apply excludeYear filter client-side if requested
     payload = filterPayloadByExcludeYear(payload)
 
-    // ensure payload has labels/datasets structure
+    // ensure payload structure
     payload = payload || { labels: [], datasets: [] }
 
-    // normalize dataset colors: for bar charts set backgroundColor = borderColor
+    // --- Normalize passrate values when type === 'bar' ---
+    if (props.type === 'bar') {
+      payload.datasets = (payload.datasets || []).map(ds => {
+        const data = (ds.data || []).map(v => {
+          if (v === null || v === undefined) return null
+          // if value looks like fraction 0..1 convert to percentage 0..100
+          if (typeof v === 'number' && v >= 0 && v <= 1) {
+            return Math.round(v * 1000) / 10 // keep one decimal
+          }
+          return v
+        })
+        return { ...ds, data }
+      })
+    }
+
+    // normalize dataset colors and bar backgrounds
     payload.datasets = (payload.datasets || []).map(ds => {
       const copy = { ...ds }
-      // ensure borderColor exists or generate one
-      if (!copy.borderColor) {
-        copy.borderColor = colorForLabel(copy.label)
-      }
+      if (!copy.borderColor) copy.borderColor = colorForLabel(copy.label)
       if (props.type === 'bar') {
-        // use same color for bar fill and border
-        copy.backgroundColor = copy.backgroundColor || copy.borderColor
+        // use same color for bar fill (slightly translucent if possible)
+        copy.backgroundColor = copy.backgroundColor || backgroundFromBorder(copy.borderColor)
         copy.borderColor = copy.borderColor || copy.backgroundColor
         copy.borderWidth = copy.borderWidth ?? 1
       } else {
-        // for line charts, ensure point/background colors are visible
+        // line chart defaults
         copy.backgroundColor = copy.backgroundColor || 'transparent'
         copy.borderWidth = copy.borderWidth ?? 2
+        // ensure points are visible on dark background
+        copy.pointRadius = copy.pointRadius ?? 0
+        copy.pointHoverRadius = copy.pointHoverRadius ?? 4
       }
       return copy
     })
@@ -159,27 +189,68 @@ async function loadData() {
     // clone base options
     let options = JSON.parse(JSON.stringify(baseOptions || {}))
 
+    // responsive and fill the card height
+    options.responsive = true
+    options.maintainAspectRatio = false
+
     // ensure y axis starts at zero
     options.scales = options.scales || {}
     options.scales.y = options.scales.y || {}
     options.scales.y.beginAtZero = true
 
-    // small bar-specific defaults
+    // x axis tick density to avoid overlap when many months are present
+    options.scales.x = options.scales.x || {}
+    options.scales.x.ticks = options.scales.x.ticks || {}
+    options.scales.x.ticks.autoSkip = true
+    options.scales.x.ticks.maxTicksLimit = options.scales.x.ticks.maxTicksLimit || 12
+    options.scales.x.ticks.maxRotation = 0
+    options.scales.x.ticks.minRotation = 0
+
+    // line chart tweaks
+    if (props.type === 'line') {
+      options.elements = options.elements || {}
+      options.elements.point = options.elements.point || {}
+      options.elements.point.radius = options.elements.point.radius ?? 0
+      options.elements.point.hoverRadius = options.elements.point.hoverRadius ?? 4
+
+      // If you want to force the same y max across line charts, pass a prop and set:
+      // if (props.yMax) options.scales.y.max = props.yMax
+    }
+
+    // bar chart specific options: treat as percentage axis 0..100
     if (props.type === 'bar') {
+      options.scales.y.max = 100
+      options.scales.y.ticks = options.scales.y.ticks || {}
+      options.scales.y.ticks.callback = function (value) { return value + '%' }
+      options.scales.y.ticks.stepSize = 10
+
+      // tooltip formatting for percent
       options.plugins = options.plugins || {}
+      options.plugins.tooltip = options.plugins.tooltip || {}
+      options.plugins.tooltip.callbacks = options.plugins.tooltip.callbacks || {}
+      options.plugins.tooltip.callbacks.label = function (context) {
+        const v = context.parsed?.y
+        if (v === null || v === undefined) return ''
+        return `${context.dataset.label || ''}: ${v}%`
+      }
+
+      // bar sizing and visibility
+      options.datasets = options.datasets || {}
+      options.datasets.bar = options.datasets.bar || {}
+      options.datasets.bar.maxBarThickness = options.datasets.bar.maxBarThickness ?? 48
+      options.datasets.bar.categoryPercentage = options.datasets.bar.categoryPercentage ?? 0.8
+      options.datasets.bar.barPercentage = options.datasets.bar.barPercentage ?? 0.9
+
+      // legend label style
       options.plugins.legend = options.plugins.legend || {}
       options.plugins.legend.labels = options.plugins.legend.labels || {}
       options.plugins.legend.labels.usePointStyle = false
-      // make bars more visible on dark background
-      options.datasets = options.datasets || {}
-      options.datasets.bar = options.datasets.bar || {}
-      options.datasets.bar.maxBarThickness = 48
     }
 
-    // apply passing grade if present
+    // apply passing grade annotation if present
     options = applyPassingGrade(options)
 
-    // merge title from props.options
+    // merge title from props.options (keeps existing behavior)
     options.plugins = options.plugins || {}
     options.plugins.title = {
       ...(options.plugins.title || {}),
@@ -187,6 +258,7 @@ async function loadData() {
       text: props.options?.title?.text || ''
     }
 
+    // create chart
     chart = new Chart(canvas.value, {
       type: props.type,
       data: payload,
