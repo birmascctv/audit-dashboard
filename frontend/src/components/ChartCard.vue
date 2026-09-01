@@ -49,7 +49,7 @@ const props = defineProps({
   fillHeight: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['loading', 'update:selectedStores'])
+const emit = defineEmits(['loading', 'update:selectedStores', 'update:average'])
 
 const canvas = ref(null)
 let chart = null
@@ -90,6 +90,12 @@ function colorForLabel(label) {
   for (let i = 0; i < label.length; i++) sum += label.charCodeAt(i)
   const hue = (sum * 37) % 360
   return `hsl(${hue},70%,50%)`
+}
+
+/** Store names all share the "Birmas" brand prefix, which is redundant
+ *  everywhere they're shown as chart labels (legend, bar series, titles). */
+function stripStoreBrand(name) {
+  return String(name || '').replace(/^birmas\s+/i, '').trim()
 }
 
 /** Convert a border color into a slightly translucent background if possible. */
@@ -241,6 +247,13 @@ async function loadData() {
         })
         return { ...ds, data }
       })
+
+      // per-category bar charts use store names as the series labels;
+      // strip the redundant "Birmas" brand prefix (store-passrate charts
+      // use category names here instead, which are left untouched)
+      if (props.storeId == null) {
+        payload.datasets = payload.datasets.map(ds => ({ ...ds, label: stripStoreBrand(ds.label) }))
+      }
     }
 
     // for bar charts with multiple stores selected, Chart.js automatically
@@ -298,6 +311,14 @@ async function loadData() {
 
         // keep store datasets (colored) and append average as last dataset
         payload.datasets = payload.datasets.concat([avgDataset])
+
+        // surface a single overall-average number to the parent so it can
+        // be shown next to the passing grade in the Chart Info panel
+        const validAvgs = avgData.filter(v => v !== null && v !== undefined && !isNaN(v))
+        const overallAvg = validAvgs.length ? (validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length) : null
+        emit('update:average', overallAvg === null ? null : Math.round(overallAvg * 100) / 100)
+      } else {
+        emit('update:average', null)
       }
     }
 
@@ -380,6 +401,7 @@ async function loadData() {
             text: 'All stores',
             fillStyle: allSelected ? '#9ca3af' : 'transparent',
             strokeStyle: '#9ca3af',
+            fontColor: '#f1f5f9',
             lineWidth: 2,
             pointStyle: 'circle',
             __allStores: true
@@ -389,9 +411,10 @@ async function loadData() {
             const color = (ds && ds.borderColor) || '#9ca3af'
             const isSelected = selectedNow.includes(s.store_id)
             items.push({
-              text: s.name,
+              text: stripStoreBrand(s.name),
               fillStyle: isSelected ? color : 'transparent',
               strokeStyle: color,
+              fontColor: '#f1f5f9',
               lineWidth: 2,
               pointStyle: 'circle',
               __storeId: s.store_id
