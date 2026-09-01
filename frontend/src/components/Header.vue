@@ -1,28 +1,32 @@
 <template>
   <header class="card flex items-center justify-between mb-4">
     <div>
-      <h1 class="brand text-xl font-bold text-white">Birmas</h1>
-      <div class="muted text-sm">Audit Dashboard — 2026</div>
+      <h1 class="brand text-xl font-bold">Birmas Audit</h1>
+      <div class="muted text-sm">{{ subtitle }}</div>
     </div>
     <div class="flex gap-2">
-      <!-- optional buttons -->
-      <button class="btn btn-ghost">Settings</button>
-      <button class="btn btn-primary">Logout</button>
+      <slot />
     </div>
   </header>
 </template>
+
+<script setup>
+defineProps({
+  subtitle: { type: String, default: 'Birmas store audit overview' }
+})
+</script>
 
 <style scoped>
 .card {
   padding: 1rem;
   border-radius: 0.75rem;
-  background: #1e293b; /* same dark slate as charts */
+  background: #374151; /* grey slate */
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-  border: 1px solid #334155;
+  border: 1px solid #4b5563;
   color: #f1f5f9;
 }
 .brand {
-  color: #ef4444; /* red accent consistent with charts */
+  color: #e5e7eb; /* light grey accent */
 }
 .muted {
   color: #9ca3af;
@@ -37,7 +41,7 @@
   border: 0;
 }
 .btn-primary {
-  background: #ef4444;
+  background: #6b7280;
   color: #fff;
 }
 .btn-ghost {

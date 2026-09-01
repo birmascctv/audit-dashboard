@@ -214,15 +214,32 @@ def stores():
 def criteria_list():
     """
     Return list of criteria with id, label (name), category, unit (if available) and passing_grade.
+
+    Query params:
+      - year: only return criteria recorded for this exact year (e.g. 2025)
+      - exclude_year: only return criteria NOT recorded for this year (e.g. 2025)
     """
     try:
+        year = request.args.get("year", type=int)
+        exclude_year = request.args.get("exclude_year", type=int)
+
+        where = ""
+        params = []
+        if year is not None:
+            where = "WHERE year = ?"
+            params.append(str(year))
+        elif exclude_year is not None:
+            where = "WHERE year != ?"
+            params.append(str(exclude_year))
+
         include_unit = table_has_column("criteria", "unit")
         if include_unit:
-            rows = query_rows("""
+            rows = query_rows(f"""
                 SELECT criteria_id, name, category, passing_grade, unit
                 FROM criteria
+                {where}
                 ORDER BY category, name
-            """)
+            """, params)
             out = []
             for r in rows:
                 out.append({
@@ -233,11 +250,12 @@ def criteria_list():
                     "unit": r["unit"] if "unit" in r.keys() else None
                 })
         else:
-            rows = query_rows("""
+            rows = query_rows(f"""
                 SELECT criteria_id, name, category, passing_grade
                 FROM criteria
+                {where}
                 ORDER BY category, name
-            """)
+            """, params)
             out = []
             for r in rows:
                 out.append({
@@ -287,6 +305,7 @@ def category_monthly(category):
         rows = query_rows(sql, params)
 
         labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
+        label_index = {lbl: i for i, lbl in enumerate(labels)}
         datasets = {}
         for r in rows:
             sid = r["m_store_id"]
@@ -294,11 +313,12 @@ def category_monthly(category):
             if sid not in datasets:
                 datasets[sid] = {
                     "label": name,
-                    "data": [],
+                    "data": [None] * len(labels),
                     "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",  # consistent color per store_id
                     "fill": False
                 }
-            datasets[sid]["data"].append(None if r[col] is None else float(r[col]))
+            lbl = f"{r['year']}-{int(r['month']):02d}"
+            datasets[sid]["data"][label_index[lbl]] = None if r[col] is None else float(r[col])
 
         return jsonify({"labels": labels, "datasets": list(datasets.values())})
     except Exception:
@@ -370,6 +390,7 @@ def category_criterion_monthly(category, criterion):
             rows = conn.execute(sql, params).fetchall()
 
             labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
+            label_index = {lbl: i for i, lbl in enumerate(labels)}
             datasets = {}
             for r in rows:
                 sid = r["a_store_id"]
@@ -377,11 +398,12 @@ def category_criterion_monthly(category, criterion):
                 if sid not in datasets:
                     datasets[sid] = {
                         "label": name,
-                        "data": [],
+                        "data": [None] * len(labels),
                         "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",
                         "fill": False
                     }
-                datasets[sid]["data"].append(None if r["avg_score"] is None else float(r["avg_score"]))
+                lbl = f"{r['year']}-{int(r['month']):02d}"
+                datasets[sid]["data"][label_index[lbl]] = None if r["avg_score"] is None else float(r["avg_score"])
 
             return jsonify({"labels": labels, "datasets": list(datasets.values())})
         finally:
@@ -423,18 +445,20 @@ def category_passrate(category):
         rows = query_rows(sql, params)
 
         labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
+        label_index = {lbl: i for i, lbl in enumerate(labels)}
         datasets = {}
         for r in rows:
             sid = r["m_store_id"]
             name = r["store_name"]
             if sid not in datasets:
                 datasets[sid] = {
-                    "label": f"{name} Pass Rate",
-                    "data": [],
+                    "label": name,
+                    "data": [None] * len(labels),
                     "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",
                     "fill": False
                 }
-            datasets[sid]["data"].append(None if r["pass_rate"] is None else float(r["pass_rate"]))
+            lbl = f"{r['year']}-{int(r['month']):02d}"
+            datasets[sid]["data"][label_index[lbl]] = None if r["pass_rate"] is None else float(r["pass_rate"])
 
         return jsonify({"labels": labels, "datasets": list(datasets.values())})
     except Exception:
@@ -453,21 +477,39 @@ def passing_grades():
 
     categoryPassingGrade is computed as the median of the criteria passing grades for that category
     when an explicit category-level value is not available.
+
+    Query params:
+      - year: only consider criteria recorded for this exact year (e.g. 2025)
+      - exclude_year: only consider criteria NOT recorded for this year (e.g. 2025)
     """
     try:
+        year = request.args.get("year", type=int)
+        exclude_year = request.args.get("exclude_year", type=int)
+
+        where = ""
+        params = []
+        if year is not None:
+            where = "WHERE year = ?"
+            params.append(str(year))
+        elif exclude_year is not None:
+            where = "WHERE year != ?"
+            params.append(str(exclude_year))
+
         include_unit = table_has_column("criteria", "unit")
         if include_unit:
-            rows = query_rows("""
+            rows = query_rows(f"""
                 SELECT criteria_id, name, category, passing_grade, unit
                 FROM criteria
+                {where}
                 ORDER BY category, name
-            """)
+            """, params)
         else:
-            rows = query_rows("""
+            rows = query_rows(f"""
                 SELECT criteria_id, name, category, passing_grade
                 FROM criteria
+                {where}
                 ORDER BY category, name
-            """)
+            """, params)
         by_cat = {}
         for r in rows:
             cat = r["category"]

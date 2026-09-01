@@ -1,10 +1,10 @@
 :root{
-  --bg: #f8fafc;
+  --bg: #f1f5f9;
   --panel: #ffffff;
   --panel-border: rgba(15,23,42,0.06);
   --muted: #6b7280;
-  --accent: #dc2626;
-  --text: #0f172a;
+  --accent: #4b5563;
+  --text: #1f2937;
   --card-shadow: 0 6px 18px rgba(2,6,23,0.06);
   --radius-lg: 0.75rem;
   --gap: 1rem;
@@ -38,5 +38,5 @@ html,body,#app { height:100%; margin:0; background:var(--bg); color:var(--text);
 @media (min-width:1024px){ .lg-grid-2 { display:grid; grid-template-columns:2fr 1fr; gap:var(--gap); } }
 
 /* Dark mode */
-.dark html, .dark body { background:#0f172a; color:#e6eef8; }
-.dark .card { background:#0b1220; border-color:rgba(255,255,255,0.04); box-shadow:none; }
+.dark html, .dark body { background:#1f2937; color:#e5e7eb; }
+.dark .card { background:#111827; border-color:rgba(255,255,255,0.04); box-shadow:none; }

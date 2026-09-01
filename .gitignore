@@ -1,2 +1,5 @@
 audit_birmas/audit_birmas.db
 audit_birmas/audit_birmas.db
+.venv/
+__pycache__/
+*.pyc

@@ -1,5 +1,5 @@
 <template>
-  <div class="card" style="height:250px; position:relative;">
+  <div class="card chart-card" :class="{ 'chart-card--fill': fillHeight }">
     <canvas ref="canvas"></canvas>
 
     <div v-if="loading" class="overlay">
@@ -35,7 +35,10 @@ const props = defineProps({
   passingGrade: { type: Number, default: null },
 
   year: { type: Number, default: null },
-  excludeYear: { type: Number, default: null }
+  excludeYear: { type: Number, default: null },
+  // when true, the card fills the height of its flex parent instead of a
+  // fixed 250px (used for the line chart so it can match the info panel)
+  fillHeight: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['loading'])
@@ -217,6 +220,9 @@ async function loadData() {
       })
     }
 
+    // for bar charts with multiple stores selected, Chart.js automatically
+    // renders each dataset as a clustered/grouped bar per label (month)
+
     // normalize dataset colors and bar backgrounds
     payload.datasets = (payload.datasets || []).map(ds => {
       const copy = { ...ds }
@@ -230,8 +236,9 @@ async function loadData() {
         // line chart defaults
         copy.backgroundColor = copy.backgroundColor || 'transparent'
         copy.borderWidth = copy.borderWidth ?? 2
-        copy.pointRadius = copy.pointRadius ?? 0
-        copy.pointHoverRadius = copy.pointHoverRadius ?? 4
+        copy.pointRadius = copy.pointRadius ?? 3
+        copy.pointHoverRadius = copy.pointHoverRadius ?? 6
+        copy.pointBackgroundColor = copy.pointBackgroundColor || copy.borderColor
       }
       return copy
     })
@@ -253,7 +260,8 @@ async function loadData() {
           return count ? (sum / count) : null
         })
 
-        // add average dataset as a red line
+        // add average dataset as a red line (kept on the chart for reference,
+        // but excluded from the bottom legend — see legend.labels.filter below)
         const avgDataset = {
           label: 'Average',
           data: avgData,
@@ -261,6 +269,7 @@ async function loadData() {
           backgroundColor: 'transparent',
           borderWidth: 2,
           pointRadius: 0,
+          pointHoverRadius: 0,
           tension: 0.2
         }
 
@@ -279,10 +288,15 @@ async function loadData() {
     options.responsive = true
     options.maintainAspectRatio = false
 
-    // ensure y axis starts at zero
+    // ensure y axis starts at zero and only shows integer tick values
     options.scales = options.scales || {}
     options.scales.y = options.scales.y || {}
     options.scales.y.beginAtZero = true
+    options.scales.y.ticks = options.scales.y.ticks || {}
+    options.scales.y.ticks.precision = 0
+    options.scales.y.afterBuildTicks = function (axis) {
+      axis.ticks = axis.ticks.filter(t => Number.isInteger(t.value))
+    }
 
     // x axis tick density to avoid overlap when many months are present
     options.scales.x = options.scales.x || {}
@@ -296,15 +310,27 @@ async function loadData() {
     if (props.type === 'line') {
       options.elements = options.elements || {}
       options.elements.point = options.elements.point || {}
-      options.elements.point.radius = options.elements.point.radius ?? 0
-      options.elements.point.hoverRadius = options.elements.point.hoverRadius ?? 4
+      options.elements.point.radius = options.elements.point.radius ?? 3
+      options.elements.point.hoverRadius = options.elements.point.hoverRadius ?? 6
 
-      // keep legend visible for line charts (stores + average)
+      // show a dot on every month; hovering anywhere near an x position
+      // (not just directly over a point) reveals every store's value for
+      // that month, so overlapping/shared values are visible together
+      options.interaction = { mode: 'index', intersect: false }
       options.plugins = options.plugins || {}
+      options.plugins.tooltip = options.plugins.tooltip || {}
+      options.plugins.tooltip.mode = 'index'
+      options.plugins.tooltip.intersect = false
+
+      // keep legend visible for line charts (stores only — the Average
+      // reference line stays on the chart but is hidden from the legend)
       options.plugins.legend = options.plugins.legend || {}
       options.plugins.legend.display = true
       options.plugins.legend.labels = options.plugins.legend.labels || {}
       options.plugins.legend.labels.usePointStyle = true
+      options.plugins.legend.labels.filter = function (legendItem) {
+        return legendItem.text !== 'Average'
+      }
     }
 
     // bar chart specific options: treat as percentage axis 0..100
@@ -331,10 +357,11 @@ async function loadData() {
       options.datasets.bar.categoryPercentage = options.datasets.bar.categoryPercentage ?? 0.8
       options.datasets.bar.barPercentage = options.datasets.bar.barPercentage ?? 0.9
 
-      // per new requirement: remove per-store pass rate legend (hide legend)
+      // show the legend so each store's bar color can be identified when
+      // several stores are selected (grouped/clustered bars per month)
       options.plugins = options.plugins || {}
       options.plugins.legend = options.plugins.legend || {}
-      options.plugins.legend.display = false
+      options.plugins.legend.display = payload.datasets.length > 1
     }
 
     // normalize and apply passing grade for line charts (green)
@@ -389,14 +416,19 @@ onBeforeUnmount(() => chart?.destroy())
 .card {
   padding: 1rem;
   border-radius: 0.75rem;
-  background: #0f172a; /* dark slate */
+  background: #1f2937; /* grey */
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-  border: 1px solid #334155;
+  border: 1px solid #4b5563;
   color: #f1f5f9;
   height: 250px;
   width: 100%;
   position: relative;
   overflow: hidden;
+}
+.chart-card--fill {
+  height: 100%;
+  min-height: 250px;
+  flex: 1;
 }
 canvas { display:block; width:100%; height:100%; }
 

@@ -20,7 +20,7 @@ export const baseOptions = {
       padding: { top: 10, bottom: 10 }
     },
     tooltip: {
-      backgroundColor: '#0f172a',
+      backgroundColor: '#374151',
       titleColor: '#fff',
       bodyColor: '#fff',
       padding: 10,
@@ -43,7 +43,7 @@ export const baseOptions = {
 export const barDataset = (data, label = 'Count') => ({
   label,
   data,
-  backgroundColor: '#3b82f6', // softer blue for bars
+  backgroundColor: '#6b7280', // grey for bars
   borderRadius: 6,
   barPercentage: 0.7,
   categoryPercentage: 0.8

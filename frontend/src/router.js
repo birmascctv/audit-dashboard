@@ -7,12 +7,12 @@ const routes = [
   // root -> main dashboard
   { path: '/', redirect: '/dashboard' },
 
-  // Main dashboard: client-side will exclude 2025 by default
+  // Main dashboard: shows all years except 2025
   {
     path: '/dashboard',
     name: 'Dashboard',
     component: Dashboard,
-    props: { year: null, excludeYear: 2025 }
+    props: { excludeYear: 2025 }
   },
 
   // 2025-only dashboard
@@ -20,7 +20,7 @@ const routes = [
     path: '/dashboard2025',
     name: 'Dashboard2025',
     component: Dashboard2025,
-    props: { year: 2025, excludeYear: null }
+    props: true
   },
 
   // keep your existing short path as an alias to the 2025 dashboard
