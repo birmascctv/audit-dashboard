@@ -47,6 +47,28 @@ def query_rows(sql, params=()):
         conn.close()
 
 
+# Distinct, high-contrast qualitative color palette used for per-store lines/
+# bars (avoids the old hsl(id*47 % 360) formula, which produced two
+# similar-looking greens). Also reused (offset) for per-category series.
+COLOR_PALETTE = [
+    "#ef4444",  # red
+    "#22c55e",  # green
+    "#3b82f6",  # blue
+    "#f59e0b",  # amber
+    "#a855f7",  # purple
+    "#06b6d4",  # cyan
+    "#ec4899",  # pink
+    "#84cc16",  # lime
+    "#f97316",  # orange
+    "#14b8a6",  # teal
+]
+
+
+def color_for_id(entity_id):
+    """Deterministic, high-contrast color for a store/category id."""
+    return COLOR_PALETTE[(int(entity_id) - 1) % len(COLOR_PALETTE)]
+
+
 def table_has_column(table, column):
     """Return True if SQLite table has the given column."""
     conn = get_conn()
@@ -314,7 +336,7 @@ def category_monthly(category):
                 datasets[sid] = {
                     "label": name,
                     "data": [None] * len(labels),
-                    "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",  # consistent color per store_id
+                    "borderColor": color_for_id(sid),  # consistent color per store_id
                     "fill": False
                 }
             lbl = f"{r['year']}-{int(r['month']):02d}"
@@ -399,7 +421,7 @@ def category_criterion_monthly(category, criterion):
                     datasets[sid] = {
                         "label": name,
                         "data": [None] * len(labels),
-                        "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",
+                        "borderColor": color_for_id(sid),
                         "fill": False
                     }
                 lbl = f"{r['year']}-{int(r['month']):02d}"
@@ -454,7 +476,7 @@ def category_passrate(category):
                 datasets[sid] = {
                     "label": name,
                     "data": [None] * len(labels),
-                    "borderColor": f"hsl({sid * 47 % 360}, 70%, 50%)",
+                    "borderColor": color_for_id(sid),
                     "fill": False
                 }
             lbl = f"{r['year']}-{int(r['month']):02d}"
@@ -463,6 +485,57 @@ def category_passrate(category):
         return jsonify({"labels": labels, "datasets": list(datasets.values())})
     except Exception:
         app.logger.exception("category_passrate failed for category=%s stores=%s year=%s", category, request.args.get("stores"), request.args.get("year"))
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route("/api/store/<int:store_id>/passrate")
+def store_passrate(store_id):
+    """
+    Mirror of /api/category/<category>/passrate but pivoted: one chart per
+    store, with categories as the grouped/clustered bar series instead of
+    stores. Powers the "Store Passing Rate" section.
+    """
+    try:
+        year = request.args.get("year", type=int)
+
+        params = [store_id]
+        where_year = ""
+        if year:
+            where_year = "AND m.year = ?"
+            params.append(year)
+
+        sql = f"""
+            SELECT m.category, m.year, m.month, m.pass_rate
+            FROM category_store_monthly_passrate m
+            WHERE m.store_id = ?
+            {where_year}
+            ORDER BY m.year, m.month, m.category
+        """
+        rows = query_rows(sql, params)
+
+        # stable category -> color index, based on alphabetical order of all
+        # known categories (independent of any per-request filtering)
+        all_categories = sorted({r["category"] for r in query_rows("SELECT DISTINCT category FROM category_store_monthly_passrate")})
+        category_index = {c: i + 1 for i, c in enumerate(all_categories)}
+
+        labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
+        label_index = {lbl: i for i, lbl in enumerate(labels)}
+        datasets = {}
+        for r in rows:
+            cat = r["category"]
+            if cat not in datasets:
+                datasets[cat] = {
+                    "label": cat,
+                    "data": [None] * len(labels),
+                    "borderColor": color_for_id(category_index.get(cat, 1)),
+                    "fill": False
+                }
+            lbl = f"{r['year']}-{int(r['month']):02d}"
+            datasets[cat]["data"][label_index[lbl]] = None if r["pass_rate"] is None else float(r["pass_rate"])
+
+        return jsonify({"labels": labels, "datasets": list(datasets.values())})
+    except Exception:
+        app.logger.exception("store_passrate failed for store_id=%s year=%s", store_id, request.args.get("year"))
         return jsonify({"error": "Internal server error"}), 500
 
 

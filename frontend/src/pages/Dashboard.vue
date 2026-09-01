@@ -11,8 +11,8 @@
 
     <!-- Criteria search + selection (single combined bar) -->
     <div class="controls-bar mb-4">
-      <h4 class="text-sm font-medium mb-1 text-slate-100">Criteria</h4>
-      <label class="block text-sm text-slate-300 mb-1">Select criteria</label>
+      <h4 class="text-sm font-medium mb-1 title-on-page">Criteria</h4>
+      <label class="block text-sm mb-1 label-on-page">Select criteria</label>
       <CriteriaSelect :criteria="criteria" v-model="selectedCriterionId" />
     </div>
 
@@ -26,13 +26,14 @@
           :criterion="selectedCriterion.id"
           type="line"
           fill-height
+          :stores="stores"
           :selected-stores="selectedStores"
+          @update:selected-stores="selectedStores = $event"
           :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
           :options="{ title: { text: selectedCriterion.label } }"
           :exclude-year="excludeYear"
-          :key="selectedCriterion.id + '-' + selectedStores.join(',')"
+          :key="selectedCriterion.id"
         />
-        <StoreLegendToggle :stores="stores" v-model="selectedStores" />
       </div>
 
       <!-- Info panel column -->
@@ -64,16 +65,33 @@
          (selected) stores for every month. Multiple selected stores render
          as grouped/clustered bars. -->
     <div class="passrate-section mt-6">
-      <h3 class="text-lg font-semibold mb-3 text-slate-100">Category Pass Rate</h3>
+      <h3 class="text-lg font-semibold mb-3 title-on-page">Category Pass Rate</h3>
       <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2">
         <ChartCard
           v-for="cat in categories"
           :key="'passrate-' + cat + '-' + selectedStores.join(',')"
           :category="cat"
           type="bar"
+          :stores="stores"
           :selected-stores="selectedStores"
           :exclude-year="excludeYear"
           :options="{ title: { text: cat } }"
+        />
+      </div>
+    </div>
+
+    <!-- Store passing rate: pivoted view, one chart per store, with
+         categories as the grouped/clustered bar series. -->
+    <div class="storerate-section mt-6">
+      <h3 class="text-lg font-semibold mb-3 title-on-page">Store Passing Rate</h3>
+      <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2">
+        <ChartCard
+          v-for="s in stores"
+          :key="'storerate-' + s.store_id"
+          type="bar"
+          :store-id="s.store_id"
+          :exclude-year="excludeYear"
+          :options="{ title: { text: s.name } }"
         />
       </div>
     </div>
@@ -83,7 +101,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import ChartCard from '../components/ChartCard.vue'
-import StoreLegendToggle from '../components/StoreLegendToggle.vue'
 import CriteriaSelect from '../components/CriteriaSelect.vue'
 import Header from '../components/Header.vue'
 
@@ -124,6 +141,10 @@ onMounted(async () => {
   try {
     stores.value = await storesRes.json()
   } catch (e) { stores.value = [] }
+
+  // default: all stores selected/shown (filled dots) until the user
+  // deselects some via the line chart's clickable legend
+  selectedStores.value = stores.value.map(s => s.store_id)
 
   // default selection: first criterion if none selected
   if (!selectedCriterionId.value && criteria.value.length) {
@@ -169,6 +190,11 @@ function passingGradeLabel(criterion) {
 <style scoped>
 .header { margin-bottom: 0.5rem; }
 .btn { display: inline-flex; align-items: center; justify-content: center; }
+
+/* Titles/labels sitting directly on the page's light-grey background need
+   dark text (the light "slate" text colors are meant for the dark cards) */
+.title-on-page { color: #111827; }
+.label-on-page { color: #374151; }
 
 /* main grid spacing */
 .main-grid { margin-top: 0.5rem; }

@@ -1,7 +1,7 @@
 <template>
   <header class="card flex items-center justify-between mb-4">
     <div>
-      <h1 class="brand text-xl font-bold">Birmas Audit</h1>
+      <h1 class="brand text-3xl md:text-4xl font-bold">Birmas Audit</h1>
       <div class="muted text-sm">{{ subtitle }}</div>
     </div>
     <div class="flex gap-2">

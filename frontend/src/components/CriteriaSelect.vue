@@ -6,27 +6,27 @@
       v-model="query"
       type="text"
       placeholder="Search or select criteria..."
-      class="w-full px-3 py-2 rounded bg-slate-800 text-slate-100 border border-slate-700"
+      class="w-full px-3 py-2 rounded bg-white text-slate-900 border border-slate-300 placeholder-slate-500"
       @focus="onFocus"
       @input="open = true"
     />
 
     <ul
       v-if="open && filteredCriteria.length"
-      class="dropdown absolute z-10 mt-1 w-full max-h-64 overflow-auto rounded bg-slate-800 border border-slate-700 shadow-lg"
+      class="dropdown absolute z-10 mt-1 w-full max-h-64 overflow-auto rounded bg-white border border-slate-300 shadow-lg"
     >
       <li
         v-for="c in filteredCriteria"
         :key="c.id"
-        class="px-3 py-2 cursor-pointer hover:bg-slate-700 text-slate-100"
-        :class="{ 'bg-slate-700': c.id === modelValue }"
+        class="px-3 py-2 cursor-pointer hover:bg-slate-100 text-slate-900"
+        :class="{ 'bg-slate-100': c.id === modelValue }"
         @mousedown.prevent="select(c)"
       >
-        {{ c.label }} <span class="text-xs text-slate-400">— {{ c.category }}</span>
+        {{ c.label }} <span class="text-xs text-slate-500">— {{ c.category }}</span>
       </li>
     </ul>
 
-    <div v-else-if="open && !filteredCriteria.length" class="dropdown absolute z-10 mt-1 w-full rounded bg-slate-800 border border-slate-700 shadow-lg px-3 py-2 text-sm text-slate-400">
+    <div v-else-if="open && !filteredCriteria.length" class="dropdown absolute z-10 mt-1 w-full rounded bg-white border border-slate-300 shadow-lg px-3 py-2 text-sm text-slate-500">
       No criteria match your search
     </div>
   </div>

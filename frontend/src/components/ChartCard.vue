@@ -22,9 +22,17 @@ import { baseOptions } from '../chart-config.js'
 Chart.register(...registerables, annotationPlugin)
 
 const props = defineProps({
-  category: { type: String, required: true },
+  category: { type: String, default: null },
   // optional: criterion id for single-criterion line view
   criterion: { type: [String, Number], default: null },
+
+  // when set, fetch the pivoted store-passrate endpoint (categories as the
+  // grouped bar series) instead of the category-based passrate endpoint
+  storeId: { type: [String, Number], default: null },
+
+  // full list of stores ({store_id, name}); used to build the clickable
+  // line-chart legend (hollow/filled dots + "All stores")
+  stores: { type: Array, default: () => [] },
 
   selectedStores: { type: Array, default: () => [] },
 
@@ -41,7 +49,7 @@ const props = defineProps({
   fillHeight: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['loading'])
+const emit = defineEmits(['loading', 'update:selectedStores'])
 
 const canvas = ref(null)
 let chart = null
@@ -51,16 +59,19 @@ const error = ref(null)
 /** Build URL depending on chart type and whether a criterion is selected.
  *  - Line (criterion): /api/category/:category/criterion/:criterion/monthly
  *  - Line (no criterion): fallback to /api/category/:category/monthly
- *  - Bar (passrate): /api/category/:category/passrate
+ *  - Bar (passrate, per category): /api/category/:category/passrate
+ *  - Bar (passrate, per store, pivoted): /api/store/:storeId/passrate
  */
 function buildUrl(kind = 'monthly') {
-  const cat = encodeURIComponent(props.category)
   const storesParam = (props.selectedStores && props.selectedStores.length) ? props.selectedStores.join(',') : ''
   let url = ''
 
-  if (props.type === 'line' && props.criterion) {
-    url = `/api/category/${cat}/criterion/${encodeURIComponent(props.criterion)}/monthly`
+  if (props.type === 'bar' && props.storeId != null) {
+    url = `/api/store/${encodeURIComponent(props.storeId)}/passrate`
+  } else if (props.type === 'line' && props.criterion) {
+    url = `/api/category/${encodeURIComponent(props.category)}/criterion/${encodeURIComponent(props.criterion)}/monthly`
   } else {
+    const cat = encodeURIComponent(props.category)
     url = storesParam
       ? `/api/category/${cat}/${kind}?stores=${storesParam}`
       : `/api/category/${cat}/${kind}`
@@ -181,16 +192,28 @@ async function loadData() {
   error.value = null
   emit('loading', true)
   try {
-    const kind = props.type === 'bar' ? 'passrate' : 'monthly'
-    const url = buildUrl(kind)
-    const res = await axios.get(url)
-    let payload = res.data
+    // charts driven by the store-selection legend (line charts, and
+    // category-based bar charts) render an empty chart once every store
+    // has been explicitly deselected, instead of falling back to "all"
+    const usesStoreSelection = props.stores && props.stores.length &&
+      ((props.type === 'line' && props.criterion) || (props.type === 'bar' && props.storeId == null))
+    const noStoresSelected = usesStoreSelection && props.selectedStores && props.selectedStores.length === 0
 
-    // apply excludeYear filter client-side if requested
-    payload = filterPayloadByExcludeYear(payload)
+    let payload
+    if (noStoresSelected) {
+      payload = { labels: [], datasets: [] }
+    } else {
+      const kind = props.type === 'bar' ? 'passrate' : 'monthly'
+      const url = buildUrl(kind)
+      const res = await axios.get(url)
+      payload = res.data
 
-    // ensure payload structure
-    payload = payload || { labels: [], datasets: [] }
+      // apply excludeYear filter client-side if requested
+      payload = filterPayloadByExcludeYear(payload)
+
+      // ensure payload structure
+      payload = payload || { labels: [], datasets: [] }
+    }
 
     // If datasets contain arrays per label (raw samples), compute medians per label
     if (Array.isArray(payload.datasets)) {
@@ -278,6 +301,20 @@ async function loadData() {
       }
     }
 
+    // apply per-store visibility from the clickable legend: datasets for
+    // stores not in selectedStores are hidden (line disappears, but the
+    // legend dot stays clickable to bring it back)
+    if (props.stores && props.stores.length && props.selectedStores) {
+      const nameToId = new Map(props.stores.map(s => [s.name, s.store_id]))
+      const selectedSet = new Set(props.selectedStores)
+      payload.datasets = (payload.datasets || []).map(ds => {
+        if (ds.label === 'Average') return ds
+        const id = nameToId.get(ds.label)
+        if (id == null) return ds
+        return { ...ds, hidden: !selectedSet.has(id) }
+      })
+    }
+
     // destroy previous chart
     if (chart) chart.destroy()
 
@@ -328,8 +365,59 @@ async function loadData() {
       options.plugins.legend.display = true
       options.plugins.legend.labels = options.plugins.legend.labels || {}
       options.plugins.legend.labels.usePointStyle = true
-      options.plugins.legend.labels.filter = function (legendItem) {
-        return legendItem.text !== 'Average'
+
+      if (props.stores && props.stores.length) {
+        // custom clickable legend: one hollow/filled dot per store plus an
+        // "All stores" toggle. Filled = store's data is shown on the chart,
+        // hollow = hidden. Clicking toggles selection; the parent owns the
+        // selectedStores state (shared with the passing-rate bar charts).
+        const storesList = props.stores
+        const selectedNow = props.selectedStores || []
+
+        options.plugins.legend.labels.generateLabels = function () {
+          const allSelected = storesList.length > 0 && storesList.every(s => selectedNow.includes(s.store_id))
+          const items = [{
+            text: 'All stores',
+            fillStyle: allSelected ? '#9ca3af' : 'transparent',
+            strokeStyle: '#9ca3af',
+            lineWidth: 2,
+            pointStyle: 'circle',
+            __allStores: true
+          }]
+          for (const s of storesList) {
+            const ds = (payload.datasets || []).find(d => d.label === s.name)
+            const color = (ds && ds.borderColor) || '#9ca3af'
+            const isSelected = selectedNow.includes(s.store_id)
+            items.push({
+              text: s.name,
+              fillStyle: isSelected ? color : 'transparent',
+              strokeStyle: color,
+              lineWidth: 2,
+              pointStyle: 'circle',
+              __storeId: s.store_id
+            })
+          }
+          return items
+        }
+
+        options.plugins.legend.onClick = function (evt, legendItem) {
+          if (legendItem.__allStores) {
+            const allNowSelected = storesList.length > 0 && storesList.every(s => selectedNow.includes(s.store_id))
+            emit('update:selectedStores', allNowSelected ? [] : storesList.map(s => s.store_id))
+            return
+          }
+          const id = legendItem.__storeId
+          if (id == null) return
+          const cur = selectedNow.slice()
+          const idx = cur.indexOf(id)
+          if (idx >= 0) cur.splice(idx, 1)
+          else cur.push(id)
+          emit('update:selectedStores', cur)
+        }
+      } else {
+        options.plugins.legend.labels.filter = function (legendItem) {
+          return legendItem.text !== 'Average'
+        }
       }
     }
 
