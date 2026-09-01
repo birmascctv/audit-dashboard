@@ -276,7 +276,7 @@ def category_monthly(category):
             params.append(year)
 
         sql = f"""
-            SELECT m.store_id, s.name AS store_name, m.year, m.month, {col}
+            SELECT m.store_id AS m_store_id, s.name AS store_name, m.year, m.month, {col}
             FROM category_store_monthly_median m
             JOIN stores s ON m.store_id = s.store_id
             WHERE m.category = ?
@@ -289,7 +289,7 @@ def category_monthly(category):
         labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
         datasets = {}
         for r in rows:
-            sid = r["store_id"]
+            sid = r["m_store_id"]
             name = r["store_name"]
             if sid not in datasets:
                 datasets[sid] = {
@@ -324,23 +324,19 @@ def category_criterion_monthly(category, criterion):
 
         store_ids = parse_stores_param(stores_param)
 
+        # resolve criterion id if a name was provided
         conn = get_conn()
         try:
             crit_id = None
-            # if numeric, treat as id
-            if crit_raw is not None and str(crit_raw).isdigit():
+            if str(crit_raw).isdigit():
                 crit_id = int(crit_raw)
             else:
-                # try to resolve by name within the category
-                row = conn.execute(
-                    "SELECT criteria_id FROM criteria WHERE name = ? AND category = ? LIMIT 1",
-                    (crit_raw, category)
-                ).fetchone()
+                row = conn.execute("SELECT criteria_id FROM criteria WHERE name = ? AND category = ? LIMIT 1", (crit_raw, category)).fetchone()
                 if row:
                     crit_id = int(row["criteria_id"])
 
-            # fallback: try direct id lookup if still not found
             if not crit_id:
+                # try to find by id in path param
                 row = conn.execute("SELECT criteria_id FROM criteria WHERE criteria_id = ? LIMIT 1", (crit_raw,)).fetchone()
                 if row:
                     crit_id = int(row["criteria_id"])
@@ -360,7 +356,7 @@ def category_criterion_monthly(category, criterion):
 
             # Aggregate average score per store/year/month for the criterion
             sql = f"""
-                SELECT a.store_id, s.name AS store_name, a.year, a.month,
+                SELECT a.store_id AS a_store_id, s.name AS store_name, a.year, a.month,
                        AVG(sc.score) AS avg_score
                 FROM scores sc
                 JOIN audits a ON sc.audit_id = a.audit_id
@@ -376,7 +372,7 @@ def category_criterion_monthly(category, criterion):
             labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
             datasets = {}
             for r in rows:
-                sid = r["store_id"]
+                sid = r["a_store_id"]
                 name = r["store_name"]
                 if sid not in datasets:
                     datasets[sid] = {
@@ -416,7 +412,7 @@ def category_passrate(category):
             params.append(year)
 
         sql = f"""
-            SELECT m.store_id, s.name AS store_name, m.year, m.month, m.pass_rate
+            SELECT m.store_id AS m_store_id, s.name AS store_name, m.year, m.month, m.pass_rate
             FROM category_store_monthly_passrate m
             JOIN stores s ON m.store_id = s.store_id
             WHERE m.category = ?
@@ -429,7 +425,7 @@ def category_passrate(category):
         labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
         datasets = {}
         for r in rows:
-            sid = r["store_id"]
+            sid = r["m_store_id"]
             name = r["store_name"]
             if sid not in datasets:
                 datasets[sid] = {
