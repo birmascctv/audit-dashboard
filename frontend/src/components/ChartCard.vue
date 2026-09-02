@@ -44,6 +44,10 @@ const props = defineProps({
 
   year: { type: Number, default: null },
   excludeYear: { type: Number, default: null },
+  // optional period (month) range filter, 1-12 inclusive; applied
+  // client-side across all years present in the fetched data
+  periodFrom: { type: Number, default: null },
+  periodTo: { type: Number, default: null },
   // when true, the card fills the height of its flex parent instead of a
   // fixed 250px (used for the line chart so it can match the info panel)
   fillHeight: { type: Boolean, default: false }
@@ -147,6 +151,40 @@ function filterPayloadByExcludeYear(payload) {
   return { labels: newLabels, datasets: newDatasets }
 }
 
+/**
+ * Filter payload to only keep labels whose month (the "MM" part of a
+ * "YYYY-MM" label) falls within [periodFrom, periodTo] inclusive.
+ */
+function filterPayloadByPeriod(payload) {
+  if (!payload || !Array.isArray(payload.labels)) return payload
+  if (!props.periodFrom && !props.periodTo) return payload
+
+  const from = props.periodFrom || 1
+  const to = props.periodTo || 12
+
+  const keepIdx = payload.labels
+    .map((lbl, idx) => ({ lbl, idx }))
+    .filter(x => {
+      const m = parseInt(String(x.lbl).split('-')[1], 10)
+      if (isNaN(m)) return true
+      return from <= to ? (m >= from && m <= to) : (m >= from || m <= to)
+    })
+    .map(x => x.idx)
+
+  if (!keepIdx.length) {
+    return { labels: [], datasets: payload.datasets ? payload.datasets.map(ds => ({ ...ds, data: [] })) : [] }
+  }
+
+  const newLabels = keepIdx.map(i => payload.labels[i])
+  const newDatasets = (payload.datasets || []).map(ds => {
+    const data = Array.isArray(ds.data) ? ds.data : []
+    const newData = keepIdx.map(i => (i < data.length ? data[i] : null))
+    return { ...ds, data: newData }
+  })
+
+  return { labels: newLabels, datasets: newDatasets }
+}
+
 /** Normalize passing grade for chart type:
  *  - For bar charts, convert 0..1 -> 0..100 if needed
  *  - For line charts, return as-is (assumed same unit as line data)
@@ -214,8 +252,9 @@ async function loadData() {
       const res = await axios.get(url)
       payload = res.data
 
-      // apply excludeYear filter client-side if requested
+      // apply excludeYear + period (month range) filters client-side
       payload = filterPayloadByExcludeYear(payload)
+      payload = filterPayloadByPeriod(payload)
 
       // ensure payload structure
       payload = payload || { labels: [], datasets: [] }
@@ -509,7 +548,7 @@ async function loadData() {
 onMounted(loadData)
 
 watch(
-  () => [props.category, props.criterion, props.selectedStores, props.type, props.year, props.excludeYear],
+  () => [props.category, props.criterion, props.selectedStores, props.type, props.year, props.excludeYear, props.periodFrom, props.periodTo],
   () => {
     loadData()
   },

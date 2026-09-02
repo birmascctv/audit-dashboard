@@ -8,6 +8,7 @@
       placeholder="Search or select criteria..."
       class="w-full px-3 py-2 rounded bg-white text-slate-900 border border-slate-300 placeholder-slate-500"
       @focus="onFocus"
+      @click="onFocus"
       @input="open = true"
     />
 

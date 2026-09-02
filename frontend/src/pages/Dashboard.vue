@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto">
     <Header subtitle="All years except 2025">
       <router-link
         to="/dashboard2025"
@@ -16,6 +16,19 @@
         <SectionHeader text="Criteria" />
         <label class="block text-sm mb-1 label-on-page">Select criteria</label>
         <CriteriaSelect :criteria="criteria" v-model="selectedCriterionId" />
+
+        <div class="period-filter mt-3 flex items-center gap-2 flex-wrap">
+          <label class="text-sm label-on-page font-medium">Period:</label>
+          <select v-model="periodFrom" class="px-2 py-1 rounded border border-slate-300 bg-white text-slate-900 text-sm">
+            <option :value="null">All</option>
+            <option v-for="(m, idx) in monthNames" :key="'from-' + idx" :value="idx + 1">{{ m }}</option>
+          </select>
+          <span class="text-sm label-on-page">to</span>
+          <select v-model="periodTo" class="px-2 py-1 rounded border border-slate-300 bg-white text-slate-900 text-sm">
+            <option :value="null">All</option>
+            <option v-for="(m, idx) in monthNames" :key="'to-' + idx" :value="idx + 1">{{ m }}</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -36,6 +49,8 @@
           :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
           :options="{ title: { text: selectedCriterion.label } }"
           :exclude-year="excludeYear"
+          :period-from="periodFrom"
+          :period-to="periodTo"
           :key="selectedCriterion.id"
         />
       </div>
@@ -87,6 +102,8 @@
           :stores="stores"
           :selected-stores="selectedStores"
           :exclude-year="excludeYear"
+          :period-from="periodFrom"
+          :period-to="periodTo"
           :options="{ title: { text: cat } }"
         />
       </div>
@@ -103,6 +120,8 @@
           type="bar"
           :store-id="s.store_id"
           :exclude-year="excludeYear"
+          :period-from="periodFrom"
+          :period-to="periodTo"
           :options="{ title: { text: stripStoreBrand(s.name) } }"
         />
       </div>
@@ -129,6 +148,11 @@ const selectedStores = ref([])
 const averageValue = ref(null)      // overall average for the selected criterion, from ChartCard
 
 const selectedCriterionId = ref(null)
+
+// period (month range) filter applied across all charts on this page
+const periodFrom = ref(null)
+const periodTo = ref(null)
+const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
 // fetch initial data (criteria/passing-grades scoped to "all years except 2025")
 onMounted(async () => {
