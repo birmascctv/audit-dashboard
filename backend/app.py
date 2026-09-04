@@ -597,7 +597,10 @@ def passing_grades():
             cat = r["category"]
             if cat not in by_cat:
                 by_cat[cat] = {"criteria": {}, "unit": None, "values": []}
-            key = r["name"] if r["name"] else str(r["criteria_id"])
+            # key by criteria_id (not name) — criteria with the same name
+            # can exist across different years (e.g. 2025 vs 2026) with
+            # different passing grades, and must not collide/overwrite
+            key = str(r["criteria_id"])
             val = r["passing_grade"]
             by_cat[cat]["criteria"][key] = val
             if val is not None:

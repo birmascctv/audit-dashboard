@@ -139,7 +139,6 @@ import SectionHeader from '../components/SectionHeader.vue'
 
 const criteria = ref([])            // list of criteria recorded in 2025 only
 const categories = ref([])
-const passingGrades = ref({})       // API: { CategoryName: { categoryPassingGrade: 75, unit: 'percent', criteria: {...} } }
 const stores = ref([])              // list of stores { store_id, name }
 const selectedStores = ref([])
 const averageValue = ref(null)      // overall average for the selected criterion, from ChartCard
@@ -151,12 +150,11 @@ const periodFrom = ref(null)
 const periodTo = ref(null)
 const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
-// fetch initial data (criteria/passing-grades scoped to year 2025 only)
+// fetch initial data (criteria/stores scoped to year 2025 only)
 onMounted(async () => {
-  const [critRes, catRes, gradeRes, storesRes] = await Promise.all([
+  const [critRes, catRes, storesRes] = await Promise.all([
     fetch('/api/criteria?year=2025'),
     fetch('/api/categories'),
-    fetch('/api/passing-grades?year=2025'),
     fetch('/api/stores')
   ])
 
@@ -167,10 +165,6 @@ onMounted(async () => {
   try {
     categories.value = await catRes.json()
   } catch (e) { categories.value = [] }
-
-  try {
-    passingGrades.value = await gradeRes.json()
-  } catch (e) { passingGrades.value = {} }
 
   try {
     stores.value = await storesRes.json()
@@ -190,31 +184,22 @@ const selectedCriterion = computed(() => {
   return criteria.value.find(c => c.id === selectedCriterionId.value) || null
 })
 
-// helper: return category-level passing grade (normalized number or null)
+// helper: return the SPECIFIC criterion's own passing grade (not a
+// category-wide aggregate — categories can contain criteria with very
+// different thresholds, e.g. Stock Opname mixes passing grades of 1 and 3,
+// so a category median would misrepresent an individual criterion's max)
 function categoryPassingGradeFor(categoryName) {
-  if (!categoryName) return null
-  const entry = passingGrades.value?.[categoryName]
-  if (!entry) return null
-  if (typeof entry === 'number') return entry
-  if (entry && typeof entry.categoryPassingGrade === 'number') return entry.categoryPassingGrade
-  if (entry && entry.criteria) {
-    const vals = Object.values(entry.criteria).map(v => Number(v)).filter(v => !isNaN(v))
-    if (!vals.length) return null
-    vals.sort((a,b) => a-b)
-    const mid = Math.floor(vals.length/2)
-    return (vals.length % 2) ? vals[mid] : (vals[mid-1] + vals[mid]) / 2
-  }
-  return null
+  if (!selectedCriterion.value || selectedCriterion.value.category !== categoryName) return null
+  const val = selectedCriterion.value.passing_grade
+  return (val === null || val === undefined) ? null : Number(val)
 }
 
 // label for passing grade display (adds unit if available)
 function passingGradeLabel(criterion) {
   if (!criterion) return 'No threshold available'
-  const cat = criterion.category
-  const entry = passingGrades.value?.[cat]
-  let val = categoryPassingGradeFor(cat)
+  const val = criterion.passing_grade
   if (val === null || val === undefined) return 'No threshold available'
-  const unit = (entry && entry.unit) || (criterion.unit || '')
+  const unit = criterion.unit || ''
   return unit ? `${val}${unit === 'percent' || unit === '%' ? '%' : ' ' + unit}` : String(val)
 }
 
