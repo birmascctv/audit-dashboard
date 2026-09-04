@@ -12,6 +12,7 @@ import os
 import sqlite3
 import sys
 import traceback
+import re
 import pandas as pd
 from datetime import datetime
 
@@ -50,6 +51,19 @@ def median(values):
 
 def safe_fetchone_first(colrow):
     return colrow[0] if colrow else None
+
+def normalize_criteria_name(name):
+    """
+    Some 2026 audit templates append a trailing quantity/index in
+    parentheses to the criterion name, e.g. "Asbak (2)", "Meja (1)",
+    "Tabung CO2 (1)" — this is a per-store note of how many physical units
+    exist, not a distinct criterion, and each store only ever records one
+    such row per real-world criterion (never both the plain and the
+    suffixed form together). Left as-is, these variants would fragment a
+    single logical criterion into several different criteria_id rows
+    (one per distinct store naming), breaking cross-store comparisons.
+    """
+    return re.sub(r"\s*\(\d+\)\s*$", "", str(name)).strip()
 
 # -------------------------
 # Pre-checks
@@ -377,7 +391,7 @@ try:
         for _, row in df.iterrows():
             row_count += 1
             category = str(row.get("Category", "")).strip()
-            name = str(row.get("Criteria", "")).strip()
+            name = normalize_criteria_name(row.get("Criteria", ""))
             if category.lower() in ["absensi", "maintenance"]:
                 continue
             passing_grade = row.get("Passing Grade", None)
