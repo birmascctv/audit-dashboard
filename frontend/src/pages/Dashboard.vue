@@ -96,7 +96,7 @@
       <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2 mt-2">
         <ChartCard
           v-for="cat in categories"
-          :key="'passrate-' + cat + '-' + selectedStores.join(',')"
+          :key="'passrate-' + cat"
           :category="cat"
           type="bar"
           :stores="stores"

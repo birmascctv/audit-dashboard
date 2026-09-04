@@ -57,6 +57,7 @@ const emit = defineEmits(['loading', 'update:selectedStores', 'update:average'])
 
 const canvas = ref(null)
 let chart = null
+let unmounted = false
 const loading = ref(false)
 const error = ref(null)
 
@@ -378,6 +379,14 @@ async function loadData() {
     // destroy previous chart
     if (chart) chart.destroy()
 
+    // bail out if the component was unmounted (or its canvas ref is gone)
+    // while the network request above was in flight — creating a Chart on
+    // a null/detached canvas corrupts Chart.js's internal instance
+    // registry and breaks every subsequent chart on the page
+    if (unmounted || !canvas.value) {
+      return
+    }
+
     // clone base options
     let options = JSON.parse(JSON.stringify(baseOptions || {}))
 
@@ -559,7 +568,10 @@ watch(() => props.refreshKey, () => {
   loadData()
 })
 
-onBeforeUnmount(() => chart?.destroy())
+onBeforeUnmount(() => {
+  unmounted = true
+  chart?.destroy()
+})
 </script>
 
 <style scoped>
