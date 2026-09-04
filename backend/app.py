@@ -353,9 +353,8 @@ def category_criterion_monthly(category, criterion):
     """
     Return monthly series for a single criterion within a category.
     'criterion' may be criteria_id (numeric) or criteria name (string).
-    This endpoint aggregates scores per store/year/month for the given criterion.
-    The aggregation here uses average as a robust fallback; if you prefer server-side median,
-    we can implement a more complex median calculation later.
+    This endpoint aggregates scores per store/year/month for the given criterion,
+    using the median across all audits recorded in that month per store.
     """
     try:
         category = unquote(category)
@@ -396,36 +395,46 @@ def category_criterion_monthly(category, criterion):
                 where_year = "AND a.year = ?"
                 params.append(year)
 
-            # Aggregate average score per store/year/month for the criterion
+            # Fetch raw per-audit scores; the median (not average) is used
+            # per store/year/month so that multiple audits within the same
+            # month don't produce non-integer values when every individual
+            # score is itself an integer.
             sql = f"""
                 SELECT a.store_id AS a_store_id, s.name AS store_name, a.year, a.month,
-                       AVG(sc.score) AS avg_score
+                       sc.score AS score
                 FROM scores sc
                 JOIN audits a ON sc.audit_id = a.audit_id
                 JOIN stores s ON a.store_id = s.store_id
                 WHERE sc.criteria_id = ?
                 {where_store}
                 {where_year}
-                GROUP BY a.store_id, a.year, a.month
                 ORDER BY a.year, a.month, a.store_id
             """
             rows = conn.execute(sql, params).fetchall()
 
-            labels = sorted({f"{r['year']}-{int(r['month']):02d}" for r in rows})
-            label_index = {lbl: i for i, lbl in enumerate(labels)}
-            datasets = {}
+            # group raw scores per (store, label) so we can compute the
+            # median across all audits recorded in that month
+            groups = defaultdict(list)
+            store_names = {}
             for r in rows:
                 sid = r["a_store_id"]
-                name = r["store_name"]
+                store_names[sid] = r["store_name"]
+                lbl = f"{r['year']}-{int(r['month']):02d}"
+                if r["score"] is not None:
+                    groups[(sid, lbl)].append(float(r["score"]))
+
+            labels = sorted({lbl for (_, lbl) in groups.keys()})
+            label_index = {lbl: i for i, lbl in enumerate(labels)}
+            datasets = {}
+            for (sid, lbl), scores in groups.items():
                 if sid not in datasets:
                     datasets[sid] = {
-                        "label": name,
+                        "label": store_names[sid],
                         "data": [None] * len(labels),
                         "borderColor": color_for_id(sid),
                         "fill": False
                     }
-                lbl = f"{r['year']}-{int(r['month']):02d}"
-                datasets[sid]["data"][label_index[lbl]] = None if r["avg_score"] is None else float(r["avg_score"])
+                datasets[sid]["data"][label_index[lbl]] = statistics.median(scores) if scores else None
 
             return jsonify({"labels": labels, "datasets": list(datasets.values())})
         finally:
