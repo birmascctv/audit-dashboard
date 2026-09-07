@@ -346,6 +346,7 @@ async function loadData() {
     {
       const labels = Array.isArray(payload.labels) ? payload.labels : []
       if (payload.datasets && payload.datasets.length) {
+        const countPerLabel = []
         const avgData = labels.map((_, idx) => {
           let sum = 0, count = 0
           for (const ds of payload.datasets) {
@@ -355,8 +356,14 @@ async function loadData() {
               count++
             }
           }
+          countPerLabel.push(count)
           return count ? (sum / count) : null
         })
+
+        // what the average is computed across, for the tooltip's extra line
+        // (line/category-passrate charts average across stores; the
+        // store-passrate chart averages across categories)
+        const avgOfNoun = (props.type === 'bar' && props.storeId != null) ? 'categories' : 'stores'
 
         const avgDataset = props.type === 'bar'
           ? {
@@ -364,22 +371,28 @@ async function loadData() {
               label: 'Average',
               data: avgData,
               borderColor: 'red',
-              backgroundColor: 'transparent',
+              backgroundColor: 'red',
               borderWidth: 2,
-              pointRadius: 0,
-              pointHoverRadius: 0,
+              pointRadius: 3,
+              pointHoverRadius: 6,
+              pointBackgroundColor: 'red',
               tension: 0.2,
-              order: -1
+              order: -1,
+              _counts: countPerLabel,
+              _avgOfNoun: avgOfNoun
             }
           : {
               label: 'Average',
               data: avgData,
               borderColor: 'red',
-              backgroundColor: 'transparent',
+              backgroundColor: 'red',
               borderWidth: 2,
-              pointRadius: 0,
-              pointHoverRadius: 0,
-              tension: 0.2
+              pointRadius: 3,
+              pointHoverRadius: 6,
+              pointBackgroundColor: 'red',
+              tension: 0.2,
+              _counts: countPerLabel,
+              _avgOfNoun: avgOfNoun
             }
 
         // keep the real datasets (colored) and append average as last dataset
@@ -448,6 +461,22 @@ async function loadData() {
       options.plugins.tooltip = options.plugins.tooltip || {}
       options.plugins.tooltip.mode = 'index'
       options.plugins.tooltip.intersect = false
+      options.plugins.tooltip.callbacks = options.plugins.tooltip.callbacks || {}
+      options.plugins.tooltip.callbacks.title = function (items) {
+        return items && items.length ? `Month: ${items[0].label}` : ''
+      }
+      options.plugins.tooltip.callbacks.label = function (context) {
+        const v = context.parsed?.y
+        if (v === null || v === undefined) return ''
+        const name = context.dataset.label === 'Average' ? 'Average' : stripStoreBrand(context.dataset.label)
+        return `${name}: ${v}`
+      }
+      options.plugins.tooltip.callbacks.afterLabel = function (context) {
+        if (context.dataset.label !== 'Average') return undefined
+        const count = context.dataset._counts?.[context.dataIndex]
+        const noun = context.dataset._avgOfNoun || 'stores'
+        return count ? `(average across ${count} ${noun} this month)` : undefined
+      }
 
       // keep legend visible for line charts (stores only — the Average
       // reference line stays on the chart but is hidden from the legend)
@@ -485,14 +514,29 @@ async function loadData() {
       options.scales.y.ticks.callback = function (value) { return value + '%' }
       options.scales.y.ticks.stepSize = 10
 
+      // hovering anywhere near a month reveals every bar (and the average
+      // line's point) for that month together
+      options.interaction = { mode: 'index', intersect: false }
+
       // tooltip formatting for percent
       options.plugins = options.plugins || {}
       options.plugins.tooltip = options.plugins.tooltip || {}
+      options.plugins.tooltip.mode = 'index'
+      options.plugins.tooltip.intersect = false
       options.plugins.tooltip.callbacks = options.plugins.tooltip.callbacks || {}
+      options.plugins.tooltip.callbacks.title = function (items) {
+        return items && items.length ? `Month: ${items[0].label}` : ''
+      }
       options.plugins.tooltip.callbacks.label = function (context) {
         const v = context.parsed?.y
         if (v === null || v === undefined) return ''
         return `${context.dataset.label || ''}: ${v}%`
+      }
+      options.plugins.tooltip.callbacks.afterLabel = function (context) {
+        if (context.dataset.label !== 'Average') return undefined
+        const count = context.dataset._counts?.[context.dataIndex]
+        const noun = context.dataset._avgOfNoun || 'stores'
+        return count ? `(average across ${count} ${noun} this month)` : undefined
       }
 
       // bar sizing and visibility
