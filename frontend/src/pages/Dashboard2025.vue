@@ -59,6 +59,7 @@
           :year="2025"
           :period-from="periodFrom"
           :period-to="periodTo"
+          :refresh-key="dataVersion"
           :key="selectedCriterion.id"
         />
       </div>
@@ -118,6 +119,7 @@
           :year="2025"
           :period-from="periodFrom"
           :period-to="periodTo"
+          :refresh-key="dataVersion"
           :options="{ title: { text: cat } }"
         />
       </div>
@@ -143,9 +145,20 @@
           :year="2025"
           :period-from="periodFrom"
           :period-to="periodTo"
+          :refresh-key="dataVersion"
           :options="{ title: { text: stripStoreBrand(s.name) } }"
         />
       </div>
+    </div>
+
+    <!-- Upload Data: add/replace a single store+month+year CSV; on success
+         bump dataVersion so every ChartCard above reloads automatically. -->
+    <div class="upload-section mt-6">
+      <SectionHeader
+        text="Upload Data"
+        description="Upload a new audit CSV for a store, year, and month. Existing data for that store/month/year will be updated (the old file is kept); brand-new data will be added; matching charts refresh automatically."
+      />
+      <UploadDataCard :stores="stores" @uploaded="onUploaded" />
     </div>
   </div>
 </template>
@@ -157,6 +170,7 @@ import CriteriaSelect from '../components/CriteriaSelect.vue'
 import Header from '../components/Header.vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import CheckboxFilterBar from '../components/CheckboxFilterBar.vue'
+import UploadDataCard from '../components/UploadDataCard.vue'
 
 // mirrors backend COLOR_PALETTE in app.py's color_for_id(), so the store/
 // category checkbox dots match the colors used on the actual charts
@@ -176,6 +190,7 @@ const selectedCategoriesForStore = ref([]) // category filter for Store Passing 
 const averageValue = ref(null)      // overall average for the selected criterion, from ChartCard
 
 const selectedCriterionId = ref(null)
+const dataVersion = ref(0)
 
 // period (month range) filter applied across all charts on this page
 const periodFrom = ref(null)
@@ -197,8 +212,9 @@ const categoryFilterItems = computed(() => categories.value.map((cat, idx) => ({
   color: colorForId(idx + 1)
 })))
 
-// fetch initial data (criteria/stores scoped to year 2025 only)
-onMounted(async () => {
+// (re)fetch criteria/categories/stores; also used after an Upload Data
+// submission in case it introduced a new criterion/category
+async function loadLookups() {
   const [critRes, catRes, storesRes] = await Promise.all([
     fetch('/api/criteria?year=2025'),
     fetch('/api/categories'),
@@ -216,6 +232,19 @@ onMounted(async () => {
   try {
     stores.value = await storesRes.json()
   } catch (e) { stores.value = [] }
+}
+
+// after a successful/updated upload: refresh lookups (in case a new
+// criterion/category/store appeared) and bump dataVersion so every
+// ChartCard reloads its data
+async function onUploaded() {
+  await loadLookups()
+  dataVersion.value++
+}
+
+// fetch initial data (criteria/stores scoped to year 2025 only)
+onMounted(async () => {
+  await loadLookups()
 
   // default: all stores/categories selected until the user unchecks some
   selectedStores.value = stores.value.map(s => s.store_id)

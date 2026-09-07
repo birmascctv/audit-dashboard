@@ -144,7 +144,12 @@ function filterPayloadByExcludeYear(payload) {
     .map(x => x.idx)
 
   if (!keepIdx.length) {
-    return { labels: [], datasets: payload.datasets ? payload.datasets.map(ds => ({ ...ds, data: [] })) : [] }
+    return {
+      labels: [],
+      datasets: payload.datasets ? payload.datasets.map(ds => ({ ...ds, data: [] })) : [],
+      average: [],
+      average_count: []
+    }
   }
 
   const newLabels = keepIdx.map(i => payload.labels[i])
@@ -155,7 +160,10 @@ function filterPayloadByExcludeYear(payload) {
     return { ...ds, data: newData }
   })
 
-  return { labels: newLabels, datasets: newDatasets }
+  const result = { labels: newLabels, datasets: newDatasets }
+  if (Array.isArray(payload.average)) result.average = keepIdx.map(i => payload.average[i])
+  if (Array.isArray(payload.average_count)) result.average_count = keepIdx.map(i => payload.average_count[i])
+  return result
 }
 
 /**
@@ -179,7 +187,12 @@ function filterPayloadByPeriod(payload) {
     .map(x => x.idx)
 
   if (!keepIdx.length) {
-    return { labels: [], datasets: payload.datasets ? payload.datasets.map(ds => ({ ...ds, data: [] })) : [] }
+    return {
+      labels: [],
+      datasets: payload.datasets ? payload.datasets.map(ds => ({ ...ds, data: [] })) : [],
+      average: [],
+      average_count: []
+    }
   }
 
   const newLabels = keepIdx.map(i => payload.labels[i])
@@ -189,7 +202,10 @@ function filterPayloadByPeriod(payload) {
     return { ...ds, data: newData }
   })
 
-  return { labels: newLabels, datasets: newDatasets }
+  const result = { labels: newLabels, datasets: newDatasets }
+  if (Array.isArray(payload.average)) result.average = keepIdx.map(i => payload.average[i])
+  if (Array.isArray(payload.average_count)) result.average_count = keepIdx.map(i => payload.average_count[i])
+  return result
 }
 
 /** Normalize passing grade for chart type:
@@ -345,25 +361,47 @@ async function loadData() {
     // bar charts (average pass rate), excluded from the visible legend.
     {
       const labels = Array.isArray(payload.labels) ? payload.labels : []
+      const hasServerAverage = props.type === 'line' && Array.isArray(payload.average)
+
       if (payload.datasets && payload.datasets.length) {
-        const countPerLabel = []
-        const avgData = labels.map((_, idx) => {
-          let sum = 0, count = 0
-          for (const ds of payload.datasets) {
-            const v = Array.isArray(ds.data) ? ds.data[idx] : undefined
-            if (v !== null && v !== undefined && !isNaN(Number(v))) {
-              sum += Number(v)
-              count++
+        let avgData, countPerLabel
+
+        if (hasServerAverage) {
+          // The line-chart's specific-criterion endpoint already computes
+          // the true "sum of every individual audit score that month,
+          // divided by how many scores there are" — i.e. it is NOT an
+          // average of each store's own median, so a store with more
+          // audits in a given month contributes proportionally more.
+          avgData = payload.average.map(v => (v === null || v === undefined ? null : Math.round(Number(v) * 1000) / 1000))
+          countPerLabel = Array.isArray(payload.average_count) ? payload.average_count : labels.map(() => null)
+        } else {
+          // Bar charts (Category Pass Rate / Store Pass Rate): each
+          // dataset already holds one pre-aggregated value per store or
+          // category per month (no "several raw data points" to weight),
+          // so a plain sum/count across the currently-shown series is the
+          // correct average.
+          countPerLabel = []
+          avgData = labels.map((_, idx) => {
+            let sum = 0, count = 0
+            for (const ds of payload.datasets) {
+              const v = Array.isArray(ds.data) ? ds.data[idx] : undefined
+              if (v !== null && v !== undefined && !isNaN(Number(v))) {
+                sum += Number(v)
+                count++
+              }
             }
-          }
-          countPerLabel.push(count)
-          return count ? (sum / count) : null
-        })
+            countPerLabel.push(count)
+            return count ? Math.round((sum / count) * 1000) / 1000 : null
+          })
+        }
 
         // what the average is computed across, for the tooltip's extra line
-        // (line/category-passrate charts average across stores; the
+        // (line charts average across every audit score that month; the
+        // category-passrate chart averages across stores; the
         // store-passrate chart averages across categories)
-        const avgOfNoun = (props.type === 'bar' && props.storeId != null) ? 'categories' : 'stores'
+        const avgOfNoun = props.type === 'line'
+          ? 'data points'
+          : (props.storeId != null ? 'categories' : 'stores')
 
         const avgDataset = props.type === 'bar'
           ? {
@@ -400,10 +438,27 @@ async function loadData() {
 
         if (props.type === 'line') {
           // surface a single overall-average number to the parent so it can
-          // be shown next to the passing grade in the Chart Info panel
-          const validAvgs = avgData.filter(v => v !== null && v !== undefined && !isNaN(v))
-          const overallAvg = validAvgs.length ? (validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length) : null
-          emit('update:average', overallAvg === null ? null : Math.round(overallAvg * 100) / 100)
+          // be shown next to the passing grade in the Chart Info panel.
+          // Weight by how many raw data points each month contributed
+          // (countPerLabel) so the overall figure is also a true
+          // "sum of all data / count of all data" average, not an average
+          // of monthly averages.
+          let overallAvg = null
+          if (hasServerAverage) {
+            let sum = 0, count = 0
+            avgData.forEach((v, idx) => {
+              const n = countPerLabel[idx] || 0
+              if (v !== null && v !== undefined && !isNaN(v) && n > 0) {
+                sum += v * n
+                count += n
+              }
+            })
+            overallAvg = count ? sum / count : null
+          } else {
+            const validAvgs = avgData.filter(v => v !== null && v !== undefined && !isNaN(v))
+            overallAvg = validAvgs.length ? (validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length) : null
+          }
+          emit('update:average', overallAvg === null ? null : Math.round(overallAvg * 1000) / 1000)
         }
       } else if (props.type === 'line') {
         emit('update:average', null)

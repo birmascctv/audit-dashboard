@@ -3,3 +3,4 @@ audit_birmas/audit_birmas.db
 .venv/
 __pycache__/
 *.pyc
+audit_birmas/.reimport.lock

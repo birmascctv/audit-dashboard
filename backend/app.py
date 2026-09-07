@@ -18,6 +18,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import sqlite3
 import os
+import sys
 from collections import defaultdict
 from urllib.parse import unquote
 import statistics
@@ -416,12 +417,19 @@ def category_criterion_monthly(category, criterion):
             # median across all audits recorded in that month
             groups = defaultdict(list)
             store_names = {}
+            raw_by_label = defaultdict(list)
             for r in rows:
                 sid = r["a_store_id"]
                 store_names[sid] = r["store_name"]
                 lbl = f"{r['year']}-{int(r['month']):02d}"
                 if r["score"] is not None:
                     groups[(sid, lbl)].append(float(r["score"]))
+                    # raw (ungrouped) scores across ALL selected stores for
+                    # this month, used for the true "sum of all data divided
+                    # by count of all data" average — NOT an average of
+                    # per-store medians, so a store with more audits in a
+                    # given month contributes proportionally more data points
+                    raw_by_label[lbl].append(float(r["score"]))
 
             labels = sorted({lbl for (_, lbl) in groups.keys()})
             label_index = {lbl: i for i, lbl in enumerate(labels)}
@@ -436,7 +444,14 @@ def category_criterion_monthly(category, criterion):
                     }
                 datasets[sid]["data"][label_index[lbl]] = statistics.median(scores) if scores else None
 
-            return jsonify({"labels": labels, "datasets": list(datasets.values())})
+            average = []
+            average_count = []
+            for lbl in labels:
+                vals = raw_by_label.get(lbl) or []
+                average.append(round(sum(vals) / len(vals), 3) if vals else None)
+                average_count.append(len(vals))
+
+            return jsonify({"labels": labels, "datasets": list(datasets.values()), "average": average, "average_count": average_count})
         finally:
             conn.close()
     except Exception:
@@ -651,6 +666,177 @@ def drilldown():
 
     result = [{"name": r[0], "passing_grade": r[1], "score": r[2], "pass_fail": r[3], "notes": r[4]} for r in rows]
     return jsonify(result)
+
+
+# -------------------------
+# Upload Data endpoint
+# -------------------------
+AUDIT_ROOT = "/root/audit-dashboard/audit_birmas"
+IMPORT_SCRIPT = os.path.join(AUDIT_ROOT, "import_audit_data.py")
+REIMPORT_LOCK_PATH = os.path.join(AUDIT_ROOT, ".reimport.lock")
+REQUIRED_UPLOAD_COLUMNS = {"Category", "Criteria", "Score", "Passing Grade"}
+MONTH_NAMES = [
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+]
+
+
+@app.route("/api/months")
+def api_months():
+    return jsonify(MONTH_NAMES)
+
+
+def _run_reimport():
+    """Serialize + re-run the CSV->SQLite import script so the DB reflects
+    whatever is currently on disk under audit_birmas/. Gunicorn runs several
+    worker *processes*, so an in-process lock wouldn't be shared between
+    them; a flock on a dedicated lock file works across processes."""
+    import subprocess
+    import fcntl
+    with open(REIMPORT_LOCK_PATH, "w") as lockfile:
+        fcntl.flock(lockfile, fcntl.LOCK_EX)
+        try:
+            proc = subprocess.run(
+                [sys.executable, IMPORT_SCRIPT],
+                cwd=AUDIT_ROOT, capture_output=True, text=True, timeout=300
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(f"import script failed (exit {proc.returncode}): {proc.stderr[-2000:]}")
+        finally:
+            fcntl.flock(lockfile, fcntl.LOCK_UN)
+
+
+@app.route("/api/upload", methods=["POST"])
+def upload_data():
+    import shutil
+    import tempfile
+    from datetime import datetime
+    from werkzeug.utils import secure_filename
+
+    store = (request.form.get("store") or "").strip()
+    year = (request.form.get("year") or "").strip()
+    month = (request.form.get("month") or "").strip()
+    file = request.files.get("file")
+
+    if not store or not year or not month or not file or not file.filename:
+        return jsonify({"status": "error", "mode": None,
+                         "message": "Store, year, month, and a CSV file are all required."}), 400
+
+    if not year.isdigit():
+        return jsonify({"status": "error", "mode": None, "message": "Year must be a number."}), 400
+
+    if month not in MONTH_NAMES:
+        return jsonify({"status": "error", "mode": None, "message": "Invalid month."}), 400
+
+    if not file.filename.lower().endswith(".csv"):
+        return jsonify({"status": "error", "mode": None,
+                         "message": "Data failed to upload: only .csv files are accepted."}), 400
+
+    # Read + validate the uploaded CSV's format (columns) before writing
+    # anything to disk.
+    try:
+        import pandas as pd
+        raw_bytes = file.read()
+        with tempfile.NamedTemporaryFile(suffix=".csv") as tmp:
+            tmp.write(raw_bytes)
+            tmp.flush()
+            new_df = pd.read_csv(tmp.name)
+    except Exception as e:
+        app.logger.exception("upload: failed to parse CSV")
+        return jsonify({"status": "error", "mode": None,
+                         "message": f"Data failed to upload for other reasons (could not read CSV: {e})."}), 500
+
+    missing_cols = REQUIRED_UPLOAD_COLUMNS - set(str(c).strip() for c in new_df.columns)
+    if missing_cols:
+        return jsonify({"status": "error", "mode": None,
+                         "message": f"Data has different table format (failed to upload). "
+                                    f"Missing columns: {', '.join(sorted(missing_cols))}."}), 400
+
+    # Store names contain spaces (e.g. "Birmas Kelapa Gading") and must
+    # match the existing on-disk folder name exactly, so we don't run them
+    # through secure_filename() (which would turn spaces into underscores
+    # and break the match) — instead just reject path-traversal characters
+    # and require it to already be a known store.
+    known_stores = {r[0] for r in query_rows("SELECT name FROM stores")}
+    if store not in known_stores or "/" in store or "\\" in store or ".." in store:
+        return jsonify({"status": "error", "mode": None,
+                         "message": "Unknown store selected."}), 400
+
+    # month folder omits the year suffix (e.g. "Januari") since
+    # import_audit_data.py's normalize_month() only reads the first
+    # whitespace-separated token anyway, so "Januari" and "Januari 2026"
+    # are handled identically.
+    target_dir = os.path.join(AUDIT_ROOT, store, year, month)
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+    except Exception as e:
+        app.logger.exception("upload: failed to create target directory")
+        return jsonify({"status": "error", "mode": None,
+                         "message": f"Data failed to upload for other reasons (could not create folder: {e})."}), 500
+
+    filename = secure_filename(file.filename) or "upload.csv"
+    target_path = os.path.join(target_dir, filename)
+
+    mode = "added"
+    backup_path = None
+    existed_before = os.path.exists(target_path)
+
+    if existed_before:
+        try:
+            old_df = pd.read_csv(target_path)
+            # Compare on the normalized data content, not on incidental
+            # differences (like a trailing "No" or column ordering).
+            def _norm(df):
+                cols = [c for c in ["Category", "Criteria", "Score", "Passing Grade", "Pass/Not Pass", "Infraction Details"] if c in df.columns]
+                d = df[cols].copy()
+                for c in d.columns:
+                    d[c] = d[c].astype(str).str.strip()
+                return d.sort_values(list(d.columns)).reset_index(drop=True)
+
+            if _norm(old_df).equals(_norm(new_df)):
+                return jsonify({"status": "unchanged", "mode": "unchanged",
+                                 "message": "Data is the same as what's already on file, no need to save."})
+        except Exception:
+            # If the existing file can't be parsed for comparison, fall
+            # through and treat this as an update (safer than blocking).
+            app.logger.warning("upload: could not compare against existing file, treating as update")
+
+        # Keep the old file around (per user's request) instead of
+        # overwriting it outright.
+        ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        backup_path = target_path + f".bak-{ts}.csv"
+        shutil.move(target_path, backup_path)
+        mode = "updated"
+
+    try:
+        with open(target_path, "wb") as f:
+            f.write(raw_bytes)
+    except Exception as e:
+        app.logger.exception("upload: failed to save file")
+        if backup_path:
+            shutil.move(backup_path, target_path)
+        return jsonify({"status": "error", "mode": None,
+                         "message": f"Data failed to upload for other reasons (could not save file: {e})."}), 500
+
+    try:
+        _run_reimport()
+    except Exception as e:
+        app.logger.exception("upload: reimport failed, rolling back")
+        # Roll back the file-system change so disk state matches the DB.
+        try:
+            if mode == "added":
+                os.remove(target_path)
+            elif mode == "updated" and backup_path:
+                os.remove(target_path)
+                shutil.move(backup_path, target_path)
+        except Exception:
+            app.logger.exception("upload: rollback of saved file also failed")
+        return jsonify({"status": "error", "mode": None,
+                         "message": f"Data failed to upload for other reasons (database update failed: {e})."}), 500
+
+    verb = "added" if mode == "added" else "updated"
+    return jsonify({"status": "success", "mode": mode,
+                     "message": f"Data uploaded successfully and {verb} for {store} / {month} {year}."})
 
 
 # -------------------------
