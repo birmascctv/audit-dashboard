@@ -101,7 +101,7 @@
     <div class="passrate-section mt-6">
       <SectionHeader
         text="Category Pass Rate"
-        description="Percentage of stores passing each category's criteria, per month. The red line is the average pass rate across the selected stores."
+        description="Percentage of stores passing each category's criteria, per month. The red line is the average pass rate across all selected stores for that month."
       />
       <div class="store-filter-row mb-3">
         <CheckboxFilterBar :items="storeFilterItems" v-model="selectedStores" all-label="All stores" />
@@ -126,8 +126,8 @@
          categories as the grouped/clustered bar series. -->
     <div class="storerate-section mt-6">
       <SectionHeader
-        text="Store Passing Rate"
-        description="Pass rate per category for each store, per month. The red line is the average pass rate across the selected categories."
+        text="Store Pass Rate"
+        description="Pass rate per category for each store, per month. The red line is the average pass rate across all selected categories for that month."
       />
       <div class="category-filter-row mb-3">
         <CheckboxFilterBar :items="categoryFilterItems" v-model="selectedCategoriesForStore" all-label="All categories" />
