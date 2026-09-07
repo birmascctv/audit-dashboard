@@ -1,6 +1,6 @@
 <template>
-  <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto">
-    <Header subtitle="All years except 2025">
+  <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto pb-12">
+    <Header subtitle="Year 2026">
       <router-link
         to="/dashboard2025"
         class="btn bg-gray-600 text-white px-3 py-1 rounded hover:bg-gray-700"
