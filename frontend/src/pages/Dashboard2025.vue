@@ -14,7 +14,10 @@
          line chart column below it via the same 3-column grid -->
     <div class="controls-grid grid grid-cols-1 gap-4 md:grid-cols-3 mb-4">
       <div class="controls-bar md:col-span-2">
-        <SectionHeader text="Criteria" />
+        <SectionHeader
+          text="Criteria"
+          description="Pick a criterion to see its monthly score trend. Use the period filter to narrow the months shown."
+        />
         <label class="block text-sm mb-1 label-on-page">Select criteria</label>
         <CriteriaSelect :criteria="criteria" v-model="selectedCriterionId" />
 
@@ -33,6 +36,11 @@
       </div>
     </div>
 
+    <!-- Store filter for the line chart: which stores' data is fetched/shown -->
+    <div class="store-filter-row mb-3">
+      <CheckboxFilterBar :items="storeFilterItems" v-model="selectedStores" all-label="All stores" />
+    </div>
+
     <!-- Main chart area with right-side info panel -->
     <div class="main-grid grid grid-cols-1 gap-4 md:grid-cols-3 md:items-stretch">
       <!-- Chart column (spans 2/3 on md+) -->
@@ -45,7 +53,6 @@
           fill-height
           :stores="stores"
           :selected-stores="selectedStores"
-          @update:selected-stores="selectedStores = $event"
           @update:average="averageValue = $event"
           :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
           :options="{ title: { text: selectedCriterion.label } }"
@@ -93,7 +100,13 @@
          (selected) stores for every month of 2025. Multiple selected stores
          render as grouped/clustered bars. -->
     <div class="passrate-section mt-6">
-      <SectionHeader text="Category Pass Rate" />
+      <SectionHeader
+        text="Category Pass Rate"
+        description="Percentage of stores passing each category's criteria, per month. The red line is the average pass rate across the selected stores."
+      />
+      <div class="store-filter-row mb-3">
+        <CheckboxFilterBar :items="storeFilterItems" v-model="selectedStores" all-label="All stores" />
+      </div>
       <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2 mt-2">
         <ChartCard
           v-for="cat in categories"
@@ -113,13 +126,20 @@
     <!-- Store passing rate: pivoted view, one chart per store, with
          categories as the grouped/clustered bar series. -->
     <div class="storerate-section mt-6">
-      <SectionHeader text="Store Passing Rate" />
+      <SectionHeader
+        text="Store Passing Rate"
+        description="Pass rate per category for each store, per month. The red line is the average pass rate across the selected categories."
+      />
+      <div class="category-filter-row mb-3">
+        <CheckboxFilterBar :items="categoryFilterItems" v-model="selectedCategoriesForStore" all-label="All categories" />
+      </div>
       <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2 mt-2">
         <ChartCard
           v-for="s in stores"
           :key="'storerate-' + s.store_id"
           type="bar"
           :store-id="s.store_id"
+          :selected-categories="selectedCategoriesForStore"
           :year="2025"
           :period-from="periodFrom"
           :period-to="periodTo"
@@ -136,11 +156,23 @@ import ChartCard from '../components/ChartCard.vue'
 import CriteriaSelect from '../components/CriteriaSelect.vue'
 import Header from '../components/Header.vue'
 import SectionHeader from '../components/SectionHeader.vue'
+import CheckboxFilterBar from '../components/CheckboxFilterBar.vue'
+
+// mirrors backend COLOR_PALETTE in app.py's color_for_id(), so the store/
+// category checkbox dots match the colors used on the actual charts
+const COLOR_PALETTE = [
+  '#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#a855f7',
+  '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#14b8a6'
+]
+function colorForId(id) {
+  return COLOR_PALETTE[(Number(id) - 1) % COLOR_PALETTE.length]
+}
 
 const criteria = ref([])            // list of criteria recorded in 2025 only
 const categories = ref([])
 const stores = ref([])              // list of stores { store_id, name }
 const selectedStores = ref([])
+const selectedCategoriesForStore = ref([]) // category filter for Store Passing Rate charts
 const averageValue = ref(null)      // overall average for the selected criterion, from ChartCard
 
 const selectedCriterionId = ref(null)
@@ -149,6 +181,21 @@ const selectedCriterionId = ref(null)
 const periodFrom = ref(null)
 const periodTo = ref(null)
 const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
+// checkbox items for the store filter (line chart + Category Pass Rate)
+const storeFilterItems = computed(() => stores.value.map(s => ({
+  id: s.store_id,
+  label: stripStoreBrand(s.name),
+  color: colorForId(s.store_id)
+})))
+
+// checkbox items for the category filter (Store Passing Rate); colors mirror
+// the backend's category_index (1-based, alphabetical) used in store_passrate
+const categoryFilterItems = computed(() => categories.value.map((cat, idx) => ({
+  id: cat,
+  label: cat,
+  color: colorForId(idx + 1)
+})))
 
 // fetch initial data (criteria/stores scoped to year 2025 only)
 onMounted(async () => {
@@ -170,9 +217,9 @@ onMounted(async () => {
     stores.value = await storesRes.json()
   } catch (e) { stores.value = [] }
 
-  // default: all stores selected/shown (filled dots) until the user
-  // deselects some via the line chart's clickable legend
+  // default: all stores/categories selected until the user unchecks some
   selectedStores.value = stores.value.map(s => s.store_id)
+  selectedCategoriesForStore.value = categories.value.slice()
 
   // default selection: first criterion if none selected
   if (!selectedCriterionId.value && criteria.value.length) {

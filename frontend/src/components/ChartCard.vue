@@ -36,6 +36,11 @@ const props = defineProps({
 
   selectedStores: { type: Array, default: () => [] },
 
+  // category filter (used only for store-passrate charts, where each
+  // dataset series is a category); when provided and non-empty, only
+  // categories whose name is in this list are kept
+  selectedCategories: { type: Array, default: null },
+
   // type: 'line' or 'bar'
   type: { type: String, default: 'line' },
   options: { type: Object, default: () => ({}) },
@@ -53,7 +58,7 @@ const props = defineProps({
   fillHeight: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['loading', 'update:selectedStores', 'update:average'])
+const emit = defineEmits(['loading', 'update:average'])
 
 const canvas = ref(null)
 let chart = null
@@ -75,6 +80,7 @@ function buildUrl(kind = 'monthly') {
     url = `/api/store/${encodeURIComponent(props.storeId)}/passrate`
   } else if (props.type === 'line' && props.criterion) {
     url = `/api/category/${encodeURIComponent(props.category)}/criterion/${encodeURIComponent(props.criterion)}/monthly`
+    if (storesParam) url += `?stores=${storesParam}`
   } else {
     const cat = encodeURIComponent(props.category)
     url = storesParam
@@ -237,15 +243,20 @@ async function loadData() {
   error.value = null
   emit('loading', true)
   try {
-    // charts driven by the store-selection legend (line charts, and
+    // charts driven by the store-selection checkboxes (line charts, and
     // category-based bar charts) render an empty chart once every store
     // has been explicitly deselected, instead of falling back to "all"
     const usesStoreSelection = props.stores && props.stores.length &&
       ((props.type === 'line' && props.criterion) || (props.type === 'bar' && props.storeId == null))
     const noStoresSelected = usesStoreSelection && props.selectedStores && props.selectedStores.length === 0
 
+    // store-passrate charts (categories as series) are instead filtered by
+    // the category checkboxes; an empty selection likewise renders empty
+    const usesCategorySelection = props.type === 'bar' && props.storeId != null && Array.isArray(props.selectedCategories)
+    const noCategoriesSelected = usesCategorySelection && props.selectedCategories.length === 0
+
     let payload
-    if (noStoresSelected) {
+    if (noStoresSelected || noCategoriesSelected) {
       payload = { labels: [], datasets: [] }
     } else {
       const kind = props.type === 'bar' ? 'passrate' : 'monthly'
@@ -259,6 +270,13 @@ async function loadData() {
 
       // ensure payload structure
       payload = payload || { labels: [], datasets: [] }
+
+      // store-passrate charts: filter category series by the category
+      // checkboxes (no server-side support for this, so done client-side)
+      if (usesCategorySelection && Array.isArray(payload.datasets)) {
+        const allowed = new Set(props.selectedCategories)
+        payload.datasets = payload.datasets.filter(ds => allowed.has(ds.label))
+      }
     }
 
     // If datasets contain arrays per label (raw samples), compute medians per label
@@ -319,9 +337,13 @@ async function loadData() {
       return copy
     })
 
-    // For line charts showing a single criterion: compute an "Average" series across stores
-    if (props.type === 'line') {
-      // compute average per label across datasets (ignore nulls)
+    // Compute an "Average" reference series across all currently-shown
+    // datasets (the datasets array here already reflects whichever
+    // stores/categories are selected via the checkbox filters — server-side
+    // for line/category charts, client-side above for store-category
+    // charts). Shown as a red line on both line charts (average score) and
+    // bar charts (average pass rate), excluded from the visible legend.
+    {
       const labels = Array.isArray(payload.labels) ? payload.labels : []
       if (payload.datasets && payload.datasets.length) {
         const avgData = labels.map((_, idx) => {
@@ -336,44 +358,43 @@ async function loadData() {
           return count ? (sum / count) : null
         })
 
-        // add average dataset as a red line (kept on the chart for reference,
-        // but excluded from the bottom legend — see legend.labels.filter below)
-        const avgDataset = {
-          label: 'Average',
-          data: avgData,
-          borderColor: 'red',
-          backgroundColor: 'transparent',
-          borderWidth: 2,
-          pointRadius: 0,
-          pointHoverRadius: 0,
-          tension: 0.2
-        }
+        const avgDataset = props.type === 'bar'
+          ? {
+              type: 'line',
+              label: 'Average',
+              data: avgData,
+              borderColor: 'red',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              tension: 0.2,
+              order: -1
+            }
+          : {
+              label: 'Average',
+              data: avgData,
+              borderColor: 'red',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              tension: 0.2
+            }
 
-        // keep store datasets (colored) and append average as last dataset
+        // keep the real datasets (colored) and append average as last dataset
         payload.datasets = payload.datasets.concat([avgDataset])
 
-        // surface a single overall-average number to the parent so it can
-        // be shown next to the passing grade in the Chart Info panel
-        const validAvgs = avgData.filter(v => v !== null && v !== undefined && !isNaN(v))
-        const overallAvg = validAvgs.length ? (validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length) : null
-        emit('update:average', overallAvg === null ? null : Math.round(overallAvg * 100) / 100)
-      } else {
+        if (props.type === 'line') {
+          // surface a single overall-average number to the parent so it can
+          // be shown next to the passing grade in the Chart Info panel
+          const validAvgs = avgData.filter(v => v !== null && v !== undefined && !isNaN(v))
+          const overallAvg = validAvgs.length ? (validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length) : null
+          emit('update:average', overallAvg === null ? null : Math.round(overallAvg * 100) / 100)
+        }
+      } else if (props.type === 'line') {
         emit('update:average', null)
       }
-    }
-
-    // apply per-store visibility from the clickable legend: datasets for
-    // stores not in selectedStores are hidden (line disappears, but the
-    // legend dot stays clickable to bring it back)
-    if (props.stores && props.stores.length && props.selectedStores) {
-      const nameToId = new Map(props.stores.map(s => [s.name, s.store_id]))
-      const selectedSet = new Set(props.selectedStores)
-      payload.datasets = (payload.datasets || []).map(ds => {
-        if (ds.label === 'Average') return ds
-        const id = nameToId.get(ds.label)
-        if (id == null) return ds
-        return { ...ds, hidden: !selectedSet.has(id) }
-      })
     }
 
     // destroy previous chart
@@ -435,61 +456,26 @@ async function loadData() {
       options.plugins.legend.labels = options.plugins.legend.labels || {}
       options.plugins.legend.labels.usePointStyle = true
 
-      if (props.stores && props.stores.length) {
-        // custom clickable legend: one hollow/filled dot per store plus an
-        // "All stores" toggle. Filled = store's data is shown on the chart,
-        // hollow = hidden. Clicking toggles selection; the parent owns the
-        // selectedStores state (shared with the passing-rate bar charts).
-        const storesList = props.stores
-        const selectedNow = props.selectedStores || []
-
-        options.plugins.legend.labels.generateLabels = function () {
-          const allSelected = storesList.length > 0 && storesList.every(s => selectedNow.includes(s.store_id))
-          const items = [{
-            text: 'All stores',
-            fillStyle: allSelected ? '#9ca3af' : 'transparent',
-            strokeStyle: '#9ca3af',
+      // legend for line charts is informational only (filters now live in
+      // the checkbox bar above the chart) — every dataset present here has
+      // already been filtered to the selected stores, so a plain filled-dot
+      // legend is accurate; just strip the redundant "Birmas" prefix and
+      // hide the "Average" reference line from the legend list
+      options.plugins.legend.labels.generateLabels = function (chartInstance) {
+        return chartInstance.data.datasets
+          .map((ds, i) => ({
+            text: ds.label === 'Average' ? ds.label : stripStoreBrand(ds.label),
+            fillStyle: ds.borderColor || '#9ca3af',
+            strokeStyle: ds.borderColor || '#9ca3af',
             fontColor: '#f1f5f9',
             lineWidth: 2,
             pointStyle: 'circle',
-            __allStores: true
-          }]
-          for (const s of storesList) {
-            const ds = (payload.datasets || []).find(d => d.label === s.name)
-            const color = (ds && ds.borderColor) || '#9ca3af'
-            const isSelected = selectedNow.includes(s.store_id)
-            items.push({
-              text: stripStoreBrand(s.name),
-              fillStyle: isSelected ? color : 'transparent',
-              strokeStyle: color,
-              fontColor: '#f1f5f9',
-              lineWidth: 2,
-              pointStyle: 'circle',
-              __storeId: s.store_id
-            })
-          }
-          return items
-        }
-
-        options.plugins.legend.onClick = function (evt, legendItem) {
-          if (legendItem.__allStores) {
-            const allNowSelected = storesList.length > 0 && storesList.every(s => selectedNow.includes(s.store_id))
-            emit('update:selectedStores', allNowSelected ? [] : storesList.map(s => s.store_id))
-            return
-          }
-          const id = legendItem.__storeId
-          if (id == null) return
-          const cur = selectedNow.slice()
-          const idx = cur.indexOf(id)
-          if (idx >= 0) cur.splice(idx, 1)
-          else cur.push(id)
-          emit('update:selectedStores', cur)
-        }
-      } else {
-        options.plugins.legend.labels.filter = function (legendItem) {
-          return legendItem.text !== 'Average'
-        }
+            datasetIndex: i
+          }))
+          .filter(item => item.text !== 'Average')
       }
+      // info-only: clicking a legend item must not toggle dataset visibility
+      options.plugins.legend.onClick = function () {}
     }
 
     // bar chart specific options: treat as percentage axis 0..100
@@ -516,11 +502,14 @@ async function loadData() {
       options.datasets.bar.categoryPercentage = options.datasets.bar.categoryPercentage ?? 0.8
       options.datasets.bar.barPercentage = options.datasets.bar.barPercentage ?? 0.9
 
-      // show the legend so each store's bar color can be identified when
-      // several stores are selected (grouped/clustered bars per month)
+      // show the legend so each store's/category's bar color (and the
+      // average reference line) can be identified; informational only
       options.plugins = options.plugins || {}
       options.plugins.legend = options.plugins.legend || {}
-      options.plugins.legend.display = payload.datasets.length > 1
+      options.plugins.legend.display = payload.datasets.length > 0
+      options.plugins.legend.labels = options.plugins.legend.labels || {}
+      options.plugins.legend.labels.usePointStyle = true
+      options.plugins.legend.onClick = function () {}
     }
 
     // normalize and apply passing grade for line charts (green)
@@ -557,7 +546,7 @@ async function loadData() {
 onMounted(loadData)
 
 watch(
-  () => [props.category, props.criterion, props.selectedStores, props.type, props.year, props.excludeYear, props.periodFrom, props.periodTo],
+  () => [props.category, props.criterion, props.selectedStores, props.selectedCategories, props.type, props.year, props.excludeYear, props.periodFrom, props.periodTo],
   () => {
     loadData()
   },
