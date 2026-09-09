@@ -25,6 +25,7 @@ defineProps({
   left: 0;
   right: 0;
   width: 100%;           /* full width */
+  height: 5rem;
   background: #374151;   /* grey slate */
   padding: 1rem 1.5rem;
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);

@@ -10,8 +10,8 @@
       </router-link>
     </Header>
 
-    <!-- Page content wrapper -->
-    <main class="page-content page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto">
+    <!-- Page content wrapper (no extra page-content class needed) -->
+    <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto">
       <!-- Criteria search + selection -->
       <div class="controls-grid grid grid-cols-1 gap-4 md:grid-cols-3 mb-4">
         <div class="controls-bar md:col-span-2">
@@ -70,9 +70,25 @@
       </div>
 
       <!-- Pass rate, store rate, upload sections remain unchanged -->
-    </main>
+    </div>
   </div>
 </template>
+
+<style scoped>
+/* removed .page-content margin-top, since Header.vue now handles spacing */
+.header { margin-bottom: 0.5rem; }
+.btn { display: inline-flex; align-items: center; justify-content: center; }
+
+.title-on-page { color: #111827; }
+.label-on-page { color: #374151; }
+
+.main-grid { margin-top: 0.5rem; }
+
+.chart-column,
+.info-column {
+  height: 420px;
+}
+</style>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
@@ -198,7 +214,7 @@ function stripStoreBrand(name) {
 
 <style scoped>
 .page-content {
-  margin-top: 5rem; /* push content below fixed header */
+  margin-top: var(--header--height); /* push content below fixed header */
 }
 .header { margin-bottom: 0.5rem; }
 .btn { display: inline-flex; align-items: center; justify-content: center; }
