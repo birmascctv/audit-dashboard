@@ -1,6 +1,5 @@
 <template>
-  <div>
-    <!-- Sticky full-width header -->
+  <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto pb-12">
     <Header subtitle="Year 2026">
       <router-link
         to="/dashboard2025"
@@ -10,98 +9,158 @@
       </router-link>
     </Header>
 
-    <!-- Page content wrapper (simplified) -->
-    <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto pb-12">
-      <!-- Criteria search + selection -->
-      <div class="controls-grid grid grid-cols-1 gap-4 md:grid-cols-3 mb-4">
-        <div class="controls-bar md:col-span-2">
-          <SectionHeader
-            text="Criteria"
-            description="Pick a criterion to see its monthly score trend. Use the period filter to narrow the months shown."
-          />
-          <label class="block text-sm mb-1 label-on-page">Select criteria</label>
-          <CriteriaSelect :criteria="criteria" v-model="selectedCriterionId" />
+    <!-- Criteria search + selection (single combined bar); width matches the
+         line chart column below it via the same 3-column grid -->
+    <div id="criteria-section" class="controls-grid grid grid-cols-1 gap-4 md:grid-cols-3 mb-4">
+      <div class="controls-bar md:col-span-2">
+        <SectionHeader
+          text="Criteria"
+          description="Pick a criterion to see its monthly score trend. Use the period filter to narrow the months shown."
+        />
+        <label class="block text-sm mb-1 label-on-page">Select criteria</label>
+        <CriteriaSelect :criteria="criteria" v-model="selectedCriterionId" />
 
-          <div class="period-filter mt-3 flex items-center gap-2 flex-wrap">
-            <label class="text-sm label-on-page font-medium">Period:</label>
-            <select v-model="periodFrom" class="px-2 py-1 rounded border border-slate-300 bg-white text-slate-900 text-sm">
-              <option :value="null">All</option>
-              <option v-for="(m, idx) in monthNames" :key="'from-' + idx" :value="idx + 1">{{ m }}</option>
-            </select>
-            <span class="text-sm label-on-page">to</span>
-            <select v-model="periodTo" class="px-2 py-1 rounded border border-slate-300 bg-white text-slate-900 text-sm">
-              <option :value="null">All</option>
-              <option v-for="(m, idx) in monthNames" :key="'to-' + idx" :value="idx + 1">{{ m }}</option>
-            </select>
-          </div>
+        <div class="period-filter mt-3 flex items-center gap-2 flex-wrap">
+          <label class="text-sm label-on-page font-medium">Period:</label>
+          <select v-model="periodFrom" class="px-2 py-1 rounded border border-slate-300 bg-white text-slate-900 text-sm">
+            <option :value="null">All</option>
+            <option v-for="(m, idx) in monthNames" :key="'from-' + idx" :value="idx + 1">{{ m }}</option>
+          </select>
+          <span class="text-sm label-on-page">to</span>
+          <select v-model="periodTo" class="px-2 py-1 rounded border border-slate-300 bg-white text-slate-900 text-sm">
+            <option :value="null">All</option>
+            <option v-for="(m, idx) in monthNames" :key="'to-' + idx" :value="idx + 1">{{ m }}</option>
+          </select>
         </div>
       </div>
+    </div>
 
-      <!-- Store filter -->
+    <!-- Store filter for the line chart: which stores' data is fetched/shown -->
+    <div class="store-filter-row mb-3">
+      <CheckboxFilterBar :items="storeFilterItems" v-model="selectedStores" all-label="All stores" />
+    </div>
+
+    <!-- Main chart area with right-side info panel -->
+    <div class="main-grid grid grid-cols-1 gap-4 md:grid-cols-3 md:items-stretch">
+      <!-- Chart column (spans 2/3 on md+) -->
+      <div class="chart-column md:col-span-2 flex flex-col">
+        <ChartCard
+          v-if="selectedCriterion"
+          :category="selectedCriterion.category"
+          :criterion="selectedCriterion.id"
+          type="line"
+          fill-height
+          :stores="stores"
+          :selected-stores="selectedStores"
+          @update:average="averageValue = $event"
+          :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
+          :options="{ title: { text: selectedCriterion.label } }"
+          :exclude-year="excludeYear"
+          :period-from="periodFrom"
+          :period-to="periodTo"
+          :refresh-key="dataVersion"
+          :key="selectedCriterion.id"
+        />
+      </div>
+
+      <!-- Info panel column -->
+      <aside class="info-column p-4 rounded bg-slate-900 border border-slate-700 text-slate-100 flex flex-col">
+        <h3 class="text-xl font-semibold mb-3">Chart Info</h3>
+
+        <div class="legend mb-4">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="w-4 h-2 block bg-green-500 rounded-sm"></span>
+            <div class="flex items-center gap-2">
+              <span class="text-base">Passing grade:</span>
+              <span class="text-2xl font-semibold text-slate-100">{{ passingGradeLabel(selectedCriterion) }}</span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <span class="w-4 h-2 block bg-red-500 rounded-sm"></span>
+            <div class="flex items-center gap-2">
+              <span class="text-base">Average:</span>
+              <span class="text-2xl font-semibold text-slate-100">{{ averageValue === null ? '—' : averageValue }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="criteria-details mb-3">
+          <h4 class="text-base font-medium mb-1">Criteria Details</h4>
+          <div v-if="selectedCriterion" class="text-base text-slate-300">
+            <div><strong>Name:</strong> {{ selectedCriterion.label }}</div>
+            <div><strong>Category:</strong> {{ selectedCriterion.category }}</div>
+          </div>
+          <div v-else class="text-base text-slate-400">No criterion selected</div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Passing rate bar charts: one per category, showing pass rate across
+         (selected) stores for every month. Multiple selected stores render
+         as grouped/clustered bars. -->
+    <div id="category-passrate-section" class="passrate-section mt-6">
+      <SectionHeader
+        text="Category Pass Rate"
+        description="Percentage of stores passing each category's criteria, per month. The red line is the average pass rate across all selected stores for that month."
+      />
       <div class="store-filter-row mb-3">
         <CheckboxFilterBar :items="storeFilterItems" v-model="selectedStores" all-label="All stores" />
       </div>
-
-      <!-- Main chart + info panel -->
-      <div class="main-grid grid grid-cols-1 gap-4 md:grid-cols-3 md:items-stretch">
-        <div class="chart-column md:col-span-2 flex flex-col">
-          <ChartCard
-            v-if="selectedCriterion"
-            :category="selectedCriterion.category"
-            :criterion="selectedCriterion.id"
-            type="line"
-            fill-height
-            :stores="stores"
-            :selected-stores="selectedStores"
-            @update:average="averageValue = $event"
-            :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
-            :options="{ title: { text: selectedCriterion.label } }"
-            :exclude-year="excludeYear"
-            :period-from="periodFrom"
-            :period-to="periodTo"
-            :refresh-key="dataVersion"
-            :key="selectedCriterion.id"
-          />
-        </div>
-
-        <aside class="info-column p-4 rounded bg-slate-900 border border-slate-700 text-slate-100 flex flex-col">
-          <!-- Chart Info content unchanged -->
-        </aside>
+      <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2 mt-2">
+        <ChartCard
+          v-for="cat in categories"
+          :key="'passrate-' + cat"
+          :category="cat"
+          type="bar"
+          :stores="stores"
+          :selected-stores="selectedStores"
+          :exclude-year="excludeYear"
+          :period-from="periodFrom"
+          :period-to="periodTo"
+          :refresh-key="dataVersion"
+          :options="{ title: { text: cat } }"
+        />
       </div>
+    </div>
 
-      <!-- Pass rate section -->
-      <div class="passrate-section mt-6">
-        <!-- unchanged -->
+    <!-- Store passing rate: pivoted view, one chart per store, with
+         categories as the grouped/clustered bar series. -->
+    <div id="store-passrate-section" class="storerate-section mt-6">
+      <SectionHeader
+        text="Store Pass Rate"
+        description="Pass rate per category for each store, per month. The red line is the average pass rate across all selected categories for that month."
+      />
+      <div class="category-filter-row mb-3">
+        <CheckboxFilterBar :items="categoryFilterItems" v-model="selectedCategoriesForStore" all-label="All categories" />
       </div>
+      <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2 mt-2">
+        <ChartCard
+          v-for="s in stores"
+          :key="'storerate-' + s.store_id"
+          type="bar"
+          :store-id="s.store_id"
+          :selected-categories="selectedCategoriesForStore"
+          :exclude-year="excludeYear"
+          :period-from="periodFrom"
+          :period-to="periodTo"
+          :refresh-key="dataVersion"
+          :options="{ title: { text: stripStoreBrand(s.name) } }"
+        />
+      </div>
+    </div>
 
-      <!-- Store rate section -->
-      <div class="storerate-section mt-6">
-        <!-- unchanged -->
-      </div>
-
-      <!-- Upload section -->
-      <div class="upload-section mt-6">
-        <!-- unchanged -->
-      </div>
+    <!-- Upload Data: add/replace a single store+month+year CSV; on success
+         bump dataVersion so every ChartCard above reloads automatically. -->
+    <div id="upload-section" class="upload-section mt-6">
+      <SectionHeader
+        text="Upload Data"
+        description="Upload a new audit CSV for a store, year, and month. Existing data for that store/month/year will be updated (the old file is kept); brand-new data will be added; matching charts refresh automatically."
+      />
+      <UploadDataCard :stores="stores" @uploaded="onUploaded" />
     </div>
   </div>
 </template>
-
-<style scoped>
-/* removed .page-content margin-top, since Header.vue now handles spacing */
-.header { margin-bottom: 0.5rem; }
-.btn { display: inline-flex; align-items: center; justify-content: center; }
-
-.title-on-page { color: #111827; }
-.label-on-page { color: #374151; }
-
-.main-grid { margin-top: 0.5rem; }
-
-.chart-column,
-.info-column {
-  height: 420px;
-}
-</style>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
@@ -231,9 +290,6 @@ function stripStoreBrand(name) {
 </script>
 
 <style scoped>
-.page-content {
-  margin-top: var(--header--height); /* adjust based on header height */
-}
 .header { margin-bottom: 0.5rem; }
 .btn { display: inline-flex; align-items: center; justify-content: center; }
 
@@ -250,5 +306,17 @@ function stripStoreBrand(name) {
 .chart-column,
 .info-column {
   height: 420px;
+}
+
+/* The header is fixed/always-visible, so push page content below it and
+   make sure the nav's anchor links don't scroll a section title under it */
+.page-gutter {
+  padding-top: 6.5rem;
+}
+#criteria-section,
+#category-passrate-section,
+#store-passrate-section,
+#upload-section {
+  scroll-margin-top: 6.5rem;
 }
 </style>

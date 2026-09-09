@@ -710,12 +710,13 @@ def _run_reimport():
 def upload_data():
     import shutil
     import tempfile
+    import re
     from datetime import datetime
-    from werkzeug.utils import secure_filename
 
     store = (request.form.get("store") or "").strip()
     year = (request.form.get("year") or "").strip()
     month = (request.form.get("month") or "").strip()
+    confirm = (request.form.get("confirm") or "").strip() == "1"
     file = request.files.get("file")
 
     if not store or not year or not month or not file or not file.filename:
@@ -731,6 +732,30 @@ def upload_data():
     if not file.filename.lower().endswith(".csv"):
         return jsonify({"status": "error", "mode": None,
                          "message": "Data failed to upload: only .csv files are accepted."}), 400
+
+    # The uploaded filename itself is never sanitized/renamed (spaces are
+    # kept as-is) — we only strip any directory portion (os.path.basename)
+    # and reject path-traversal characters, so the file on disk keeps
+    # exactly the name the user uploaded it with.
+    filename = os.path.basename(file.filename).strip()
+    if not filename or filename in (".", "..") or "/" in filename or "\\" in filename:
+        return jsonify({"status": "error", "mode": None,
+                         "message": "Invalid file name."}), 400
+
+    # Sanity check to help catch accidental wrong month/year selections:
+    # every real audit CSV filename ends with "<Month> <Year>.csv" (e.g.
+    # "Birmas - Kuningan per 09 Juli 2025.csv"), so if the selected
+    # month/year don't appear at the end of the filename, ask the user to
+    # confirm before proceeding (unless they already did, via confirm=1).
+    name_no_ext = re.sub(r"\.csv$", "", filename, flags=re.IGNORECASE).strip()
+    expected_suffix = re.compile(rf"{re.escape(month)}\s+{re.escape(year)}\s*$", re.IGNORECASE)
+    if not confirm and not expected_suffix.search(name_no_ext):
+        return jsonify({
+            "status": "confirm_required", "mode": None,
+            "message": f"The file name \"{filename}\" doesn't seem to end with \"{month} {year}\" "
+                       f"— please double-check the store/year/month you selected match this file. "
+                       f"Click Upload again to proceed anyway."
+        }), 200
 
     # Read + validate the uploaded CSV's format (columns) before writing
     # anything to disk.
@@ -774,7 +799,6 @@ def upload_data():
         return jsonify({"status": "error", "mode": None,
                          "message": f"Data failed to upload for other reasons (could not create folder: {e})."}), 500
 
-    filename = secure_filename(file.filename) or "upload.csv"
     target_path = os.path.join(target_dir, filename)
 
     mode = "added"
