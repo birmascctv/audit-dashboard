@@ -1,11 +1,13 @@
 <template>
-  <header class="card flex items-center justify-between mb-4">
-    <div>
-      <h1 class="brand text-3xl md:text-4xl font-bold">Birmas Audit</h1>
-      <div class="muted text-sm">{{ subtitle }}</div>
-    </div>
-    <div class="flex gap-2">
-      <slot />
+  <header class="header-bar">
+    <div class="flex items-center justify-between w-full">
+      <div>
+        <h1 class="brand text-3xl md:text-4xl font-bold">Birmas Audit</h1>
+        <div class="muted text-sm">{{ subtitle }}</div>
+      </div>
+      <div class="flex gap-2">
+        <slot />
+      </div>
     </div>
   </header>
 </template>
@@ -17,36 +19,24 @@ defineProps({
 </script>
 
 <style scoped>
-.card {
-  padding: 1rem;
-  border-radius: 0.75rem;
-  background: #374151; /* grey slate */
+.header-bar {
+  position: fixed;       /* stays visible when scrolling */
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;           /* full width */
+  background: #374151;   /* grey slate */
+  padding: 1rem 1.5rem;
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-  border: 1px solid #4b5563;
+  border-bottom: 1px solid #4b5563;
   color: #f1f5f9;
+  z-index: 1000;         /* keep above charts/content */
 }
+
 .brand {
-  color: #e5e7eb; /* light grey accent */
+  color: #e5e7eb;
 }
 .muted {
   color: #9ca3af;
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.45rem 0.75rem;
-  border-radius: 0.5rem;
-  cursor: pointer;
-  border: 0;
-}
-.btn-primary {
-  background: #6b7280;
-  color: #fff;
-}
-.btn-ghost {
-  background: transparent;
-  color: #9ca3af;
-  border: 1px solid rgba(255,255,255,0.1);
 }
 </style>
