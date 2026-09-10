@@ -13,7 +13,7 @@
 
 <script setup>
 import { ref, provide } from 'vue'
-import Sidebar from './components/Sidebar.vue'
+import Sidebar from './components/SideBar.vue'
 import Dashboard from './pages/Dashboard.vue'
 
 const isSidebarOpen = ref(false)
