@@ -52,7 +52,7 @@ def query_rows(sql, params=()):
 # bars (avoids the old hsl(id*47 % 360) formula, which produced two
 # similar-looking greens). Also reused (offset) for per-category series.
 COLOR_PALETTE = [
-    "#ef4444",  # red
+    "#2C0092",  # dark blue
     "#22c55e",  # green
     "#3b82f6",  # blue
     "#f59e0b",  # amber

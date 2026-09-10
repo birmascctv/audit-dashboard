@@ -99,28 +99,88 @@
     <!-- Passing rate bar charts: one per category, showing pass rate across
          (selected) stores for every month. Multiple selected stores render
          as grouped/clustered bars. -->
-    <div id="category-passrate-section" class="passrate-section mt-6">
+    <div id="category-passrate-section" class="passrate-section mt-10">
       <SectionHeader
-        text="Category Pass Rate"
-        description="Percentage of stores passing each category's criteria, per month. The red line is the average pass rate across all selected stores for that month."
+        text="Category Pass Rate & Evaluated Criteria"
+        description="Analyze compliance percentages across stores for each audit category over time. The bar chart on the left illustrates monthly store achievement relative to the network average (red line), while the panel on the right details all active criteria monitored under this category."
       />
+
+      <!-- Category selection tabs -->
+      <div class="category-tabs flex items-center gap-2 overflow-x-auto pb-2 mb-3">
+        <button
+          v-for="cat in categories"
+          :key="'tab-' + cat"
+          @click="selectedCategory = cat"
+          type="button"
+          :class="selectedCategory === cat ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'"
+          class="px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
+        >
+          {{ cat }}
+        </button>
+      </div>
+
       <div class="store-filter-row mb-3">
         <CheckboxFilterBar :items="storeFilterItems" v-model="selectedStores" all-label="All stores" />
       </div>
-      <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2 mt-2">
-        <ChartCard
-          v-for="cat in categories"
-          :key="'passrate-' + cat"
-          :category="cat"
-          type="bar"
-          :stores="stores"
-          :selected-stores="selectedStores"
-          :exclude-year="excludeYear"
-          :period-from="periodFrom"
-          :period-to="periodTo"
-          :refresh-key="dataVersion"
-          :options="{ title: { text: cat } }"
-        />
+
+      <!-- 2-Column Layout matching line chart -->
+      <div class="main-grid grid grid-cols-1 gap-4 md:grid-cols-3 md:items-stretch">
+        <!-- Left: Bar Chart -->
+        <div class="chart-column md:col-span-2 flex flex-col">
+          <ChartCard
+            v-if="selectedCategory"
+            :key="'passrate-' + selectedCategory"
+            :category="selectedCategory"
+            type="bar"
+            fill-height
+            :stores="stores"
+            :selected-stores="selectedStores"
+            :exclude-year="excludeYear"
+            :period-from="periodFrom"
+            :period-to="periodTo"
+            :refresh-key="dataVersion"
+            :options="{ title: { text: selectedCategory + ' Compliance Rate' } }"
+          />
+        </div>
+
+        <!-- Right: Category Info & Criteria List -->
+        <aside class="info-column p-4 rounded bg-slate-900 border border-slate-700 text-slate-100 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+              <h3 class="text-lg font-semibold text-white">{{ selectedCategory }} Info</h3>
+              <span class="text-xs bg-purple-900/60 text-purple-300 px-2 py-0.5 rounded border border-purple-700/50">
+                {{ categoryCriteria.length }} criteria
+              </span>
+            </div>
+
+            <div class="mb-3">
+              <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                Criteria Evaluated In This Category
+              </h4>
+              <div class="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+                <div
+                  v-for="c in categoryCriteria"
+                  :key="'cat-crit-' + c.id"
+                  class="p-2.5 rounded bg-slate-800/80 border border-slate-700 text-xs hover:border-purple-500/50 transition-colors"
+                >
+                  <div class="font-medium text-slate-100">{{ c.label }}</div>
+                  <div class="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+                    <span>Passing grade: <strong class="text-emerald-400">{{ c.passing_grade }}</strong></span>
+                    <span v-if="c.unit" class="text-slate-500">{{ c.unit }}</span>
+                  </div>
+                </div>
+                <div v-if="!categoryCriteria.length" class="text-xs text-slate-500 italic p-3">
+                  No criteria found for this category.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+            <span>Red line: Store Average</span>
+            <span class="w-3 h-1.5 bg-red-500 rounded-xs"></span>
+          </div>
+        </aside>
       </div>
     </div>
 
@@ -174,7 +234,7 @@ import UploadDataCard from '../components/UploadDataCard.vue'
 // mirrors backend COLOR_PALETTE in app.py's color_for_id(), so the store/
 // category checkbox dots match the colors used on the actual charts
 const COLOR_PALETTE = [
-  '#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#a855f7',
+  '#2C0092', '#22c55e', '#3b82f6', '#f59e0b', '#a855f7',
   '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#14b8a6'
 ]
 function colorForId(id) {
@@ -214,6 +274,20 @@ const categoryFilterItems = computed(() => categories.value.map((cat, idx) => ({
   label: cat,
   color: colorForId(idx + 1)
 })))
+
+const selectedCategory = ref('')
+const categoryCriteria = computed(() => {
+  if (!selectedCategory.value) return []
+  return criteria.value.filter(c => c.category === selectedCategory.value)
+})
+
+onMounted(async () => {
+  await loadLookups()
+  // ... existing store selections ...
+  if (!selectedCategory.value && categories.value.length) {
+    selectedCategory.value = categories.value[0]
+  }
+})
 
 // (re)fetch criteria/categories/stores; also used after an Upload Data
 // submission in case it introduced a new criterion/category
@@ -315,8 +389,7 @@ function stripStoreBrand(name) {
 }
 #criteria-section,
 #category-passrate-section,
-#store-passrate-section,
-#upload-section {
+#store-passrate-section {
   scroll-margin-top: 6.5rem;
 }
 </style>
