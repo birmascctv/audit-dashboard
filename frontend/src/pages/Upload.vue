@@ -5,11 +5,24 @@
     <div class="mt-8">
       <SectionHeader
         text="Upload Monthly Audit Inspection Records"
-        description="Ingest monthly quality audit data into the SQLite database. Select the targeted store outlet, fiscal year, and audit period, then upload the standardized Excel (.xlsx) or CSV evaluation sheet. Metrics across criteria trends, category pass rates, and store performance will update automatically."
+        description="Ingest monthly quality audit data into the SQLite database. Select the targeted store outlet, fiscal year, and audit period, then upload the standardized CSV evaluation sheet (.csv only). Metrics across criteria trends, category pass rates, and store performance will update automatically."
       />
 
       <div class="mt-6 p-6 rounded-2xl bg-slate-900 border border-slate-700 shadow-xl max-w-3xl">
         <UploadDataCard :stores="stores" @uploaded="onUploaded" />
+
+        <div v-if="uploadComplete" class="mt-5 p-4 rounded-xl bg-emerald-950/40 border border-emerald-800/50 text-emerald-300 text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex items-center gap-2.5">
+            <span class="text-base">✅</span>
+            <span>Audit data saved to SQLite database. Dashboard charts now reflect this update.</span>
+          </div>
+          <router-link
+            to="/dashboard"
+            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs whitespace-nowrap transition-colors text-center shadow-lg shadow-emerald-600/20"
+          >
+            View Dashboard →
+          </router-link>
+        </div>
       </div>
     </div>
   </div>
@@ -22,6 +35,7 @@ import SectionHeader from '../components/SectionHeader.vue'
 import UploadDataCard from '../components/UploadDataCard.vue'
 
 const stores = ref([])
+const uploadComplete = ref(false)
 
 onMounted(async () => {
   try {
@@ -33,7 +47,7 @@ onMounted(async () => {
 })
 
 function onUploaded() {
-  alert('Audit file uploaded and processed successfully!')
+  uploadComplete.value = true
 }
 </script>
 

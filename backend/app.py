@@ -52,7 +52,7 @@ def query_rows(sql, params=()):
 # bars (avoids the old hsl(id*47 % 360) formula, which produced two
 # similar-looking greens). Also reused (offset) for per-category series.
 COLOR_PALETTE = [
-    "#2C0092",  # dark blue
+    "#8b5cf6",  # purple (changed from red to avoid clash with Average line)
     "#22c55e",  # green
     "#3b82f6",  # blue
     "#f59e0b",  # amber
@@ -731,7 +731,7 @@ def upload_data():
 
     if not file.filename.lower().endswith(".csv"):
         return jsonify({"status": "error", "mode": None,
-                         "message": "Data failed to upload: only .csv files are accepted."}), 400
+                         "message": "File format must be CSV."}), 400
 
     # The uploaded filename itself is never sanitized/renamed (spaces are
     # kept as-is) — we only strip any directory portion (os.path.basename)
@@ -770,6 +770,10 @@ def upload_data():
         app.logger.exception("upload: failed to parse CSV")
         return jsonify({"status": "error", "mode": None,
                          "message": f"Data failed to upload for other reasons (could not read CSV: {e})."}), 500
+
+    if new_df.empty:
+        return jsonify({"status": "error", "mode": None,
+                         "message": "Uploaded CSV file contains no data rows."}), 400
 
     missing_cols = REQUIRED_UPLOAD_COLUMNS - set(str(c).strip() for c in new_df.columns)
     if missing_cols:
@@ -824,6 +828,14 @@ def upload_data():
             # If the existing file can't be parsed for comparison, fall
             # through and treat this as an update (safer than blocking).
             app.logger.warning("upload: could not compare against existing file, treating as update")
+
+        # File already exists and contains different or additional data.
+        # Require confirmation ("Upload Anyway") to replace the old file with the new file.
+        if not confirm:
+            return jsonify({
+                "status": "confirm_required", "mode": None,
+                "message": f"File \"{filename}\" already exists for {store} ({month} {year}) with additional or updated data. Click \"Upload Anyway\" to replace the existing file."
+            }), 200
 
         # Keep the old file around (per user's request) instead of
         # overwriting it outright.

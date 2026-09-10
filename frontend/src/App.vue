@@ -1,7 +1,10 @@
 <template>
-  <div class="flex min-h-screen bg-[#1e293b] text-slate-100">
+  <div class="min-h-screen bg-[#1e293b] text-slate-100 flex flex-col">
+    <!-- Sliding Off-canvas Sidebar (3-stripes toggled) -->
     <Sidebar />
-    <div class="flex-1 md:ml-64 min-h-screen">
+
+    <!-- Main Content Area: Full Width (Does not narrow page) -->
+    <div class="flex-1 w-full min-h-screen">
       <router-view v-if="$router" />
       <Dashboard v-else />
     </div>
@@ -9,6 +12,13 @@
 </template>
 
 <script setup>
-import Sidebar from './components/SideBar.vue'
+import { ref, provide } from 'vue'
+import Sidebar from './components/Sidebar.vue'
 import Dashboard from './pages/Dashboard.vue'
+
+const isSidebarOpen = ref(false)
+provide('isSidebarOpen', isSidebarOpen)
+provide('toggleSidebar', () => {
+  isSidebarOpen.value = !isSidebarOpen.value
+})
 </script>
