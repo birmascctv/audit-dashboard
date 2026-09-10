@@ -9,6 +9,6 @@
 </template>
 
 <script setup>
-import Sidebar from './components/Sidebar.vue'
+import Sidebar from './components/SideBar.vue'
 import Dashboard from './pages/Dashboard.vue'
 </script>
