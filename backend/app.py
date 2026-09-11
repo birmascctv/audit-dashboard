@@ -236,7 +236,9 @@ def stores():
 @app.route("/api/criteria")
 def criteria_list():
     """
-    Return list of criteria with id, label (name), category, unit (if available) and passing_grade.
+    Return list of criteria with id, label (name), category, unit (if
+    available), metrics (the scoring-rubric text from the CSV's "Metrics"
+    column, if available) and passing_grade.
 
     Query params:
       - year: only return criteria recorded for this exact year (e.g. 2025)
@@ -256,38 +258,31 @@ def criteria_list():
             params.append(str(exclude_year))
 
         include_unit = table_has_column("criteria", "unit")
+        include_metrics = table_has_column("criteria", "metrics")
+
+        select_cols = ["criteria_id", "name", "category", "passing_grade"]
         if include_unit:
-            rows = query_rows(f"""
-                SELECT criteria_id, name, category, passing_grade, unit
-                FROM criteria
-                {where}
-                ORDER BY category, name
-            """, params)
-            out = []
-            for r in rows:
-                out.append({
-                    "id": r["criteria_id"],
-                    "label": r["name"],
-                    "category": r["category"],
-                    "passing_grade": r["passing_grade"],
-                    "unit": r["unit"] if "unit" in r.keys() else None
-                })
-        else:
-            rows = query_rows(f"""
-                SELECT criteria_id, name, category, passing_grade
-                FROM criteria
-                {where}
-                ORDER BY category, name
-            """, params)
-            out = []
-            for r in rows:
-                out.append({
-                    "id": r["criteria_id"],
-                    "label": r["name"],
-                    "category": r["category"],
-                    "passing_grade": r["passing_grade"],
-                    "unit": None
-                })
+            select_cols.append("unit")
+        if include_metrics:
+            select_cols.append("metrics")
+
+        rows = query_rows(f"""
+            SELECT {', '.join(select_cols)}
+            FROM criteria
+            {where}
+            ORDER BY category, name
+        """, params)
+        out = []
+        for r in rows:
+            keys = r.keys()
+            out.append({
+                "id": r["criteria_id"],
+                "label": r["name"],
+                "category": r["category"],
+                "passing_grade": r["passing_grade"],
+                "unit": r["unit"] if "unit" in keys else None,
+                "metrics": r["metrics"] if "metrics" in keys else None
+            })
         return jsonify(out)
     except Exception:
         app.logger.exception("criteria_list failed")

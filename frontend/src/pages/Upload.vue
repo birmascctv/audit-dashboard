@@ -5,7 +5,7 @@
     <div class="mt-8">
       <SectionHeader
         text="Upload Monthly Audit Inspection Records"
-        description="Ingest monthly quality audit data into the SQLite database. Select the targeted store outlet, fiscal year, and audit period, then upload the standardized CSV evaluation sheet (.csv only). Metrics across criteria trends, category pass rates, and store performance will update automatically."
+        description="Add new audit data here. Choose the store, year, and month, then upload the CSV file for that audit. Once uploaded, all the charts on the dashboard update automatically with the new data."
       />
 
       <div class="mt-6 p-6 rounded-2xl bg-slate-900 border border-slate-700 shadow-xl max-w-3xl">

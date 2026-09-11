@@ -183,6 +183,7 @@ try:
         category TEXT NOT NULL,
         name TEXT NOT NULL,
         passing_grade REAL,
+        metrics TEXT,
         UNIQUE(year, name)
     );
 
@@ -255,6 +256,17 @@ try:
     """)
     conn.commit()
     print("Schema created/ensured and committed.")
+
+    # -------------------------
+    # Migration: older DBs created before the "metrics" column existed on
+    # criteria won't have it yet (CREATE TABLE IF NOT EXISTS is a no-op on
+    # an existing table) — add it if missing.
+    # -------------------------
+    existing_cols = [r[1] for r in cursor.execute("PRAGMA table_info(criteria)").fetchall()]
+    if "metrics" not in existing_cols:
+        cursor.execute("ALTER TABLE criteria ADD COLUMN metrics TEXT;")
+        conn.commit()
+        print("Added missing 'metrics' column to criteria table.")
 
     # -------------------------
     # If some DB objects still reference criteria_old, create a compatibility table
@@ -395,8 +407,19 @@ try:
             if category.lower() in ["absensi", "maintenance"]:
                 continue
             passing_grade = row.get("Passing Grade", None)
-            cursor.execute("INSERT OR IGNORE INTO criteria (year, category, name, passing_grade) VALUES (?,?,?,?)",
-                           (year, category, name, passing_grade))
+            raw_metrics = row.get("Metrics", None)
+            metrics = str(raw_metrics).strip() if raw_metrics is not None and str(raw_metrics).strip().lower() != "nan" and str(raw_metrics).strip() != "" else None
+            cursor.execute("INSERT OR IGNORE INTO criteria (year, category, name, passing_grade, metrics) VALUES (?,?,?,?,?)",
+                           (year, category, name, passing_grade, metrics))
+            # Metrics is the scoring rubric text for this criterion (same
+            # meaning every time it's recorded) — backfill it onto the
+            # criteria row if it's still empty there, in case an earlier
+            # file for this criterion/year happened to have it blank.
+            if metrics is not None:
+                cursor.execute(
+                    "UPDATE criteria SET metrics = ? WHERE year=? AND name=? AND (metrics IS NULL OR metrics = '')",
+                    (metrics, year, name)
+                )
             criteria_row = cursor.execute("SELECT criteria_id FROM criteria WHERE year=? AND name=?", (year, name)).fetchone()
             criteria_id = safe_fetchone_first(criteria_row)
             if criteria_id is None:
