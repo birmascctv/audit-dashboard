@@ -116,8 +116,8 @@
               <!-- Pass Rate (if available) -->
               <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
                 <div class="text-[11px] font-medium text-slate-400 mb-1">Compliance Rate</div>
-                <div class="text-base font-bold" :class="criteriaMetrics?.passRate !== null && criteriaMetrics?.passRate >= 80 ? 'text-emerald-400' : 'text-amber-400'">
-                  {{ criteriaMetrics?.passRate !== null ? criteriaMetrics?.passRate + '%' : '—' }}
+                <div class="text-base font-bold" :class="criteriaMetrics && criteriaMetrics.passRate != null && criteriaMetrics.passRate >= 80 ? 'text-emerald-400' : 'text-amber-400'">
+                  {{ criteriaMetrics && criteriaMetrics.passRate != null ? criteriaMetrics.passRate + '%' : '—' }}
                 </div>
               </div>
 
@@ -125,7 +125,7 @@
               <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
                 <div class="text-[11px] font-medium text-slate-400 mb-1">Score Range</div>
                 <div class="text-xs font-semibold text-slate-200 mt-1">
-                  <span v-if="criteriaMetrics?.minScore !== null && criteriaMetrics?.maxScore !== null">
+                  <span v-if="criteriaMetrics && criteriaMetrics.minScore != null && criteriaMetrics.maxScore != null">
                     {{ criteriaMetrics.minScore }} – {{ criteriaMetrics.maxScore }}
                   </span>
                   <span v-else class="text-slate-500">—</span>
