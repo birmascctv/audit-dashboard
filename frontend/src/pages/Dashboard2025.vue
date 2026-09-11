@@ -450,6 +450,6 @@ function stripStoreBrand(name) {
 }
 
 .label-on-page {
-  color: #e2e8f0;
+  color: #334155;
 }
 </style>

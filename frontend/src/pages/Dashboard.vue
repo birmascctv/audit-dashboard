@@ -7,7 +7,7 @@
       <div class="controls-bar md:col-span-2">
         <SectionHeader
           text="Criteria Performance Trends"
-          description="Inspect month-by-month score trajectories for any selected audit standard. The line chart plots store performance against the target passing benchmark (green line) and the overall network average (red line). Use the date filters below to narrow the assessment period."
+          description="Inspect month-by-month score trajectories for any selected audit criteria. The line chart plots store performance against the target passing grade (green line) and the overall average (red line). Use the date filters below to narrow the assessment period."
         />
 
         <label class="block text-sm mb-1 label-on-page">Select criteria</label>
@@ -455,6 +455,6 @@ function stripStoreBrand(name) {
 }
 
 .label-on-page {
-  color: #e2e8f0;
+  color: #334155;
 }
 </style>
