@@ -3,11 +3,11 @@
      smaller font, used above the Criteria control and the pass-rate
      section titles. -->
 <template>
-  <div class="mb-2">
-    <div class="section-header-card inline-block">
+  <div class="mb-3">
+    <div class="section-header-card inline-flex items-center gap-2">
       <h4 class="section-header-text text-base md:text-lg font-bold">{{ text }}</h4>
     </div>
-    <p v-if="description" class="section-description-text text-sm mt-1">{{ description }}</p>
+    <p v-if="description" class="section-description-text text-sm mt-1.5 leading-relaxed">{{ description }}</p>
   </div>
 </template>
 
@@ -22,15 +22,17 @@ defineProps({
 .section-header-card {
   padding: 0.35rem 0.85rem;
   border-radius: 0.6rem;
-  background: #9ca3af; /* lighter than the main header's #374151, darker than the page bg #e5e7eb */
-  border: 1px solid #b0b7c1;
+  background: #334155;
+  border: 1px solid #475569;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 .section-header-text {
-  color: #111827;
+  color: #f8fafc;
   margin: 0;
 }
 .section-description-text {
-  color: #4b5563;
+  color: #cbd5e1; /* High-contrast light slate: easy to read on both dark and medium backgrounds */
   margin: 0;
+  max-width: 900px;
 }
 </style>

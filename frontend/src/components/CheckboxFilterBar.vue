@@ -4,20 +4,20 @@
      the bottom of each chart are informational only and no longer
      clickable. -->
 <template>
-  <div class="checkbox-filter-bar flex flex-wrap items-center gap-x-4 gap-y-2">
-    <label class="checkbox-item all-item flex items-center gap-1.5 cursor-pointer select-none">
+  <div class="checkbox-filter-bar flex flex-wrap items-center gap-x-4 gap-y-2 p-2.5 sm:p-3 rounded-xl bg-slate-900/70 border border-slate-700/80 shadow-sm">
+    <label class="checkbox-item all-item flex items-center gap-2 cursor-pointer select-none pr-3 border-r border-slate-700">
       <input type="checkbox" :checked="allSelected" @change="toggleAll" />
-      <span class="text-sm font-medium">{{ allLabel }}</span>
+      <span class="text-sm font-semibold tracking-tight">{{ allLabel }}</span>
     </label>
 
     <label
       v-for="item in items"
       :key="item.id"
-      class="checkbox-item flex items-center gap-1.5 cursor-pointer select-none"
+      class="checkbox-item flex items-center gap-1.5 cursor-pointer select-none px-2 py-1 rounded-lg transition-colors hover:bg-slate-800/80"
     >
       <input type="checkbox" :checked="isSelected(item.id)" @change="toggle(item.id)" />
       <span v-if="item.color" class="dot" :style="{ backgroundColor: item.color }"></span>
-      <span class="text-sm">{{ item.label }}</span>
+      <span class="text-sm font-medium">{{ item.label }}</span>
     </label>
   </div>
 </template>
@@ -55,12 +55,15 @@ function toggleAll() {
 
 <style scoped>
 .checkbox-item {
-  color: #111827; /* dark text, readable on the light page background */
+  color: #e2e8f0; /* Crisp light slate: highly readable on dark dashboard */
+}
+.checkbox-item:hover {
+  color: #ffffff;
 }
 .checkbox-item input[type="checkbox"] {
   width: 1rem;
   height: 1rem;
-  accent-color: #374151;
+  accent-color: #3b82f6;
   cursor: pointer;
 }
 .dot {
@@ -68,5 +71,6 @@ function toggleAll() {
   height: 0.65rem;
   border-radius: 9999px;
   display: inline-block;
+  flex-shrink: 0;
 }
 </style>

@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-[#1e293b] text-slate-100 flex flex-col">
+  <div class="min-h-screen bg-[#f1f5f9] text-slate-800 flex flex-col">
     <!-- Sliding Off-canvas Sidebar (3-stripes toggled) -->
     <SideBar />
 

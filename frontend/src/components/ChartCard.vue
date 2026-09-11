@@ -58,7 +58,7 @@ const props = defineProps({
   fillHeight: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['loading', 'update:average'])
+const emit = defineEmits(['loading', 'update:average', 'update:metrics'])
 
 const canvas = ref(null)
 let chart = null
@@ -458,10 +458,52 @@ async function loadData() {
             const validAvgs = avgData.filter(v => v !== null && v !== undefined && !isNaN(v))
             overallAvg = validAvgs.length ? (validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length) : null
           }
-          emit('update:average', overallAvg === null ? null : Math.round(overallAvg * 1000) / 1000)
+
+          // Calculate additional detailed metrics across all store series
+          let minScore = null
+          let maxScore = null
+          let totalPoints = 0
+          let passingPoints = 0
+          const storesTracked = new Set()
+          const threshold = (props.passingGrade !== null && props.passingGrade !== undefined) ? Number(props.passingGrade) : null
+
+          // inspect store datasets (excluding average dataset at the end)
+          payload.datasets.slice(0, -1).forEach(ds => {
+            if (ds && Array.isArray(ds.data)) {
+              ds.data.forEach(val => {
+                if (val !== null && val !== undefined && !isNaN(val)) {
+                  const n = Number(val)
+                  totalPoints++
+                  if (ds.label) storesTracked.add(ds.label)
+                  if (minScore === null || n < minScore) minScore = n
+                  if (maxScore === null || n > maxScore) maxScore = n
+                  if (threshold !== null && !isNaN(threshold) && n >= threshold) {
+                    passingPoints++
+                  }
+                }
+              })
+            }
+          })
+
+          const passRate = (threshold !== null && !isNaN(threshold) && totalPoints > 0)
+            ? Math.round((passingPoints / totalPoints) * 1000) / 10
+            : null
+
+          const avgFormatted = overallAvg === null ? null : Math.round(overallAvg * 1000) / 1000
+
+          emit('update:average', avgFormatted)
+          emit('update:metrics', {
+            average: avgFormatted,
+            passRate,
+            minScore: minScore !== null ? Math.round(minScore * 100) / 100 : null,
+            maxScore: maxScore !== null ? Math.round(maxScore * 100) / 100 : null,
+            totalPoints,
+            storesCount: storesTracked.size
+          })
         }
       } else if (props.type === 'line') {
         emit('update:average', null)
+        emit('update:metrics', null)
       }
     }
 
