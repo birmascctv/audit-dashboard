@@ -7,7 +7,7 @@
       <div class="controls-bar md:col-span-2">
         <SectionHeader
           text="Criteria Performance Trends (2025)"
-          description="Historical month-by-month score trajectories for calendar year 2025. The line chart plots store performance against the target passing benchmark (green line) and the overall network average (red line)."
+          description="Pick a criterion below to see how each store scored on it, month by month, for 2025 only. The green line is the passing grade, and the red line is the average score across stores."
         />
 
         <label class="block text-sm mb-1 label-on-page">Select criteria</label>
@@ -46,7 +46,6 @@
           :stores="stores"
           :selected-stores="selectedStores"
           @update:average="averageValue = $event"
-          @update:metrics="criteriaMetrics = $event"
           :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
           :options="{ title: { text: selectedCriterion.label } }"
           :year="2025"
@@ -58,141 +57,46 @@
       </div>
 
       <!-- Info panel column -->
-      <aside class="info-column p-4 rounded-xl bg-slate-900 border border-slate-700/90 text-slate-100 flex flex-col justify-between overflow-hidden shadow-lg">
-        <div class="flex-1 flex flex-col min-h-0">
-          <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2.5">
-            <div>
-              <h3 class="text-lg font-bold text-white leading-tight">Chart Info (2025)</h3>
-              <p class="text-xs text-slate-400">Key metrics & criteria benchmarks</p>
-            </div>
-            <!-- Toggle between Active Criteria Metrics & All Category Criteria -->
-            <div class="flex items-center bg-slate-800/90 rounded-lg p-0.5 border border-slate-700 text-xs">
-              <button
-                type="button"
-                @click="chartInfoTab = 'kpi'"
-                class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer"
-                :class="chartInfoTab === 'kpi' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'"
-              >
-                Active KPI
-              </button>
-              <button
-                type="button"
-                @click="chartInfoTab = 'all'"
-                class="px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer flex items-center gap-1"
-                :class="chartInfoTab === 'all' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'"
-              >
-                <span>All Criteria</span>
-                <span class="text-[10px] px-1 py-0.2 rounded-full bg-slate-700/80">{{ activeCategoryCriteria.length }}</span>
-              </button>
+      <aside class="info-column p-4 rounded bg-slate-900 border border-slate-700 text-slate-100 flex flex-col">
+        <h3 class="text-xl font-semibold mb-3">Chart Info (2025)</h3>
+
+        <div class="legend mb-4">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="w-4 h-2 block bg-green-500 rounded-sm"></span>
+            <div class="flex items-center gap-2">
+              <span class="text-base">Passing grade:</span>
+              <span class="text-2xl font-semibold text-slate-100">{{ passingGradeLabel(selectedCriterion) }}</span>
             </div>
           </div>
 
-          <!-- TAB 1: Active Criterion KPIs & Metrics -->
-          <div v-if="chartInfoTab === 'kpi'" class="space-y-3 overflow-y-auto pr-1 flex-1">
-            <!-- Key Metric Benchmarks Grid -->
-            <div class="grid grid-cols-2 gap-2">
-              <!-- Passing Target -->
-              <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-                <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0"></span>
-                  <span class="text-[11px] font-medium text-slate-400">Passing Target</span>
-                </div>
-                <div class="text-lg font-bold text-emerald-400">
-                  {{ passingGradeLabel(selectedCriterion) }}
-                </div>
-              </div>
-
-              <!-- Network Average -->
-              <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-                <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-2.5 h-2.5 rounded-full bg-rose-500 flex-shrink-0"></span>
-                  <span class="text-[11px] font-medium text-slate-400">Network Avg</span>
-                </div>
-                <div class="text-lg font-bold text-rose-400">
-                  {{ averageValue !== null ? averageValue : '—' }}
-                </div>
-              </div>
-
-              <!-- Pass Rate (if available) -->
-              <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-                <div class="text-[11px] font-medium text-slate-400 mb-1">Compliance Rate</div>
-                <div class="text-base font-bold" :class="criteriaMetrics && criteriaMetrics.passRate != null && criteriaMetrics.passRate >= 80 ? 'text-emerald-400' : 'text-amber-400'">
-                  {{ criteriaMetrics && criteriaMetrics.passRate != null ? criteriaMetrics.passRate + '%' : '—' }}
-                </div>
-              </div>
-
-              <!-- Score Range -->
-              <div class="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-                <div class="text-[11px] font-medium text-slate-400 mb-1">Score Range</div>
-                <div class="text-xs font-semibold text-slate-200 mt-1">
-                  <span v-if="criteriaMetrics && criteriaMetrics.minScore != null && criteriaMetrics.maxScore != null">
-                    {{ criteriaMetrics.minScore }} – {{ criteriaMetrics.maxScore }}
-                  </span>
-                  <span v-else class="text-slate-500">—</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Criterion Specification Details -->
-            <div class="p-3 rounded-lg bg-slate-950/40 border border-slate-800/80 text-xs space-y-1.5">
-              <div class="flex justify-between items-start gap-2">
-                <span class="text-slate-400">Criterion:</span>
-                <span class="font-semibold text-slate-100 text-right truncate ml-2">{{ selectedCriterion?.label }}</span>
-              </div>
-              <div class="flex justify-between items-center">
-                <span class="text-slate-400">Category:</span>
-                <span class="font-medium text-purple-300">{{ selectedCriterion?.category }}</span>
-              </div>
-              <div v-if="selectedCriterion?.unit" class="flex justify-between items-center">
-                <span class="text-slate-400">Metric Unit:</span>
-                <span class="text-slate-200 font-mono">{{ selectedCriterion.unit }}</span>
-              </div>
-              <div v-if="criteriaMetrics?.storesCount" class="flex justify-between items-center">
-                <span class="text-slate-400">Stores Evaluated:</span>
-                <span class="text-slate-200 font-semibold">{{ criteriaMetrics.storesCount }} stores</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- TAB 2: Metrics of Every Criteria in Category -->
-          <div v-else class="space-y-1.5 overflow-y-auto pr-1 flex-1 max-h-[310px]">
-            <div class="text-xs text-slate-400 mb-1 flex items-center justify-between">
-              <span>Category: <strong class="text-purple-300">{{ selectedCriterion?.category }}</strong></span>
-              <span class="text-[11px] text-slate-500">Click to switch chart</span>
-            </div>
-            <div
-              v-for="c in activeCategoryCriteria"
-              :key="'info-crit-2025-' + c.id"
-              @click="selectedCriterionId = c.id"
-              class="p-2.5 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between gap-2"
-              :class="c.id === selectedCriterionId
-                ? 'bg-blue-900/40 border-blue-500 text-white shadow-sm'
-                : 'bg-slate-950/50 border-slate-800 text-slate-300 hover:bg-slate-800/80 hover:border-slate-700 hover:text-white'"
-            >
-              <div class="min-w-0 flex-1">
-                <div class="font-medium truncate leading-tight">{{ c.label }}</div>
-                <div class="text-[11px] text-slate-400 mt-1 flex items-center gap-2">
-                  <span>Target: <strong class="text-emerald-400 font-semibold">{{ c.passing_grade !== null ? c.passing_grade : '—' }}</strong></span>
-                  <span v-if="c.unit" class="text-slate-500">({{ c.unit }})</span>
-                </div>
-              </div>
-              <span
-                v-if="c.id === selectedCriterionId"
-                class="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-semibold flex-shrink-0"
-              >
-                Active
-              </span>
-              <span v-else class="text-xs text-slate-500 flex-shrink-0">→</span>
-            </div>
-            <div v-if="!activeCategoryCriteria.length" class="text-xs text-slate-500 italic p-3">
-              No criteria found.
+          <div class="flex items-center gap-2">
+            <span class="w-4 h-2 block bg-red-500 rounded-sm"></span>
+            <div class="flex items-center gap-2">
+              <span class="text-base">Average:</span>
+              <span class="text-2xl font-semibold text-slate-100">{{ averageValue === null ? '—' : averageValue }}</span>
             </div>
           </div>
         </div>
 
-        <div class="text-[11px] text-slate-400 pt-2 mt-2 border-t border-slate-800/90 flex items-center justify-between">
-          <span>Criteria Intelligence</span>
-          <span class="text-slate-500 text-[10px]">{{ selectedCriterion?.category }}</span>
+        <div class="criteria-details mb-3">
+          <h4 class="text-base font-medium mb-1">Criteria Details</h4>
+          <div v-if="selectedCriterion" class="text-base text-slate-300">
+            <div><strong>Name:</strong> {{ selectedCriterion.label }}</div>
+            <div><strong>Category:</strong> {{ selectedCriterion.category }}</div>
+          </div>
+          <div v-else class="text-base text-slate-400">No criterion selected</div>
+        </div>
+
+        <!-- Scoring rubric text for the selected criterion, straight from
+             the CSV's "Metrics" column — explains what each score value
+             (e.g. 3, 2, 1, 0) means for this specific criterion -->
+        <div class="metrics-details flex-1 min-h-0 flex flex-col">
+          <h4 class="text-base font-medium mb-1">Metrics</h4>
+          <div
+            v-if="selectedCriterion && selectedCriterion.metrics"
+            class="text-sm text-slate-300 whitespace-pre-line overflow-y-auto pr-1 flex-1 leading-relaxed"
+          >{{ selectedCriterion.metrics }}</div>
+          <div v-else class="text-sm text-slate-400">No metrics available for this criterion.</div>
         </div>
       </aside>
     </div>
@@ -201,7 +105,7 @@
     <div id="category-passrate-section" class="passrate-section mt-10">
       <SectionHeader
         text="Category Pass Rate (2025)"
-        description="Historical 2025 compliance percentages across stores for each audit category. The bar chart on the left illustrates monthly store achievement relative to the network average (red line), while the panel on the right details all active criteria monitored under this category."
+        description="See what percentage of stores passed each category every month in 2025. The bar chart shows each store's pass rate, and the red line is the average pass rate across all stores. The list on the right shows every criterion included in that category."
       />
 
       <!-- Category selection tabs -->
@@ -284,7 +188,7 @@
     <div id="store-passrate-section" class="storerate-section mt-10">
       <SectionHeader
         text="Store Pass Rate by Category (2025)"
-        description="Detailed performance audit breakdown for each individual store outlet across all evaluated categories in 2025. The red dashed line denotes the collective network average, highlighting which operational areas exceeded or fell behind company-wide quality standards."
+        description="See how each store performed across every category in 2025. Each chart below is one store, with a bar for every category's pass rate per month. The red dashed line is that store's average pass rate, so you can quickly spot which categories were above or below its own average."
       />
 
       <div class="category-filter-row mb-3">
@@ -342,8 +246,6 @@ const selectedStores = ref([])
 const selectedCategoriesForStore = ref([])
 const selectedCategory = ref('')
 const averageValue = ref(null)
-const criteriaMetrics = ref(null)
-const chartInfoTab = ref('kpi')
 const selectedCriterionId = ref(null)
 
 const dataVersion = ref(0)
@@ -366,11 +268,6 @@ const categoryFilterItems = computed(() => categories.value.map((cat, idx) => ({
   label: cat,
   color: colorForId(idx + 1)
 })))
-
-const activeCategoryCriteria = computed(() => {
-  if (!selectedCriterion.value) return criteria.value
-  return criteria.value.filter(c => c.category === selectedCriterion.value.category)
-})
 
 const categoryCriteria = computed(() => {
   if (!selectedCategory.value) return []

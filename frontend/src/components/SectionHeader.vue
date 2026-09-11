@@ -31,7 +31,7 @@ defineProps({
   margin: 0;
 }
 .section-description-text {
-  color: #cbd5e1; /* High-contrast light slate: easy to read on both dark and medium backgrounds */
+  color: #475569; /* slate-600: dark enough to read clearly on the light page background */
   margin: 0;
   max-width: 900px;
 }
