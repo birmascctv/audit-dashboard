@@ -31,6 +31,20 @@ app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 
+def ensure_indexes():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audits_year_month ON audits(year, month, store_id);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_scores_audit_criteria ON scores(audit_id, criteria_id);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_scores_audit_id ON scores(audit_id);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_criteria_category ON criteria(category);")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+ensure_indexes()
+
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -48,19 +62,19 @@ def query_rows(sql, params=()):
         conn.close()
 
 
-# Distinct, high-contrast qualitative color palette used for per-store lines/
-# bars (avoids the old hsl(id*47 % 360) formula, which produced two
-# similar-looking greens). Also reused (offset) for per-category series.
+# Bright, high-contrast palette matching store assignments:
+# 1: Lebak Bulus (purple), 2: Kelapa Gading (blue), 3: Kuningan (yellow),
+# 4: Kwitang (green), 5: Sudirman (red), 6: Tebet (orange)
 COLOR_PALETTE = [
-    "#8b5cf6",  # purple (changed from red to avoid clash with Average line)
-    "#22c55e",  # green
-    "#3b82f6",  # blue
-    "#f59e0b",  # amber
-    "#a855f7",  # purple
+    "#a855f7",  # Store 1: Lebak Bulus (purple)
+    "#3b82f6",  # Store 2: Kelapa Gading (blue)
+    "#eab308",  # Store 3: Kuningan (yellow)
+    "#22c55e",  # Store 4: Kwitang (green)
+    "#ef4444",  # Store 5: Sudirman (red)
+    "#f97316",  # Store 6: Tebet (orange)
     "#06b6d4",  # cyan
     "#ec4899",  # pink
     "#84cc16",  # lime
-    "#f97316",  # orange
     "#14b8a6",  # teal
 ]
 

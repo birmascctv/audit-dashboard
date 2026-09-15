@@ -1,23 +1,55 @@
 <template>
-  <div class="card chart-card" :class="{ 'chart-card--fill': fillHeight }">
-    <canvas ref="canvas"></canvas>
-
-    <div v-if="loading" class="overlay">
-      <div class="loader">Loading…</div>
+  <div class="card chart-card flex flex-col" :class="{ 'chart-card--fill': fillHeight }">
+    <!-- Store Header with Mascot if storeId is provided -->
+    <div
+      v-if="storeId != null"
+      class="flex items-center justify-between gap-2 mb-2 px-1 pb-2 border-b border-slate-800/80 select-none"
+    >
+      <div class="flex items-center gap-2.5">
+        <StoreMascot :store="storeId" size="sm" />
+        <span class="text-sm font-bold text-white tracking-tight">
+          {{ currentStoreMeta?.name || stripStoreBrand(options?.title?.text) || 'Store' }}
+        </span>
+      </div>
+      <span
+        v-if="currentStoreMeta"
+        class="text-[11px] font-semibold px-2 py-0.5 rounded-md border"
+        :style="{
+          backgroundColor: `${currentStoreMeta.color}15`,
+          borderColor: `${currentStoreMeta.color}40`,
+          color: currentStoreMeta.color
+        }"
+      >
+        {{ currentStoreMeta.mascotName }}
+      </span>
     </div>
 
-    <div v-if="error" class="chart-error">
-      Error: {{ error }}
+    <div class="relative flex-1 min-h-0 w-full">
+      <canvas ref="canvas"></canvas>
+
+      <div v-if="loading" class="overlay">
+        <div class="loader">Loading…</div>
+      </div>
+
+      <div v-if="error" class="chart-error">
+        Error: {{ error }}
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import { Chart, registerables } from 'chart.js'
 import annotationPlugin from 'chartjs-plugin-annotation'
 import { baseOptions } from '../chart-config.js'
+import StoreMascot from './StoreMascot.vue'
+import {
+  getStoreMeta,
+  getStoreColor,
+  stripStoreBrand
+} from '../store-meta.js'
 
 Chart.register(...registerables, annotationPlugin)
 
@@ -56,6 +88,10 @@ const props = defineProps({
   // when true, the card fills the height of its flex parent instead of a
   // fixed 250px (used for the line chart so it can match the info panel)
   fillHeight: { type: Boolean, default: false }
+})
+
+const currentStoreMeta = computed(() => {
+  return props.storeId != null ? getStoreMeta(props.storeId) : null
 })
 
 const emit = defineEmits(['loading', 'update:average', 'update:metrics'])
@@ -97,22 +133,21 @@ function buildUrl(kind = 'monthly') {
 /** Deterministic color generator for fallback when dataset has no color. */
 function colorForLabel(label) {
   if (!label) return 'hsl(210,70%,50%)'
+  const storeColor = getStoreColor(label, null)
+  if (storeColor) return storeColor
   let sum = 0
   for (let i = 0; i < label.length; i++) sum += label.charCodeAt(i)
   const hue = (sum * 37) % 360
   return `hsl(${hue},70%,50%)`
 }
 
-/** Store names all share the "Birmas" brand prefix, which is redundant
- *  everywhere they're shown as chart labels (legend, bar series, titles). */
-function stripStoreBrand(name) {
-  return String(name || '').replace(/^birmas\s+/i, '').trim()
-}
-
 /** Convert a border color into a slightly translucent background if possible. */
 function backgroundFromBorder(border) {
   if (!border) return border
   const s = String(border).trim()
+  if (s.startsWith('#')) {
+    return s.length === 7 ? s + 'cc' : s
+  }
   if (s.startsWith('hsl(')) {
     return s.replace(/^hsl\(/, 'hsla(').replace(/\)$/, ',0.85)')
   }
@@ -336,7 +371,12 @@ async function loadData() {
     // normalize dataset colors and bar backgrounds
     payload.datasets = (payload.datasets || []).map(ds => {
       const copy = { ...ds }
-      if (!copy.borderColor) copy.borderColor = colorForLabel(copy.label)
+      const storeColor = props.storeId == null ? getStoreColor(copy.label, null) : null
+      if (storeColor) {
+        copy.borderColor = storeColor
+      } else if (!copy.borderColor) {
+        copy.borderColor = colorForLabel(copy.label)
+      }
       if (props.type === 'bar') {
         // use same color for bar fill (slightly translucent if possible)
         copy.backgroundColor = copy.backgroundColor || backgroundFromBorder(copy.borderColor)
@@ -661,7 +701,7 @@ async function loadData() {
     options.plugins = options.plugins || {}
     options.plugins.title = {
       ...(options.plugins.title || {}),
-      display: true,
+      display: props.storeId == null,
       text: props.options?.title?.text || ''
     }
 
