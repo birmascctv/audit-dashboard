@@ -72,5 +72,6 @@ function toggleAll() {
   border-radius: 9999px;
   display: inline-block;
   flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
 }
 </style>

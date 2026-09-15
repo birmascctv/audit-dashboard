@@ -123,7 +123,7 @@ function buildUrl(kind = 'monthly') {
 /** Deterministic color generator for fallback when dataset has no color. */
 function colorForLabel(label) {
   if (!label) return 'hsl(210,70%,50%)'
-  if (String(label).trim().toLowerCase() === 'aplikasi') return '#facc15'
+  if (String(label).trim().toLowerCase() === 'aplikasi') return '#FFFF00'
   const storeColor = getStoreColor(label, null)
   if (storeColor) return storeColor
   const catColor = getCategoryColor(label, null)
@@ -369,7 +369,7 @@ async function loadData() {
       const catColor = props.storeId != null ? getCategoryColor(copy.label, null) : null
 
       if (isAplikasi) {
-        copy.borderColor = '#facc15'
+        copy.borderColor = '#FFFF00'
       } else if (storeColor) {
         copy.borderColor = storeColor
       } else if (catColor) {

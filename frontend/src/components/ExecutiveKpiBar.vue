@@ -24,136 +24,143 @@
       </div>
     </div>
 
-    <!-- 4-Card Responsive Grid -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-      <!-- Ranks 1, 2, 3 Cards -->
-      <div
-        v-for="r in rankList"
-        :key="'rank-' + r.rankNum"
-        class="p-3.5 rounded-xl border flex flex-col justify-between shadow-lg relative overflow-hidden transition-all duration-200"
-        :style="getCardStyle(r.data)"
-      >
-        <!-- Subtle store color ambient glow -->
+    <!-- Responsive Layout: 3 Rank Cards (wider) + 1 Grade Index Info Card (narrower) -->
+    <div class="flex flex-col lg:flex-row items-stretch gap-3.5">
+      <!-- Ranks 1, 2, 3 Cards Grid (expanded width) -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 flex-1 min-w-0">
         <div
-          class="absolute -right-6 -top-6 w-24 h-24 rounded-full blur-2xl pointer-events-none opacity-30"
-          :style="{ backgroundColor: r.data?.color || '#eab308' }"
-        ></div>
+          v-for="r in rankList"
+          :key="'rank-' + r.rankNum"
+          class="p-3.5 rounded-xl border flex flex-col justify-between shadow-lg relative overflow-hidden transition-all duration-200"
+          :style="getCardStyle(r.data)"
+        >
+          <!-- Subtle store color ambient glow -->
+          <div
+            class="absolute -right-6 -top-6 w-24 h-24 rounded-full blur-2xl pointer-events-none opacity-30"
+            :style="{ backgroundColor: r.data?.color || '#FFFF00' }"
+          ></div>
 
-        <div class="relative z-10">
-          <!-- Rank Indicator Header -->
-          <div class="flex items-center justify-between mb-3">
-            <span
-              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-black tracking-wider uppercase shadow-sm border"
-              :style="{
-                backgroundColor: (r.data?.color || '#94a3b8') + '22',
-                borderColor: (r.data?.color || '#94a3b8') + '60',
-                color: r.data?.color || '#facc15'
-              }"
-            >
-              <span>{{ r.medal }}</span>
-              <span>{{ r.label }}</span>
-            </span>
-            <span
-              class="text-[11px] font-bold tracking-wider uppercase"
-              :style="{ color: r.data?.color || '#94a3b8' }"
-            >
-              {{ r.sublabel }}
-            </span>
-          </div>
-
-          <!-- Icon, Store Name & Big Grade Index Row -->
-          <div class="flex items-center gap-3 my-2">
-            <!-- Store Mascot Icon -->
-            <StoreMascot v-if="r.data" :store="r.data.id" size="2xl" class="flex-shrink-0" />
-            <div v-else class="w-16 h-16 rounded-xl bg-slate-800 animate-pulse flex-shrink-0"></div>
-
-            <!-- Store Name (color/animal text removed) -->
-            <div class="min-w-0 flex-1">
-              <h3
-                class="text-xl sm:text-2xl font-black text-white tracking-tight truncate leading-snug"
-                :title="r.data?.name"
-              >
-                {{ r.data?.shortName || r.data?.name || (loading ? 'Loading...' : '—') }}
-              </h3>
-            </div>
-
-            <!-- Big Grade Index on the right of the store name -->
-            <div
-              class="flex-shrink-0 flex items-center justify-center min-w-[54px] h-[54px] px-2.5 rounded-xl text-3xl sm:text-4xl font-black tracking-tight border shadow-lg"
-              :class="r.data?.grade?.badgeClass || 'bg-slate-800 text-white'"
-            >
-              {{ r.data?.grade?.grade || '—' }}
-            </div>
-          </div>
-        </div>
-
-        <!-- Top 3 Categories with Grade Index -->
-        <div class="mt-3.5 pt-3 border-t border-slate-800/80 relative z-10 flex-1 flex flex-col justify-end">
-          <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2 flex items-center justify-between">
-            <span>Top 3 Categories</span>
-            <span class="text-[9px] font-medium text-slate-500">Grade</span>
-          </div>
-          <div class="space-y-1.5">
-            <div
-              v-for="(cat, idx) in (r.data?.topCategories || [])"
-              :key="cat.name"
-              class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-950/70 border border-slate-800/80 text-xs hover:border-slate-700 transition-colors"
-            >
-              <div class="flex items-center gap-2 min-w-0 pr-2">
-                <span class="w-4 text-center text-[10px] font-bold text-slate-400 font-mono">#{{ idx + 1 }}</span>
-                <span class="font-semibold text-slate-200 truncate" :title="cat.name">{{ cat.name }}</span>
+          <div class="relative z-10">
+            <!-- Rank Indicator & Grade Badge Header Row -->
+            <div class="flex items-center justify-between gap-2 mb-2.5">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span
+                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-black tracking-wider uppercase shadow-sm border flex-shrink-0"
+                  :style="{
+                    backgroundColor: (r.data?.color || '#94a3b8') + '22',
+                    borderColor: (r.data?.color || '#94a3b8') + '60',
+                    color: r.data?.color || '#FFFF00'
+                  }"
+                >
+                  <span>{{ r.medal }}</span>
+                  <span>{{ r.label }}</span>
+                </span>
+                <span
+                  class="text-[11px] font-bold tracking-wider uppercase truncate"
+                  :style="{ color: r.data?.color || '#94a3b8' }"
+                >
+                  {{ r.sublabel }}
+                </span>
               </div>
-              <span
-                class="px-2 py-0.5 rounded-md text-xs font-black border flex-shrink-0"
-                :class="cat.grade?.badgeClass || 'bg-slate-800 text-slate-200'"
+
+              <!-- Big Grade Index in Header Row -->
+              <div
+                class="flex-shrink-0 flex items-center justify-center min-w-[42px] h-[38px] px-2 rounded-lg text-2xl font-black tracking-tight border shadow-md"
+                :class="r.data?.grade?.badgeClass || 'bg-slate-800 text-white'"
+                title="Overall Store Grade"
               >
-                {{ cat.grade?.grade || '—' }}
-              </span>
+                {{ r.data?.grade?.grade || '—' }}
+              </div>
             </div>
-            <div v-if="!r.data?.topCategories || !r.data.topCategories.length" class="text-xs text-slate-500 italic py-2 text-center">
-              No category audit data
+
+            <!-- Mascot + Fully Readable Store Name Row -->
+            <div class="flex items-center gap-3 my-2">
+              <!-- Store Mascot Icon -->
+              <StoreMascot v-if="r.data" :store="r.data.id" size="lg" class="flex-shrink-0" />
+              <div v-else class="w-11 h-11 rounded-xl bg-slate-800 animate-pulse flex-shrink-0"></div>
+
+              <!-- Store Name & Compliance Rate -->
+              <div class="min-w-0 flex-1">
+                <h3
+                  class="text-base sm:text-lg font-black text-white tracking-tight leading-snug break-words"
+                  :title="r.data?.name"
+                >
+                  {{ r.data?.shortName || r.data?.name || (loading ? 'Loading...' : '—') }}
+                </h3>
+                <div class="flex items-center gap-1.5 mt-0.5">
+                  <span
+                    class="text-xs font-bold font-mono"
+                    :style="{ color: r.data?.color || '#FFFF00' }"
+                  >
+                    {{ r.data?.passRate != null ? r.data.passRate + '%' : '—' }}
+                  </span>
+                  <span class="text-[10px] text-slate-400 font-medium">Compliance</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top 3 Categories with Grade Index -->
+          <div class="mt-3 pt-2.5 border-t border-slate-800/80 relative z-10 flex-1 flex flex-col justify-end">
+            <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5 flex items-center justify-between">
+              <span>Top 3 Categories</span>
+              <span class="text-[9px] font-medium text-slate-500">Grade</span>
+            </div>
+            <div class="space-y-1.5">
+              <div
+                v-for="(cat, idx) in (r.data?.topCategories || [])"
+                :key="cat.name"
+                class="flex items-center justify-between px-2 py-1 rounded-lg bg-slate-950/70 border border-slate-800/80 text-xs hover:border-slate-700 transition-colors"
+              >
+                <div class="flex items-center gap-1.5 min-w-0 pr-1.5">
+                  <span class="w-3.5 text-center text-[10px] font-bold text-slate-400 font-mono">#{{ idx + 1 }}</span>
+                  <span class="font-semibold text-slate-200 truncate" :title="cat.name">{{ cat.name }}</span>
+                </div>
+                <span
+                  class="px-1.5 py-0.5 rounded text-[11px] font-black border flex-shrink-0"
+                  :class="cat.grade?.badgeClass || 'bg-slate-800 text-slate-200'"
+                >
+                  {{ cat.grade?.grade || '—' }}
+                </span>
+              </div>
+              <div v-if="!r.data?.topCategories || !r.data.topCategories.length" class="text-xs text-slate-500 italic py-1.5 text-center">
+                No category audit data
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Card 4: Grade Index Info (Official Rubric Guide) -->
-      <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col justify-between shadow-lg">
+      <!-- Card 4: Grade Index Info (Narrower box, one index per row) -->
+      <div class="w-full lg:w-44 xl:w-48 flex-shrink-0 p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col justify-between shadow-lg">
         <div>
           <!-- Header -->
-          <div class="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-800/80">
-            <div class="flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider">
+          <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/80">
+            <div class="flex items-center gap-1.5 text-[11px] font-bold text-white uppercase tracking-wider">
               <span>📐</span>
-              <span>GRADE INDEX INFO</span>
+              <span>GRADE INDEX</span>
             </div>
-            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
-              Grading Scale
+            <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+              Scale
             </span>
           </div>
 
-          <!-- Academic Scale Guide -->
-          <div class="space-y-1.5 text-xs">
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30">
-              <span class="font-bold text-emerald-300">Grade A / A-</span>
-              <span class="text-[11px] font-semibold text-slate-300">100% &nbsp;|&nbsp; &ge; 91.7%</span>
-            </div>
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-cyan-950/40 border border-cyan-500/30">
-              <span class="font-bold text-cyan-300">Grade B+ / B / B-</span>
-              <span class="text-[11px] font-semibold text-slate-300">&ge; 83.3% &nbsp;|&nbsp; 75% &nbsp;|&nbsp; 66.7%</span>
-            </div>
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-amber-950/40 border border-amber-500/30">
-              <span class="font-bold text-amber-300">Grade C+ / C / C-</span>
-              <span class="text-[11px] font-semibold text-slate-300">&ge; 56.7% &nbsp;|&nbsp; 50% &nbsp;|&nbsp; 46.7%</span>
-            </div>
-            <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-rose-950/40 border border-rose-500/30">
-              <span class="font-bold text-rose-400">Grade D / E</span>
-              <span class="text-[11px] font-semibold text-slate-300">&ge; 25% &nbsp;|&nbsp; &lt; 12.3%</span>
+          <!-- Academic Scale Guide: One index per row -->
+          <div class="space-y-1">
+            <div
+              v-for="item in gradeScaleItems"
+              :key="item.grade"
+              class="flex items-center justify-between px-2 py-0.5 rounded border text-[10px] font-mono leading-tight"
+              :class="item.bgClass"
+            >
+              <span class="font-black" :class="item.textClass">{{ item.grade }}</span>
+              <span class="text-slate-300 font-semibold text-[9px]">{{ item.score }}</span>
             </div>
           </div>
         </div>
 
-        <p class="text-[10px] text-slate-400 mt-2 text-center pt-2 border-t border-slate-800/80">
-          Standard 12-tier academic compliance evaluation
+        <p class="text-[9px] text-slate-400 mt-2 text-center pt-1.5 border-t border-slate-800/80">
+          12-tier academic rubric
         </p>
       </div>
     </div>
@@ -168,6 +175,21 @@ import {
   stripStoreBrand,
   calculateAlphabetGrade
 } from '../store-meta.js'
+
+const gradeScaleItems = [
+  { grade: 'Grade A', score: '100%', textClass: 'text-emerald-300', bgClass: 'bg-emerald-950/40 border-emerald-500/30' },
+  { grade: 'Grade A-', score: '≥ 91.7%', textClass: 'text-emerald-400', bgClass: 'bg-emerald-950/30 border-emerald-500/20' },
+  { grade: 'Grade B+', score: '≥ 83.3%', textClass: 'text-cyan-300', bgClass: 'bg-cyan-950/40 border-cyan-500/30' },
+  { grade: 'Grade B', score: '≥ 75.0%', textClass: 'text-blue-300', bgClass: 'bg-blue-950/40 border-blue-500/30' },
+  { grade: 'Grade B-', score: '≥ 66.7%', textClass: 'text-blue-400', bgClass: 'bg-blue-950/30 border-blue-600/20' },
+  { grade: 'Grade C+', score: '≥ 56.7%', textClass: 'text-amber-300', bgClass: 'bg-amber-950/40 border-amber-500/30' },
+  { grade: 'Grade C', score: '≥ 50.0%', textClass: 'text-yellow-300', bgClass: 'bg-yellow-950/40 border-yellow-500/30' },
+  { grade: 'Grade C-', score: '≥ 46.7%', textClass: 'text-amber-400', bgClass: 'bg-amber-950/30 border-amber-600/20' },
+  { grade: 'Grade D+', score: '≥ 38.3%', textClass: 'text-orange-300', bgClass: 'bg-orange-950/40 border-orange-500/30' },
+  { grade: 'Grade D', score: '≥ 25.0%', textClass: 'text-orange-400', bgClass: 'bg-orange-950/30 border-orange-600/20' },
+  { grade: 'Grade D-', score: '≥ 12.3%', textClass: 'text-rose-400', bgClass: 'bg-rose-950/30 border-rose-700/20' },
+  { grade: 'Grade E', score: '< 12.3%', textClass: 'text-rose-500', bgClass: 'bg-rose-950/50 border-rose-500/30' }
+]
 
 const props = defineProps({
   year: { type: [Number, String], default: 2026 },

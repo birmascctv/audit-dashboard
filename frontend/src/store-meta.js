@@ -9,40 +9,40 @@ export const STORE_META = {
     id: 1,
     name: 'Birmas Lebak Bulus',
     shortName: 'Lebak Bulus',
-    color: '#a855f7', // Purple
-    borderClass: 'border-purple-500/40',
-    bgClass: 'bg-purple-950/40',
-    badgeBg: 'bg-purple-500/20',
-    badgeText: 'text-purple-300',
-    textClass: 'text-purple-400',
-    mascotName: 'Purple Cupang',
+    color: '#FF00FF', // Magenta / Fuchsia
+    borderClass: 'border-fuchsia-500/40',
+    bgClass: 'bg-fuchsia-950/40',
+    badgeBg: 'bg-fuchsia-500/20',
+    badgeText: 'text-fuchsia-300',
+    textClass: 'text-fuchsia-400',
+    mascotName: 'Magenta Cupang',
     animal: 'Cupang',
     emoji: '🐟',
-    iconColor: '#c084fc',
+    iconColor: '#FF00FF',
     mascotImg: '/mascots/lebak_bulus_cupang.png'
   },
   2: {
     id: 2,
     name: 'Birmas Kelapa Gading',
     shortName: 'Kelapa Gading',
-    color: '#00d4ff', // Electric Blue
+    color: '#00FFFF', // Cyan / Aqua
     borderClass: 'border-cyan-400/40',
     bgClass: 'bg-cyan-950/40',
     badgeBg: 'bg-cyan-500/20',
     badgeText: 'text-cyan-300',
     textClass: 'text-cyan-400',
-    mascotName: 'Blue Mammoth',
+    mascotName: 'Cyan Mammoth',
     animal: 'Mammoth',
     emoji: '🦣',
-    iconColor: '#00d4ff',
+    iconColor: '#00FFFF',
     mascotImg: '/mascots/kelapa_gading_mammoth.png'
   },
   3: {
     id: 3,
     name: 'Birmas Kuningan',
     shortName: 'Kuningan',
-    color: '#eab308', // Yellow
-    borderClass: 'border-yellow-500/40',
+    color: '#FFFF00', // Yellow
+    borderClass: 'border-yellow-400/40',
     bgClass: 'bg-yellow-950/40',
     badgeBg: 'bg-yellow-500/20',
     badgeText: 'text-yellow-300',
@@ -50,46 +50,46 @@ export const STORE_META = {
     mascotName: 'Yellow Horse',
     animal: 'Horse',
     emoji: '🐎',
-    iconColor: '#facc15',
+    iconColor: '#FFFF00',
     mascotImg: '/mascots/kuningan_horse.png'
   },
   4: {
     id: 4,
     name: 'Birmas Kwitang',
     shortName: 'Kwitang',
-    color: '#22c55e', // Green
-    borderClass: 'border-emerald-500/40',
-    bgClass: 'bg-emerald-950/40',
-    badgeBg: 'bg-emerald-500/20',
-    badgeText: 'text-emerald-300',
-    textClass: 'text-emerald-400',
+    color: '#00FF00', // Lime Green
+    borderClass: 'border-lime-500/40',
+    bgClass: 'bg-lime-950/40',
+    badgeBg: 'bg-lime-500/20',
+    badgeText: 'text-lime-300',
+    textClass: 'text-lime-400',
     mascotName: 'Green Honey Badger',
     animal: 'Honey Badger',
     emoji: '🦡',
-    iconColor: '#4ade80',
+    iconColor: '#00FF00',
     mascotImg: '/mascots/kwitang_badger.png'
   },
   5: {
     id: 5,
     name: 'Birmas Sudirman',
     shortName: 'Sudirman',
-    color: '#ef4444', // Red
-    borderClass: 'border-red-500/40',
-    bgClass: 'bg-red-950/40',
-    badgeBg: 'bg-red-500/20',
-    badgeText: 'text-red-300',
-    textClass: 'text-red-400',
-    mascotName: 'Red Bulldog',
+    color: '#F48FB1', // Pink
+    borderClass: 'border-pink-400/40',
+    bgClass: 'bg-pink-950/40',
+    badgeBg: 'bg-pink-500/20',
+    badgeText: 'text-pink-300',
+    textClass: 'text-pink-400',
+    mascotName: 'Pink Bulldog',
     animal: 'Bulldog',
     emoji: '🐶',
-    iconColor: '#f87171',
+    iconColor: '#F48FB1',
     mascotImg: '/mascots/sudirman_bulldog.png'
   },
   6: {
     id: 6,
     name: 'Birmas Tebet',
     shortName: 'Tebet',
-    color: '#f97316', // Orange
+    color: '#FF6E00', // Orange
     borderClass: 'border-orange-500/40',
     bgClass: 'bg-orange-950/40',
     badgeBg: 'bg-orange-500/20',
@@ -98,7 +98,7 @@ export const STORE_META = {
     mascotName: 'Orange T-Rex',
     animal: 'T-Rex',
     emoji: '🦖',
-    iconColor: '#fb923c',
+    iconColor: '#FF6E00',
     mascotImg: '/mascots/tebet_trex.png'
   }
 }
@@ -170,26 +170,33 @@ export function getStoreMascot(storeIdOrName) {
 
 /**
  * Standard audit categories palette.
- * User requirement: Aplikasi MUST be bright yellow (#facc15 / #eab308).
+ * Colors match store colors, plus white/super light grey for the 7th category:
+ * - Aplikasi: #FFFF00 (Kuningan Yellow)
+ * - Customer Service: #00FF00 (Kwitang Green)
+ * - Higiene Staf: #00FFFF (Kelapa Gading Cyan)
+ * - Inventaris: #FF6E00 (Tebet Orange)
+ * - Kebersihan Outlet: #FF00FF (Lebak Bulus Magenta)
+ * - Showcase: #F48FB1 (Sudirman Pink)
+ * - Stock Opname: #FFFFFF (White / Super Light Grey)
  */
 export const CATEGORY_COLORS = {
-  'Aplikasi': '#facc15', // Bright Yellow
-  'Customer Service': '#22c55e', // Green
-  'Higiene Staf': '#00d4ff', // Electric Blue / Cyan
-  'Inventaris': '#f97316', // Orange
-  'Kebersihan Outlet': '#a855f7', // Purple
-  'Showcase': '#06b6d4', // Teal / Cyan
-  'Stock Opname': '#ec4899' // Pink
+  'Aplikasi': '#FFFF00', // Yellow
+  'Customer Service': '#00FF00', // Lime Green
+  'Higiene Staf': '#00FFFF', // Cyan
+  'Inventaris': '#FF6E00', // Orange
+  'Kebersihan Outlet': '#FF00FF', // Magenta
+  'Showcase': '#F48FB1', // Pink
+  'Stock Opname': '#FFFFFF' // White / Super Light Grey
 }
 
 /**
- * Get category color, strictly ensuring Aplikasi is bright yellow
+ * Get category color, strictly ensuring Aplikasi is yellow
  */
 export function getCategoryColor(categoryName, fallback = null) {
   if (!categoryName) return fallback
   const str = String(categoryName).trim()
   const lower = str.toLowerCase()
-  if (lower === 'aplikasi') return '#facc15' // Bright yellow
+  if (lower === 'aplikasi') return '#FFFF00' // Yellow
 
   for (const [key, color] of Object.entries(CATEGORY_COLORS)) {
     if (key.toLowerCase() === lower) {
