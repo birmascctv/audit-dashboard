@@ -295,7 +295,7 @@ import ChartCard from '../components/ChartCard.vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import CheckboxFilterBar from '../components/CheckboxFilterBar.vue'
 import ExecutiveKpiBar from '../components/ExecutiveKpiBar.vue'
-import DrilldownModal from '../components/DrilldownModal.vue'
+import DrilldownModal from '../components/DrilldownModals.vue/index.js'
 import TopRankingsBar from '../components/TopRankingsBar.vue'
 import ScrollNavButtons from '../components/ScrollNavButtons.vue'
 import {
