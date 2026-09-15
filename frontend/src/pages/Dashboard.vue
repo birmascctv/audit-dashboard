@@ -7,11 +7,7 @@
       <div class="controls-bar md:col-span-2">
         <SectionHeader
           text="Criteria Performance Trends"
-<<<<<<< HEAD
           description="Inspect month-by-month score trajectories for any selected audit criteria. The line chart plots store performance against the target passing grade (green line) and the overall average (red line). Use the date filters below to narrow the assessment period."
-=======
-          description="Pick a criterion below to see how each store scored on it, month by month. The green line is the passing grade, and the red line is the average score across stores. Use the filters below the chart to narrow which months or stores are shown."
->>>>>>> 6ec20aeae306dace93839c97685d38fa495b59d4
         />
 
         <label class="block text-sm mb-1 label-on-page">Select criteria</label>
