@@ -63,15 +63,16 @@ def query_rows(sql, params=()):
 
 
 # Bright, high-contrast palette matching store assignments:
-# 1: Lebak Bulus (purple), 2: Kelapa Gading (blue), 3: Kuningan (yellow),
-# 4: Kwitang (green), 5: Sudirman (red), 6: Tebet (orange)
+# 1: Lebak Bulus (#FF00FF), 2: Kelapa Gading (#00FFFF), 3: Kuningan (#FFFF00),
+# 4: Kwitang (#00FF00), 5: Sudirman (#F48FB1), 6: Tebet (#FF6E00)
 COLOR_PALETTE = [
-    "#a855f7",  # Store 1: Lebak Bulus (purple)
-    "#3b82f6",  # Store 2: Kelapa Gading (blue)
-    "#eab308",  # Store 3: Kuningan (yellow)
-    "#22c55e",  # Store 4: Kwitang (green)
-    "#ef4444",  # Store 5: Sudirman (red)
-    "#f97316",  # Store 6: Tebet (orange)
+    "#FF00FF",  # Store 1: Lebak Bulus (magenta)
+    "#00FFFF",  # Store 2: Kelapa Gading (cyan)
+    "#FFFF00",  # Store 3: Kuningan (yellow)
+    "#00FF00",  # Store 4: Kwitang (green)
+    "#F48FB1",  # Store 5: Sudirman (pink)
+    "#FF6E00",  # Store 6: Tebet (orange)
+    "#FFFFFF",  # Super light grey / white
     "#06b6d4",  # cyan
     "#ec4899",  # pink
     "#84cc16",  # lime
