@@ -1,31 +1,22 @@
 <template>
   <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto pb-12">
-    <Header subtitle="Year 2025 (Historical Archive)" />
+    <Header subtitle="Year 2026" />
 
-    <!-- Top 3 Store Quality & Compliance Ranking Podium with Alphabet Grading & Mascots (2025) -->
-    <TopRankingsBar
-      :year="2025"
-      :stores="stores"
-      :period-from="periodFrom"
-      :period-to="periodTo"
-      @open-drilldown="showDrilldown = true"
-      @inspect-store="handleInspectStore"
-    />
-
-    <!-- Executive Quality & Compliance KPI Badges (2025) -->
+    <!-- STORE RANKS: Top 3 Outlets & Academic Grade Index -->
     <ExecutiveKpiBar
-      :year="2025"
+      :year="2026"
       :stores="stores"
       :categories="categories"
-      @open-drilldown="showDrilldown = true"
+      :period-from="periodFrom"
+      :period-to="periodTo"
     />
 
     <!-- Criteria search + selection -->
     <div id="criteria-section" class="controls-grid grid grid-cols-1 gap-4 md:grid-cols-3 mb-4">
       <div class="controls-bar md:col-span-2">
         <SectionHeader
-          text="Criteria Performance Trends (2025)"
-          description="Pick a criterion below to see how each store scored on it, month by month, for 2025 only. The green line is the passing grade, and the red line is the average score across stores."
+          text="Criteria Performance Trends"
+          description="Inspect month-by-month score trajectories for any selected audit criteria. The line chart plots store performance against the target passing grade (green line) and the overall average (red line). Use the date filters below to narrow the assessment period."
         />
 
         <label class="block text-sm mb-1.5 label-on-page font-medium">Select criteria</label>
@@ -72,7 +63,7 @@
           @update:average="averageValue = $event"
           :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
           :options="{ title: { text: selectedCriterion.label } }"
-          :year="2025"
+          :exclude-year="excludeYear"
           :period-from="periodFrom"
           :period-to="periodTo"
           :refresh-key="dataVersion"
@@ -85,7 +76,7 @@
         <div class="flex-1 flex flex-col min-h-0">
           <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2.5">
             <div>
-              <h3 class="text-lg font-bold text-white leading-tight">Chart Info (2025)</h3>
+              <h3 class="text-lg font-bold text-white leading-tight">Chart Info</h3>
               <p class="text-xs text-slate-400">Key metrics & criteria benchmarks</p>
             </div>
             <button
@@ -163,15 +154,15 @@
     <!-- Category Pass Rate Section -->
     <div id="category-passrate-section" class="passrate-section mt-10">
       <SectionHeader
-        text="Category Pass Rate (2025)"
-        description="Historical 2025 compliance percentages across stores for each audit category. The bar chart on the left illustrates monthly store achievement relative to the network average (red line), while the panel on the right details all active criteria monitored under this category."
+        text="Category Pass Rate"
+        description="Analyze compliance percentages across stores for each audit category over time. The bar chart on the left illustrates monthly store achievement relative to the network average (red line), while the panel on the right details all active criteria monitored under this category."
       />
 
       <!-- Category selection tabs -->
       <div class="category-tabs flex items-center gap-2 overflow-x-auto pb-2 mb-3">
         <button
           v-for="cat in categories"
-          :key="'tab-2025-' + cat"
+          :key="'tab-' + cat"
           @click="selectedCategory = cat"
           type="button"
           :class="selectedCategory === cat ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/20' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'"
@@ -191,17 +182,17 @@
         <div class="chart-column md:col-span-2 flex flex-col">
           <ChartCard
             v-if="selectedCategory"
-            :key="'passrate-2025-' + selectedCategory"
+            :key="'passrate-' + selectedCategory"
             :category="selectedCategory"
             type="bar"
             fill-height
             :stores="stores"
             :selected-stores="selectedStores"
-            :year="2025"
+            :exclude-year="excludeYear"
             :period-from="periodFrom"
             :period-to="periodTo"
             :refresh-key="dataVersion"
-            :options="{ title: { text: selectedCategory + ' Compliance Rate (2025)' } }"
+            :options="{ title: { text: selectedCategory + ' Compliance Rate' } }"
           />
         </div>
 
@@ -209,7 +200,7 @@
         <aside class="info-column p-4 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 flex flex-col justify-between shadow-xl">
           <div>
             <div class="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
-              <h3 class="text-lg font-semibold text-white">{{ selectedCategory }} Info (2025)</h3>
+              <h3 class="text-lg font-semibold text-white">{{ selectedCategory }} Info</h3>
               <span class="text-xs bg-purple-900/60 text-purple-300 px-2 py-0.5 rounded border border-purple-700/50">
                 {{ categoryCriteria.length }} criteria
               </span>
@@ -222,7 +213,7 @@
               <div class="space-y-2 max-h-[280px] overflow-y-auto pr-1">
                 <div
                   v-for="c in categoryCriteria"
-                  :key="'cat-crit-2025-' + c.id"
+                  :key="'cat-crit-' + c.id"
                   class="p-2.5 rounded-lg bg-slate-800/80 border border-slate-700/80 text-xs hover:border-purple-500/50 transition-colors flex items-center justify-between gap-2"
                 >
                   <div class="font-medium text-slate-100 leading-snug">{{ c.label }}</div>
@@ -246,8 +237,8 @@
     <!-- Store passing rate -->
     <div id="store-passrate-section" class="storerate-section mt-10">
       <SectionHeader
-        text="Store Pass Rate by Category (2025)"
-        description="Historical 2025 store performance across every category. Each chart below is one store, with a bar for every category's pass rate per month. The red dashed line is that store's average pass rate, so you can quickly spot which categories are above or below its own average."
+        text="Store Pass Rate by Category"
+        description="See how each store performs across every category. Each chart below is one store, with a bar for every category's pass rate per month. The red dashed line is that store's average pass rate, so you can quickly spot which categories are above or below its own average."
       />
 
       <div class="category-filter-row mb-3">
@@ -257,11 +248,11 @@
       <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2 mt-2">
         <ChartCard
           v-for="s in stores"
-          :key="'storerate-2025-' + s.store_id"
+          :key="'storerate-' + s.store_id"
           type="bar"
           :store-id="s.store_id"
           :selected-categories="selectedCategoriesForStore"
-          :year="2025"
+          :exclude-year="excludeYear"
           :period-from="periodFrom"
           :period-to="periodTo"
           :refresh-key="dataVersion"
@@ -270,15 +261,15 @@
       </div>
     </div>
 
-    <!-- Interactive Infraction & Auditor Notes Drilldown Modal (2025) -->
+    <!-- Interactive Infraction & Auditor Notes Drilldown Modal -->
     <DrilldownModal
       :is-open="showDrilldown"
       :stores="stores"
       :categories="categories"
       :initial-store-id="inspectStoreId || stores[0]?.store_id"
       :initial-category="selectedCriterion?.category || 'Aplikasi'"
-      :initial-year="2025"
-      :initial-month="12"
+      :initial-year="2026"
+      :initial-month="8"
       @close="showDrilldown = false"
     />
 
@@ -296,17 +287,21 @@ import SectionHeader from '../components/SectionHeader.vue'
 import CheckboxFilterBar from '../components/CheckboxFilterBar.vue'
 import ExecutiveKpiBar from '../components/ExecutiveKpiBar.vue'
 import DrilldownModal from '../components/DrilldownModal.vue'
-import TopRankingsBar from '../components/TopRankingsBar.vue'
 import ScrollNavButtons from '../components/ScrollNavButtons.vue'
 import {
   getStoreMeta,
   getStoreColor,
+  getCategoryColor,
   stripStoreBrand
 } from '../store-meta.js'
 
 function colorForId(id) {
   return getStoreColor(id)
 }
+
+const props = defineProps({
+  excludeYear: { type: Number, default: 2025 }
+})
 
 const criteria = ref([])
 const categories = ref([])
@@ -349,16 +344,14 @@ const storeFilterItems = computed(() => stores.value.map(s => {
   return {
     id: s.store_id,
     label: stripStoreBrand(s.name),
-    color: meta?.color || colorForId(s.store_id),
-    emoji: meta?.emoji || '🏬',
-    mascot: meta?.mascotName || 'Store'
+    color: meta?.color || colorForId(s.store_id)
   }
 }))
 
 const categoryFilterItems = computed(() => categories.value.map((cat, idx) => ({
   id: cat,
   label: cat,
-  color: colorForId(idx + 1)
+  color: getCategoryColor(cat) || colorForId(idx + 1)
 })))
 
 const categoryCriteria = computed(() => {
@@ -367,9 +360,10 @@ const categoryCriteria = computed(() => {
 })
 
 async function loadLookups() {
+  const excludeYear = props.excludeYear
   const [critRes, catRes, storesRes] = await Promise.all([
-    fetch('/api/criteria?year=2025'),
-    fetch('/api/categories?year=2025'),
+    fetch(`/api/criteria?exclude_year=${excludeYear}`),
+    fetch('/api/categories'),
     fetch('/api/stores')
   ])
   try {

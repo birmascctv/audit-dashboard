@@ -75,6 +75,8 @@ const sizeClasses = computed(() => {
       return 'w-11 h-11 text-xl'
     case 'xl':
       return 'w-14 h-14 text-2xl'
+    case '2xl':
+      return 'w-16 h-16 text-3xl'
     case 'md':
     default:
       return 'w-9 h-9 text-base'
@@ -91,6 +93,8 @@ const emojiSizeClass = computed(() => {
       return 'text-lg'
     case 'xl':
       return 'text-2xl'
+    case '2xl':
+      return 'text-3xl'
     case 'md':
     default:
       return 'text-sm'

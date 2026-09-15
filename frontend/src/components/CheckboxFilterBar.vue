@@ -16,8 +16,7 @@
       class="checkbox-item flex items-center gap-1.5 cursor-pointer select-none px-2 py-1 rounded-lg transition-colors hover:bg-slate-800/80"
     >
       <input type="checkbox" :checked="isSelected(item.id)" @change="toggle(item.id)" />
-      <span v-if="item.emoji" class="text-sm select-none leading-none" :title="item.mascot">{{ item.emoji }}</span>
-      <span v-else-if="item.color" class="dot" :style="{ backgroundColor: item.color }"></span>
+      <span v-if="item.color" class="dot" :style="{ backgroundColor: item.color }"></span>
       <span class="text-sm font-medium">{{ item.label }}</span>
     </label>
   </div>

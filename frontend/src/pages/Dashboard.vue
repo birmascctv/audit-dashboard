@@ -2,22 +2,13 @@
   <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto pb-12">
     <Header subtitle="Year 2026" />
 
-    <!-- Top 3 Store Quality & Compliance Ranking Podium with Alphabet Grading & Mascots -->
-    <TopRankingsBar
-      :year="2026"
-      :stores="stores"
-      :period-from="periodFrom"
-      :period-to="periodTo"
-      @open-drilldown="showDrilldown = true"
-      @inspect-store="handleInspectStore"
-    />
-
-    <!-- Executive Quality & Compliance KPI Badges -->
+    <!-- STORE RANKS: Top 3 Outlets & Academic Grade Index -->
     <ExecutiveKpiBar
       :year="2026"
       :stores="stores"
       :categories="categories"
-      @open-drilldown="showDrilldown = true"
+      :period-from="periodFrom"
+      :period-to="periodTo"
     />
 
     <!-- Criteria search + selection -->
@@ -296,11 +287,11 @@ import SectionHeader from '../components/SectionHeader.vue'
 import CheckboxFilterBar from '../components/CheckboxFilterBar.vue'
 import ExecutiveKpiBar from '../components/ExecutiveKpiBar.vue'
 import DrilldownModal from '../components/DrilldownModal.vue'
-import TopRankingsBar from '../components/TopRankingsBar.vue'
 import ScrollNavButtons from '../components/ScrollNavButtons.vue'
 import {
   getStoreMeta,
   getStoreColor,
+  getCategoryColor,
   stripStoreBrand
 } from '../store-meta.js'
 
@@ -353,16 +344,14 @@ const storeFilterItems = computed(() => stores.value.map(s => {
   return {
     id: s.store_id,
     label: stripStoreBrand(s.name),
-    color: meta?.color || colorForId(s.store_id),
-    emoji: meta?.emoji || '🏬',
-    mascot: meta?.mascotName || 'Store'
+    color: meta?.color || colorForId(s.store_id)
   }
 }))
 
 const categoryFilterItems = computed(() => categories.value.map((cat, idx) => ({
   id: cat,
   label: cat,
-  color: colorForId(idx + 1)
+  color: getCategoryColor(cat) || colorForId(idx + 1)
 })))
 
 const categoryCriteria = computed(() => {

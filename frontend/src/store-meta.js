@@ -25,16 +25,16 @@ export const STORE_META = {
     id: 2,
     name: 'Birmas Kelapa Gading',
     shortName: 'Kelapa Gading',
-    color: '#3b82f6', // Blue
-    borderClass: 'border-blue-500/40',
-    bgClass: 'bg-blue-950/40',
-    badgeBg: 'bg-blue-500/20',
-    badgeText: 'text-blue-300',
-    textClass: 'text-blue-400',
+    color: '#00d4ff', // Electric Blue
+    borderClass: 'border-cyan-400/40',
+    bgClass: 'bg-cyan-950/40',
+    badgeBg: 'bg-cyan-500/20',
+    badgeText: 'text-cyan-300',
+    textClass: 'text-cyan-400',
     mascotName: 'Blue Mammoth',
     animal: 'Mammoth',
     emoji: '🦣',
-    iconColor: '#60a5fa',
+    iconColor: '#00d4ff',
     mascotImg: '/mascots/kelapa_gading_mammoth.png'
   },
   3: {
@@ -166,6 +166,37 @@ export function getStoreMascot(storeIdOrName) {
     color: '#94a3b8',
     mascotImg: ''
   }
+}
+
+/**
+ * Standard audit categories palette.
+ * User requirement: Aplikasi MUST be bright yellow (#facc15 / #eab308).
+ */
+export const CATEGORY_COLORS = {
+  'Aplikasi': '#facc15', // Bright Yellow
+  'Customer Service': '#22c55e', // Green
+  'Higiene Staf': '#00d4ff', // Electric Blue / Cyan
+  'Inventaris': '#f97316', // Orange
+  'Kebersihan Outlet': '#a855f7', // Purple
+  'Showcase': '#06b6d4', // Teal / Cyan
+  'Stock Opname': '#ec4899' // Pink
+}
+
+/**
+ * Get category color, strictly ensuring Aplikasi is bright yellow
+ */
+export function getCategoryColor(categoryName, fallback = null) {
+  if (!categoryName) return fallback
+  const str = String(categoryName).trim()
+  const lower = str.toLowerCase()
+  if (lower === 'aplikasi') return '#facc15' // Bright yellow
+
+  for (const [key, color] of Object.entries(CATEGORY_COLORS)) {
+    if (key.toLowerCase() === lower) {
+      return color
+    }
+  }
+  return fallback
 }
 
 /**

@@ -11,17 +11,6 @@
           {{ currentStoreMeta?.name || stripStoreBrand(options?.title?.text) || 'Store' }}
         </span>
       </div>
-      <span
-        v-if="currentStoreMeta"
-        class="text-[11px] font-semibold px-2 py-0.5 rounded-md border"
-        :style="{
-          backgroundColor: `${currentStoreMeta.color}15`,
-          borderColor: `${currentStoreMeta.color}40`,
-          color: currentStoreMeta.color
-        }"
-      >
-        {{ currentStoreMeta.mascotName }}
-      </span>
     </div>
 
     <div class="relative flex-1 min-h-0 w-full">
@@ -48,6 +37,7 @@ import StoreMascot from './StoreMascot.vue'
 import {
   getStoreMeta,
   getStoreColor,
+  getCategoryColor,
   stripStoreBrand
 } from '../store-meta.js'
 
@@ -133,8 +123,11 @@ function buildUrl(kind = 'monthly') {
 /** Deterministic color generator for fallback when dataset has no color. */
 function colorForLabel(label) {
   if (!label) return 'hsl(210,70%,50%)'
+  if (String(label).trim().toLowerCase() === 'aplikasi') return '#facc15'
   const storeColor = getStoreColor(label, null)
   if (storeColor) return storeColor
+  const catColor = getCategoryColor(label, null)
+  if (catColor) return catColor
   let sum = 0
   for (let i = 0; i < label.length; i++) sum += label.charCodeAt(i)
   const hue = (sum * 37) % 360
@@ -371,9 +364,16 @@ async function loadData() {
     // normalize dataset colors and bar backgrounds
     payload.datasets = (payload.datasets || []).map(ds => {
       const copy = { ...ds }
+      const isAplikasi = String(copy.label || '').trim().toLowerCase() === 'aplikasi'
       const storeColor = props.storeId == null ? getStoreColor(copy.label, null) : null
-      if (storeColor) {
+      const catColor = props.storeId != null ? getCategoryColor(copy.label, null) : null
+
+      if (isAplikasi) {
+        copy.borderColor = '#facc15'
+      } else if (storeColor) {
         copy.borderColor = storeColor
+      } else if (catColor) {
+        copy.borderColor = catColor
       } else if (!copy.borderColor) {
         copy.borderColor = colorForLabel(copy.label)
       }
