@@ -508,12 +508,40 @@ try:
             metrics_export["2026"][name] = m
 
         project_root = os.path.dirname(root_folder) if os.path.basename(root_folder) == "audit_birmas" else root_folder
-        data_dir = os.path.join(project_root, "src", "data")
-        os.makedirs(data_dir, exist_ok=True)
-        json_path = os.path.join(data_dir, "criteriaMetrics.json")
-        with open(json_path, "w", encoding="utf-8") as jf:
-            json.dump(metrics_export, jf, indent=2, ensure_ascii=False)
-        print(f"Exported criteriaMetrics.json to {json_path} (2025: {len(metrics_export['2025'])} items, 2026: {len(metrics_export['2026'])} items)")
+        
+        # Identify all potential frontend src/data directories
+        candidate_data_dirs = [
+            os.path.join(project_root, "src", "data"),
+            os.path.join(project_root, "frontend", "src", "data"),
+            os.path.join(project_root, "client", "src", "data"),
+        ]
+
+        # Also discover any directory containing store-meta.js
+        for dirpath, _, filenames in os.walk(project_root):
+            if "node_modules" in dirpath or ".git" in dirpath or "dist" in dirpath:
+                continue
+            if "store-meta.js" in filenames:
+                candidate_data_dirs.append(os.path.join(dirpath, "data"))
+
+        # Remove duplicates while preserving order
+        unique_dirs = []
+        for d in candidate_data_dirs:
+            if d not in unique_dirs:
+                unique_dirs.append(d)
+
+        exported_paths = []
+        for target_dir in unique_dirs:
+            # Check if parent src directory exists before writing, or if it's the primary project_root/src/data
+            parent_dir = os.path.dirname(target_dir)
+            if os.path.exists(parent_dir):
+                os.makedirs(target_dir, exist_ok=True)
+                json_path = os.path.join(target_dir, "criteriaMetrics.json")
+                with open(json_path, "w", encoding="utf-8") as jf:
+                    json.dump(metrics_export, jf, indent=2, ensure_ascii=False)
+                exported_paths.append(json_path)
+
+        for p in exported_paths:
+            print(f"Exported criteriaMetrics.json to {p} (2025: {len(metrics_export['2025'])} items, 2026: {len(metrics_export['2026'])} items)")
     except Exception as ex:
         print(f"Warning: could not export criteriaMetrics.json: {ex}", file=sys.stderr)
 
