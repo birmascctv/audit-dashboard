@@ -85,6 +85,17 @@ def color_for_id(entity_id):
     return COLOR_PALETTE[(int(entity_id) - 1) % len(COLOR_PALETTE)]
 
 
+CATEGORY_COLORS = {
+    "Aplikasi": "#FFFF00",
+    "Customer Service": "#00FF00",
+    "Higiene Staf": "#00FFFF",
+    "Inventaris": "#FF6E00",
+    "Kebersihan Outlet": "#FF00FF",
+    "Showcase": "#F48FB1",
+    "Stock Opname": "#FFFFFF",
+}
+
+
 def table_has_column(table, column):
     """Return True if SQLite table has the given column."""
     conn = get_conn()
@@ -561,7 +572,7 @@ def store_passrate(store_id):
                 datasets[cat] = {
                     "label": cat,
                     "data": [None] * len(labels),
-                    "borderColor": color_for_id(category_index.get(cat, 1)),
+                    "borderColor": CATEGORY_COLORS.get(cat, color_for_id(category_index.get(cat, 1))),
                     "fill": False
                 }
             lbl = f"{r['year']}-{int(r['month']):02d}"

@@ -34,9 +34,9 @@
           class="p-3.5 rounded-xl border flex flex-col justify-between shadow-lg relative overflow-hidden transition-all duration-200"
           :style="getCardStyle(r.data)"
         >
-          <!-- Subtle store color ambient glow -->
+          <!-- Prominent store color ambient glow -->
           <div
-            class="absolute -right-6 -top-6 w-24 h-24 rounded-full blur-2xl pointer-events-none opacity-30"
+            class="absolute -right-4 -top-4 w-32 h-32 rounded-full blur-2xl pointer-events-none opacity-50"
             :style="{ backgroundColor: r.data?.color || '#FFFF00' }"
           ></div>
 
@@ -331,9 +331,9 @@ function getCardStyle(store) {
   }
   const c = store.color
   return {
-    borderColor: `${c}80`,
-    background: `linear-gradient(180deg, ${c}20 0%, rgba(15, 23, 42, 0.96) 100%)`,
-    boxShadow: `0 8px 24px -4px ${c}25`
+    borderColor: `${c}99`,
+    background: `linear-gradient(155deg, ${c}40 0%, ${c}15 45%, rgba(15, 23, 42, 0.96) 100%)`,
+    boxShadow: `0 10px 28px -4px ${c}35, inset 0 1px 0 ${c}50`
   }
 }
 

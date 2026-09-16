@@ -73,16 +73,16 @@ export const STORE_META = {
     id: 5,
     name: 'Birmas Sudirman',
     shortName: 'Sudirman',
-    color: '#F48FB1', // Pink
-    borderClass: 'border-pink-400/40',
-    bgClass: 'bg-pink-950/40',
-    badgeBg: 'bg-pink-500/20',
-    badgeText: 'text-pink-300',
-    textClass: 'text-pink-400',
-    mascotName: 'Pink Bulldog',
+    color: '#0000FF', // Blue
+    borderClass: 'border-blue-500/50',
+    bgClass: 'bg-blue-950/40',
+    badgeBg: 'bg-blue-500/20',
+    badgeText: 'text-blue-300',
+    textClass: 'text-blue-400',
+    mascotName: 'Blue Bulldog',
     animal: 'Bulldog',
     emoji: '🐶',
-    iconColor: '#F48FB1',
+    iconColor: '#0000FF',
     mascotImg: '/mascots/sudirman_bulldog.png'
   },
   6: {
@@ -176,7 +176,7 @@ export function getStoreMascot(storeIdOrName) {
  * - Higiene Staf: #00FFFF (Kelapa Gading Cyan)
  * - Inventaris: #FF6E00 (Tebet Orange)
  * - Kebersihan Outlet: #FF00FF (Lebak Bulus Magenta)
- * - Showcase: #F48FB1 (Sudirman Pink)
+ * - Showcase: #0000FF (Sudirman Blue)
  * - Stock Opname: #FFFFFF (White / Super Light Grey)
  */
 export const CATEGORY_COLORS = {
@@ -185,7 +185,7 @@ export const CATEGORY_COLORS = {
   'Higiene Staf': '#00FFFF', // Cyan
   'Inventaris': '#FF6E00', // Orange
   'Kebersihan Outlet': '#FF00FF', // Magenta
-  'Showcase': '#F48FB1', // Pink
+  'Showcase': '#0000FF', // Blue
   'Stock Opname': '#FFFFFF' // White / Super Light Grey
 }
 
