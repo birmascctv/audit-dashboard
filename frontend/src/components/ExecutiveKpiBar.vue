@@ -20,7 +20,7 @@
       </div>
 
       <div class="text-xs text-slate-400 font-medium hidden sm:block">
-        Top 3 Outlets by Compliance Pass Rate
+        Top 3 Outlets by Grade Index
       </div>
     </div>
 
@@ -36,7 +36,7 @@
         >
           <!-- Prominent store color ambient glow -->
           <div
-            class="absolute -right-4 -top-4 w-32 h-32 rounded-full blur-2xl pointer-events-none opacity-50"
+            class="absolute -right-4 -top-4 w-36 h-36 rounded-full blur-2xl pointer-events-none opacity-70"
             :style="{ backgroundColor: r.data?.color || '#FFFF00' }"
           ></div>
 
@@ -64,12 +64,15 @@
               </div>
 
               <!-- Big Grade Index in Header Row -->
-              <div
-                class="flex-shrink-0 flex items-center justify-center min-w-[42px] h-[38px] px-2 rounded-lg text-2xl font-black tracking-tight border shadow-md"
-                :class="r.data?.grade?.badgeClass || 'bg-slate-800 text-white'"
-                title="Overall Store Grade"
-              >
-                {{ r.data?.grade?.grade || '—' }}
+              <div class="flex flex-col items-end flex-shrink-0">
+                <span class="text-[9px] font-mono uppercase tracking-wider text-slate-400 mb-0.5 font-bold">Grade</span>
+                <div
+                  class="flex items-center justify-center min-w-[50px] sm:min-w-[56px] h-[44px] sm:h-[50px] px-2.5 rounded-xl text-2xl sm:text-3xl font-black tracking-tight border shadow-lg"
+                  :class="r.data?.grade?.badgeClass || 'bg-slate-800 text-white'"
+                  title="Overall Store Grade"
+                >
+                  {{ r.data?.grade?.grade || '—' }}
+                </div>
               </div>
             </div>
 
@@ -79,7 +82,7 @@
               <StoreMascot v-if="r.data" :store="r.data.id" size="lg" class="flex-shrink-0" />
               <div v-else class="w-11 h-11 rounded-xl bg-slate-800 animate-pulse flex-shrink-0"></div>
 
-              <!-- Store Name & Compliance Rate -->
+              <!-- Store Name (without pass rate percentage) -->
               <div class="min-w-0 flex-1">
                 <h3
                   class="text-base sm:text-lg font-black text-white tracking-tight leading-snug break-words"
@@ -87,15 +90,6 @@
                 >
                   {{ r.data?.shortName || r.data?.name || (loading ? 'Loading...' : '—') }}
                 </h3>
-                <div class="flex items-center gap-1.5 mt-0.5">
-                  <span
-                    class="text-xs font-bold font-mono"
-                    :style="{ color: r.data?.color || '#FFFF00' }"
-                  >
-                    {{ r.data?.passRate != null ? r.data.passRate + '%' : '—' }}
-                  </span>
-                  <span class="text-[10px] text-slate-400 font-medium">Compliance</span>
-                </div>
               </div>
             </div>
           </div>
@@ -238,6 +232,15 @@ async function loadRanks() {
           const labels = Array.isArray(data.labels) ? data.labels : []
           let validIndices = labels.map((_, i) => i)
 
+          // Strict year filter: only keep indices matching props.year
+          if (props.year) {
+            const yearPrefix = `${props.year}-`
+            validIndices = validIndices.filter(idx => {
+              const label = labels[idx]
+              return label && String(label).startsWith(yearPrefix)
+            })
+          }
+
           if (props.periodFrom !== null || props.periodTo !== null) {
             validIndices = validIndices.filter(idx => {
               const label = labels[idx]
@@ -331,9 +334,9 @@ function getCardStyle(store) {
   }
   const c = store.color
   return {
-    borderColor: `${c}99`,
-    background: `linear-gradient(155deg, ${c}40 0%, ${c}15 45%, rgba(15, 23, 42, 0.96) 100%)`,
-    boxShadow: `0 10px 28px -4px ${c}35, inset 0 1px 0 ${c}50`
+    borderColor: `${c}cc`,
+    background: `linear-gradient(155deg, ${c}55 0%, ${c}25 40%, rgba(15, 23, 42, 0.94) 100%)`,
+    boxShadow: `0 12px 30px -4px ${c}45, inset 0 1px 1px ${c}60`
   }
 }
 

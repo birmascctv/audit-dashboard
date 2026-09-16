@@ -195,6 +195,40 @@ function filterPayloadByExcludeYear(payload) {
 }
 
 /**
+ * Filter payload to only keep labels/dataset points that belong to props.year.
+ */
+function filterPayloadByYear(payload) {
+  if (!props.year || !payload || !Array.isArray(payload.labels)) return payload
+
+  const yearPrefix = `${props.year}-`
+  const keepIdx = payload.labels
+    .map((lbl, idx) => ({ lbl, idx }))
+    .filter(x => String(x.lbl).startsWith(yearPrefix))
+    .map(x => x.idx)
+
+  if (!keepIdx.length) {
+    return {
+      labels: [],
+      datasets: payload.datasets ? payload.datasets.map(ds => ({ ...ds, data: [] })) : [],
+      average: [],
+      average_count: []
+    }
+  }
+
+  const newLabels = keepIdx.map(i => payload.labels[i])
+  const newDatasets = (payload.datasets || []).map(ds => {
+    const data = Array.isArray(ds.data) ? ds.data : []
+    const newData = keepIdx.map(i => (i < data.length ? data[i] : null))
+    return { ...ds, data: newData }
+  })
+
+  const result = { labels: newLabels, datasets: newDatasets }
+  if (Array.isArray(payload.average)) result.average = keepIdx.map(i => payload.average[i])
+  if (Array.isArray(payload.average_count)) result.average_count = keepIdx.map(i => payload.average_count[i])
+  return result
+}
+
+/**
  * Filter payload to only keep labels whose month (the "MM" part of a
  * "YYYY-MM" label) falls within [periodFrom, periodTo] inclusive.
  */
@@ -308,7 +342,8 @@ async function loadData() {
       const res = await axios.get(url)
       payload = res.data
 
-      // apply excludeYear + period (month range) filters client-side
+      // apply year + excludeYear + period (month range) filters client-side
+      payload = filterPayloadByYear(payload)
       payload = filterPayloadByExcludeYear(payload)
       payload = filterPayloadByPeriod(payload)
 

@@ -13,14 +13,34 @@ import sqlite3
 import sys
 import traceback
 import re
-import pandas as pd
 from datetime import datetime
 
 # -------------------------
 # Configuration
 # -------------------------
-root_folder = "/root/audit-dashboard/audit_birmas"
+root_folder = os.environ.get("AUDIT_ROOT", os.path.dirname(os.path.abspath(__file__)))
 db_path = os.path.join(root_folder, "audit_birmas.db")
+
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+import csv
+
+def read_audit_rows(file_path):
+    if HAS_PANDAS:
+        try:
+            df = pd.read_csv(file_path)
+            return df.to_dict(orient="records")
+        except Exception:
+            pass
+    rows = []
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            rows.append(r)
+    return rows
 
 FILTER_YEAR = None
 MONTH_RANGE = None
@@ -178,11 +198,22 @@ try:
     );
 
     CREATE TABLE IF NOT EXISTS criteria (
-        criteria_id INTEGER PRIMARY KEY,
+        criteria_id INTEGER PRIMARY KEY AUTOINCREMENT,
         year INTEGER NOT NULL,
         category TEXT NOT NULL,
         name TEXT NOT NULL,
         passing_grade REAL,
+        metrics TEXT,
+        UNIQUE(year, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS criteria2025 (
+        criteria_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        year INTEGER NOT NULL,
+        category TEXT NOT NULL,
+        name TEXT NOT NULL,
+        passing_grade REAL,
+        metrics TEXT,
         UNIQUE(year, name)
     );
 
@@ -193,9 +224,14 @@ try:
         score REAL,
         pass_fail TEXT,
         notes TEXT,
-        FOREIGN KEY (audit_id) REFERENCES audits(audit_id),
-        FOREIGN KEY (criteria_id) REFERENCES criteria(criteria_id)
+        FOREIGN KEY (audit_id) REFERENCES audits(audit_id)
     );
+
+    DROP VIEW IF EXISTS all_criteria;
+    CREATE VIEW all_criteria AS
+        SELECT criteria_id, year, category, name, passing_grade, metrics FROM criteria
+        UNION ALL
+        SELECT criteria_id, year, category, name, passing_grade, metrics FROM criteria2025;
 
     CREATE TABLE IF NOT EXISTS audit_summary (
         summary_id INTEGER PRIMARY KEY,
@@ -302,8 +338,15 @@ try:
     DELETE FROM store_monthly_median;
     DELETE FROM audits;
     DELETE FROM criteria;
+    DELETE FROM criteria2025;
     """)
     conn.commit()
+    try:
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('criteria', 'criteria2025');")
+        cursor.execute("INSERT OR IGNORE INTO sqlite_sequence (name, seq) VALUES ('criteria', 10000);")
+        conn.commit()
+    except Exception:
+        pass
     print("Old import data wiped and committed (ordered deletes).")
 
     # verify no FK violations remain
@@ -375,7 +418,7 @@ try:
     # -------------------------
     for store_id, year, month, file, file_path in audit_entries:
         try:
-            df = pd.read_csv(file_path)
+            rows = read_audit_rows(file_path)
         except Exception as e:
             print(f"ERROR reading CSV {file_path}: {e}", file=sys.stderr)
             continue
@@ -388,34 +431,63 @@ try:
         not_null_count = 0
         row_count = 0
 
-        for _, row in df.iterrows():
+        target_criteria_table = "criteria2025" if year == 2025 else "criteria"
+
+        for row in rows:
             row_count += 1
-            category = str(row.get("Category", "")).strip()
-            name = normalize_criteria_name(row.get("Criteria", ""))
-            if category.lower() in ["absensi", "maintenance"]:
+            category = str(row.get("Category", "") or "").strip()
+            name = normalize_criteria_name(row.get("Criteria", "") or "")
+            if not name or category.lower() in ["absensi", "maintenance"]:
                 continue
-            passing_grade = row.get("Passing Grade", None)
-            cursor.execute("INSERT OR IGNORE INTO criteria (year, category, name, passing_grade) VALUES (?,?,?,?)",
-                           (year, category, name, passing_grade))
-            criteria_row = cursor.execute("SELECT criteria_id FROM criteria WHERE year=? AND name=?", (year, name)).fetchone()
+
+            raw_pg = row.get("Passing Grade", None)
+            try:
+                passing_grade = float(raw_pg) if raw_pg is not None and str(raw_pg).strip() != "" else None
+            except (ValueError, TypeError):
+                passing_grade = None
+
+            raw_metrics = row.get("Metrics", None)
+            metrics_val = str(raw_metrics).strip() if raw_metrics is not None and str(raw_metrics).strip() != "" else None
+
+            cursor.execute(
+                f"INSERT OR IGNORE INTO {target_criteria_table} (year, category, name, passing_grade, metrics) VALUES (?,?,?,?,?)",
+                (year, category, name, passing_grade, metrics_val)
+            )
+            if metrics_val:
+                cursor.execute(
+                    f"UPDATE {target_criteria_table} SET metrics = ? WHERE year = ? AND name = ? AND (metrics IS NULL OR metrics = '')",
+                    (metrics_val, year, name)
+                )
+
+            criteria_row = cursor.execute(
+                f"SELECT criteria_id FROM {target_criteria_table} WHERE year=? AND name=?",
+                (year, name)
+            ).fetchone()
             criteria_id = safe_fetchone_first(criteria_row)
             if criteria_id is None:
                 print(f"WARNING: criteria_id missing for {name} (year {year})", file=sys.stderr)
                 continue
+
             raw_score = row.get("Score", None)
             try:
                 score_val = float(raw_score) if raw_score is not None and str(raw_score).strip() != "" else None
             except (ValueError, TypeError):
                 score_val = None
+
             pass_fail = row.get("Pass/Not Pass", None)
-            cursor.execute("INSERT INTO scores (audit_id, criteria_id, score, pass_fail, notes) VALUES (?,?,?,?,?)",
-                           (audit_id, criteria_id,
-                            round(score_val, 2) if score_val is not None else None,
-                            str(pass_fail) if pass_fail is not None else None,
-                            row.get("Infraction Details", None)))
+            pass_fail_str = str(pass_fail).strip() if pass_fail is not None else None
+            notes = row.get("Infraction Details", None)
+
+            cursor.execute(
+                "INSERT INTO scores (audit_id, criteria_id, score, pass_fail, notes) VALUES (?,?,?,?,?)",
+                (audit_id, criteria_id,
+                 round(score_val, 2) if score_val is not None else None,
+                 pass_fail_str,
+                 notes)
+            )
             if score_val is not None:
                 not_null_count += 1
-            if isinstance(pass_fail, str) and pass_fail.lower() == "pass":
+            if pass_fail_str and pass_fail_str.lower() == "pass":
                 passed_count += 1
 
         pass_rate = round((passed_count / not_null_count), 3) if not_null_count > 0 else None
@@ -443,7 +515,7 @@ try:
             SELECT sc.score
             FROM scores sc
             JOIN audits a ON sc.audit_id = a.audit_id
-            JOIN criteria c ON sc.criteria_id = c.criteria_id
+            JOIN all_criteria c ON sc.criteria_id = c.criteria_id
             WHERE a.store_id=? AND a.year=? AND a.month=?
               AND sc.score IS NOT NULL
               AND LOWER(c.category) != 'maintenance'
@@ -458,7 +530,7 @@ try:
         SELECT a.store_id, a.year, a.month, c.category
         FROM scores sc
         JOIN audits a ON sc.audit_id = a.audit_id
-        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        JOIN all_criteria c ON sc.criteria_id = c.criteria_id
         WHERE sc.score IS NOT NULL
           AND LOWER(c.category) != 'maintenance'
           AND LOWER(c.category) != 'absensi'
@@ -472,7 +544,7 @@ try:
             SELECT sc.score
             FROM scores sc
             JOIN audits a ON sc.audit_id = a.audit_id
-            JOIN criteria c ON sc.criteria_id = c.criteria_id
+            JOIN all_criteria c ON sc.criteria_id = c.criteria_id
             WHERE a.store_id=? AND a.year=? AND a.month=? AND c.category=? AND sc.score IS NOT NULL
         """, (store_id, year, month, category)).fetchall()
         scores = [r[0] for r in rows]
@@ -483,7 +555,7 @@ try:
             SELECT sc.score, c.passing_grade
             FROM scores sc
             JOIN audits a ON sc.audit_id = a.audit_id
-            JOIN criteria c ON sc.criteria_id = c.criteria_id
+            JOIN all_criteria c ON sc.criteria_id = c.criteria_id
             WHERE a.store_id=? AND a.year=? AND a.month=? AND c.category=? AND sc.score IS NOT NULL
         """, (store_id, year, month, category)).fetchall()
 
@@ -507,7 +579,7 @@ try:
             SELECT COUNT(*)
             FROM scores sc
             JOIN audits a ON sc.audit_id = a.audit_id
-            JOIN criteria c ON sc.criteria_id = c.criteria_id
+            JOIN all_criteria c ON sc.criteria_id = c.criteria_id
             WHERE a.store_id=? AND a.year=? AND a.month=? AND c.category=? AND LOWER(sc.pass_fail) = 'pass'
         """, (store_id, year, month, category)).fetchone()[0]
 
@@ -515,7 +587,7 @@ try:
             SELECT COUNT(*)
             FROM scores sc
             JOIN audits a ON sc.audit_id = a.audit_id
-            JOIN criteria c ON sc.criteria_id = c.criteria_id
+            JOIN all_criteria c ON sc.criteria_id = c.criteria_id
             WHERE a.store_id=? AND a.year=? AND a.month=? AND c.category=?
         """, (store_id, year, month, category)).fetchone()[0]
 
@@ -535,7 +607,7 @@ try:
         FROM scores sc
         JOIN audits a ON sc.audit_id = a.audit_id
         JOIN stores s ON a.store_id = s.store_id
-        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        JOIN all_criteria c ON sc.criteria_id = c.criteria_id
         WHERE LOWER(c.category) != 'maintenance'
           AND LOWER(c.category) != 'absensi'
           {audit_filter}
@@ -548,7 +620,7 @@ try:
             SELECT sc.score
             FROM scores sc
             JOIN audits a ON sc.audit_id = a.audit_id
-            JOIN criteria c ON sc.criteria_id = c.criteria_id
+            JOIN all_criteria c ON sc.criteria_id = c.criteria_id
             WHERE a.store_id=? AND c.category=? AND sc.score IS NOT NULL
         """, (store_id, category)).fetchall()]
         med = median(scores)
@@ -562,7 +634,7 @@ try:
         SELECT c.category
         FROM scores sc
         JOIN audits a ON sc.audit_id = a.audit_id
-        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        JOIN all_criteria c ON sc.criteria_id = c.criteria_id
         WHERE LOWER(c.category) != 'maintenance'
           AND LOWER(c.category) != 'absensi'
           {audit_filter}
@@ -575,7 +647,7 @@ try:
             SELECT sc.score
             FROM scores sc
             JOIN audits a ON sc.audit_id = a.audit_id
-            JOIN criteria c ON sc.criteria_id = c.criteria_id
+            JOIN all_criteria c ON sc.criteria_id = c.criteria_id
             WHERE c.category=? AND sc.score IS NOT NULL
         """, (category,)).fetchall()]
         med = median(scores)

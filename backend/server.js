@@ -1,12 +1,14 @@
 const express = require('express');
 const Database = require('better-sqlite3');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 
 // Point to your existing DB in audit_birmas
-const db = new Database('D:\\audit-dashboard\\audit_birmas\\audit_birmas.db');
+const dbPath = process.env.AUDIT_DB_PATH || path.join(__dirname, '..', 'audit_birmas', 'audit_birmas.db');
+const db = new Database(dbPath);
 
 // Utility: median calculation
 function median(values) {
@@ -25,7 +27,7 @@ app.get('/api/median/2025', (req, res) => {
     FROM scores sc
     JOIN audits a ON sc.audit_id = a.audit_id
     JOIN stores s ON a.store_id = s.store_id
-    JOIN criteria c ON sc.criteria_id = c.criteria_id
+    JOIN all_criteria c ON sc.criteria_id = c.criteria_id
     WHERE a.year = 2025
   `).all();
 
@@ -56,7 +58,7 @@ app.get('/api/median/others', (req, res) => {
     FROM scores sc
     JOIN audits a ON sc.audit_id = a.audit_id
     JOIN stores s ON a.store_id = s.store_id
-    JOIN criteria c ON sc.criteria_id = c.criteria_id
+    JOIN all_criteria c ON sc.criteria_id = c.criteria_id
     WHERE a.year != 2025
   `).all();
 

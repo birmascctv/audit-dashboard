@@ -15,7 +15,7 @@ const routes = [
     path: '/dashboard2025',
     name: 'Dashboard2025',
     component: Dashboard2025,
-    props: true
+    props: { year: 2025 }
   },
   {
     path: '/upload',

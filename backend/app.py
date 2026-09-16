@@ -63,16 +63,15 @@ def query_rows(sql, params=()):
 
 
 # Bright, high-contrast palette matching store assignments:
-# 1: Lebak Bulus (#FF00FF), 2: Kelapa Gading (#00FFFF), 3: Kuningan (#FFFF00),
-# 4: Kwitang (#00FF00), 5: Sudirman (#F48FB1), 6: Tebet (#FF6E00)
+# 1: Lebak Bulus (purple), 2: Kelapa Gading (blue), 3: Kuningan (yellow),
+# 4: Kwitang (green), 5: Sudirman (red), 6: Tebet (orange)
 COLOR_PALETTE = [
-    "#FF00FF",  # Store 1: Lebak Bulus (magenta)
-    "#00FFFF",  # Store 2: Kelapa Gading (cyan)
-    "#FFFF00",  # Store 3: Kuningan (yellow)
-    "#00FF00",  # Store 4: Kwitang (green)
-    "#F48FB1",  # Store 5: Sudirman (pink)
-    "#FF6E00",  # Store 6: Tebet (orange)
-    "#FFFFFF",  # Super light grey / white
+    "#a855f7",  # Store 1: Lebak Bulus (purple)
+    "#3b82f6",  # Store 2: Kelapa Gading (blue)
+    "#eab308",  # Store 3: Kuningan (yellow)
+    "#22c55e",  # Store 4: Kwitang (green)
+    "#ef4444",  # Store 5: Sudirman (red)
+    "#f97316",  # Store 6: Tebet (orange)
     "#06b6d4",  # cyan
     "#ec4899",  # pink
     "#84cc16",  # lime
@@ -83,17 +82,6 @@ COLOR_PALETTE = [
 def color_for_id(entity_id):
     """Deterministic, high-contrast color for a store/category id."""
     return COLOR_PALETTE[(int(entity_id) - 1) % len(COLOR_PALETTE)]
-
-
-CATEGORY_COLORS = {
-    "Aplikasi": "#FFFF00",
-    "Customer Service": "#00FF00",
-    "Higiene Staf": "#00FFFF",
-    "Inventaris": "#FF6E00",
-    "Kebersihan Outlet": "#FF00FF",
-    "Showcase": "#F48FB1",
-    "Stock Opname": "#FFFFFF",
-}
 
 
 def table_has_column(table, column):
@@ -274,17 +262,25 @@ def criteria_list():
         year = request.args.get("year", type=int)
         exclude_year = request.args.get("exclude_year", type=int)
 
+        table_name = "criteria"
         where = ""
         params = []
-        if year is not None:
+        if year == 2025:
+            table_name = "criteria2025" if table_has_column("criteria2025", "name") else "criteria"
             where = "WHERE year = ?"
             params.append(str(year))
+        elif year is not None:
+            where = "WHERE year = ?"
+            params.append(str(year))
+        elif exclude_year == 2025:
+            table_name = "criteria"
+            where = "WHERE year != 2025"
         elif exclude_year is not None:
             where = "WHERE year != ?"
             params.append(str(exclude_year))
 
-        include_unit = table_has_column("criteria", "unit")
-        include_metrics = table_has_column("criteria", "metrics")
+        include_unit = table_has_column(table_name, "unit")
+        include_metrics = table_has_column(table_name, "metrics")
 
         select_cols = ["criteria_id", "name", "category", "passing_grade"]
         if include_unit:
@@ -294,7 +290,7 @@ def criteria_list():
 
         rows = query_rows(f"""
             SELECT {', '.join(select_cols)}
-            FROM criteria
+            FROM {table_name}
             {where}
             ORDER BY category, name
         """, params)
@@ -390,17 +386,18 @@ def category_criterion_monthly(category, criterion):
         # resolve criterion id if a name was provided
         conn = get_conn()
         try:
+            crit_table = "all_criteria" if table_has_column("all_criteria", "name") else "criteria"
             crit_id = None
             if str(crit_raw).isdigit():
                 crit_id = int(crit_raw)
             else:
-                row = conn.execute("SELECT criteria_id FROM criteria WHERE name = ? AND category = ? LIMIT 1", (crit_raw, category)).fetchone()
+                row = conn.execute(f"SELECT criteria_id FROM {crit_table} WHERE name = ? AND category = ? LIMIT 1", (crit_raw, category)).fetchone()
                 if row:
                     crit_id = int(row["criteria_id"])
 
             if not crit_id:
                 # try to find by id in path param
-                row = conn.execute("SELECT criteria_id FROM criteria WHERE criteria_id = ? LIMIT 1", (crit_raw,)).fetchone()
+                row = conn.execute(f"SELECT criteria_id FROM {crit_table} WHERE criteria_id = ? LIMIT 1", (crit_raw,)).fetchone()
                 if row:
                     crit_id = int(row["criteria_id"])
 
@@ -572,7 +569,7 @@ def store_passrate(store_id):
                 datasets[cat] = {
                     "label": cat,
                     "data": [None] * len(labels),
-                    "borderColor": CATEGORY_COLORS.get(cat, color_for_id(category_index.get(cat, 1))),
+                    "borderColor": color_for_id(category_index.get(cat, 1)),
                     "fill": False
                 }
             lbl = f"{r['year']}-{int(r['month']):02d}"
@@ -604,6 +601,7 @@ def passing_grades():
         year = request.args.get("year", type=int)
         exclude_year = request.args.get("exclude_year", type=int)
 
+        table_name = "criteria2025" if year == 2025 and table_has_column("criteria2025", "name") else "criteria"
         where = ""
         params = []
         if year is not None:
@@ -613,18 +611,18 @@ def passing_grades():
             where = "WHERE year != ?"
             params.append(str(exclude_year))
 
-        include_unit = table_has_column("criteria", "unit")
+        include_unit = table_has_column(table_name, "unit")
         if include_unit:
             rows = query_rows(f"""
                 SELECT criteria_id, name, category, passing_grade, unit
-                FROM criteria
+                FROM {table_name}
                 {where}
                 ORDER BY category, name
             """, params)
         else:
             rows = query_rows(f"""
                 SELECT criteria_id, name, category, passing_grade
-                FROM criteria
+                FROM {table_name}
                 {where}
                 ORDER BY category, name
             """, params)
@@ -676,10 +674,11 @@ def drilldown():
     if not (store and year and month and category):
         return jsonify({"error": "missing params"}), 400
 
-    rows = query_rows("""
+    crit_table = "all_criteria" if table_has_column("all_criteria", "name") else ("criteria2025" if str(year) == "2025" and table_has_column("criteria2025", "name") else "criteria")
+    rows = query_rows(f"""
         SELECT c.name, c.passing_grade, sc.score, sc.pass_fail, sc.notes
         FROM scores sc
-        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        JOIN {crit_table} c ON sc.criteria_id = c.criteria_id
         JOIN audits a ON sc.audit_id = a.audit_id
         WHERE a.store_id=? AND a.year=? AND a.month=? AND c.category=?
         ORDER BY c.passing_grade ASC, c.name ASC
