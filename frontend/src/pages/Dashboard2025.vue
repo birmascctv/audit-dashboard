@@ -1,354 +1,429 @@
 <template>
-  <div class="store-ranks-panel mb-6 p-4 sm:p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl">
-    <!-- Header row: STORE RANKS with active Year -->
-    <div class="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800/80">
-      <div class="flex items-center gap-2.5">
-        <span class="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/30 text-amber-400 text-sm font-black shadow-inner">
-          🏆
-        </span>
-        <div class="flex items-center gap-2 flex-wrap">
-          <h2 class="text-base sm:text-lg font-black text-white tracking-wider uppercase">
-            STORE RANKS
-          </h2>
-          <span class="text-[11px] font-mono font-semibold px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-amber-500/30">
-            Year {{ year }}
-          </span>
-          <span v-if="periodLabel" class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-            {{ periodLabel }}
-          </span>
-        </div>
-      </div>
+  <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1400px] mx-auto pb-12">
+    <Header subtitle="Year 2025" />
 
-      <div class="text-xs text-slate-400 font-medium hidden sm:block">
-        Top 3 Outlets by Grade Index
+    <!-- STORE RANKS: Top 3 Outlets & Academic Grade Index (Year 2025) -->
+    <ExecutiveKpiBar
+      :year="2025"
+      :stores="stores"
+      :categories="categories"
+      :period-from="periodFrom"
+      :period-to="periodTo"
+    />
+
+    <!-- Criteria search + selection -->
+    <div id="criteria-section" class="controls-grid grid grid-cols-1 gap-4 md:grid-cols-3 mb-4">
+      <div class="controls-bar md:col-span-2">
+        <SectionHeader
+          text="Criteria Performance Trends (2025 Archive)"
+          description="Inspect month-by-month score trajectories for any selected 2025 audit criteria. The line chart plots store performance against the target passing grade (green line) and the overall average (red line). Use the date filters below to narrow the assessment period."
+        />
+
+        <label class="block text-sm mb-1.5 label-on-page font-medium">Select criteria</label>
+        <CriteriaSelect :criteria="criteria" v-model="selectedCriterionId" />
+
+        <div class="period-filter mt-3.5 flex items-center gap-2 flex-wrap">
+          <label class="text-sm label-on-page font-medium">Period:</label>
+          <select
+            v-model="periodFrom"
+            class="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-100 text-xs font-medium focus:outline-none focus:border-blue-500 shadow-sm"
+          >
+            <option :value="null">All</option>
+            <option v-for="(m, idx) in monthNames" :key="'from-' + idx" :value="idx + 1">{{ m }}</option>
+          </select>
+          <span class="text-xs label-on-page">to</span>
+          <select
+            v-model="periodTo"
+            class="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-100 text-xs font-medium focus:outline-none focus:border-blue-500 shadow-sm"
+          >
+            <option :value="null">All</option>
+            <option v-for="(m, idx) in monthNames" :key="'to-' + idx" :value="idx + 1">{{ m }}</option>
+          </select>
+        </div>
       </div>
     </div>
 
-    <!-- Responsive Layout: 3 Rank Cards (wider) + 1 Grade Index Info Card (narrower) -->
-    <div class="flex flex-col lg:flex-row items-stretch gap-3.5">
-      <!-- Ranks 1, 2, 3 Cards Grid (expanded width) -->
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 flex-1 min-w-0">
-        <div
-          v-for="r in rankList"
-          :key="'rank-' + r.rankNum"
-          class="p-3.5 rounded-xl border flex flex-col justify-between shadow-lg relative overflow-hidden transition-all duration-200"
-          :style="getCardStyle(r.data)"
-        >
-          <!-- Prominent store color ambient glow -->
-          <div
-            class="absolute -right-4 -top-4 w-36 h-36 rounded-full blur-2xl pointer-events-none opacity-70"
-            :style="{ backgroundColor: r.data?.color || '#FFFF00' }"
-          ></div>
+    <!-- Store filter for the line chart -->
+    <div class="store-filter-row mb-3">
+      <CheckboxFilterBar :items="storeFilterItems" v-model="selectedStores" all-label="All stores" />
+    </div>
 
-          <div class="relative z-10">
-            <!-- Rank Indicator & Grade Badge Header Row -->
-            <div class="flex items-center justify-between gap-2 mb-2.5">
-              <div class="flex items-center gap-1.5 min-w-0">
-                <span
-                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-black tracking-wider uppercase shadow-sm border flex-shrink-0"
-                  :style="{
-                    backgroundColor: (r.data?.color || '#94a3b8') + '22',
-                    borderColor: (r.data?.color || '#94a3b8') + '60',
-                    color: r.data?.color || '#FFFF00'
-                  }"
-                >
-                  <span>{{ r.medal }}</span>
-                  <span>{{ r.label }}</span>
-                </span>
-                <span
-                  class="text-[11px] font-bold tracking-wider uppercase truncate"
-                  :style="{ color: r.data?.color || '#94a3b8' }"
-                >
-                  {{ r.sublabel }}
-                </span>
-              </div>
+    <!-- Main chart area with right-side info panel -->
+    <div class="main-grid grid grid-cols-1 gap-4 md:grid-cols-3 md:items-stretch">
+      <!-- Chart column (spans 2/3 on md+) -->
+      <div class="chart-column md:col-span-2 flex flex-col">
+        <ChartCard
+          v-if="selectedCriterion"
+          :category="selectedCriterion.category"
+          :criterion="selectedCriterion.id"
+          type="line"
+          fill-height
+          :stores="stores"
+          :selected-stores="selectedStores"
+          @update:average="averageValue = $event"
+          :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
+          :options="{ title: { text: selectedCriterion.label } }"
+          :year="2025"
+          :period-from="periodFrom"
+          :period-to="periodTo"
+          :refresh-key="dataVersion"
+          :key="selectedCriterion.id"
+        />
+      </div>
 
-              <!-- Big Grade Index in Header Row -->
-              <div class="flex flex-col items-end flex-shrink-0">
-                <span class="text-[9px] font-mono uppercase tracking-wider text-slate-400 mb-0.5 font-bold">Grade</span>
-                <div
-                  class="flex items-center justify-center min-w-[50px] sm:min-w-[56px] h-[44px] sm:h-[50px] px-2.5 rounded-xl text-2xl sm:text-3xl font-black tracking-tight border shadow-lg"
-                  :class="r.data?.grade?.badgeClass || 'bg-slate-800 text-white'"
-                  title="Overall Store Grade"
-                >
-                  {{ r.data?.grade?.grade || '—' }}
-                </div>
-              </div>
+      <!-- Criteria Info Column (spans 1/3 on md+) -->
+      <aside class="info-column p-4 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 flex flex-col justify-between shadow-xl">
+        <div class="flex-1 flex flex-col min-h-0">
+          <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2.5">
+            <div>
+              <h3 class="text-lg font-bold text-white leading-tight">Chart Info</h3>
+              <p class="text-xs text-slate-400">Key metrics & criteria benchmarks</p>
             </div>
-
-            <!-- Mascot + Fully Readable Store Name Row -->
-            <div class="flex items-center gap-3 my-2">
-              <!-- Store Mascot Icon -->
-              <StoreMascot v-if="r.data" :store="r.data.id" size="lg" class="flex-shrink-0" />
-              <div v-else class="w-11 h-11 rounded-xl bg-slate-800 animate-pulse flex-shrink-0"></div>
-
-              <!-- Store Name (without pass rate percentage) -->
-              <div class="min-w-0 flex-1">
-                <h3
-                  class="text-base sm:text-lg font-black text-white tracking-tight leading-snug break-words"
-                  :title="r.data?.name"
-                >
-                  {{ r.data?.shortName || r.data?.name || (loading ? 'Loading...' : '—') }}
-                </h3>
-              </div>
-            </div>
+            <button
+              type="button"
+              @click="showDrilldown = true"
+              class="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+              title="Inspect store audit notes & infractions"
+            >
+              <span>Notes</span>
+              <span>🔍</span>
+            </button>
           </div>
 
-          <!-- Top 3 Categories with Grade Index -->
-          <div class="mt-3 pt-2.5 border-t border-slate-800/80 relative z-10 flex-1 flex flex-col justify-end">
-            <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5 flex items-center justify-between">
-              <span>Top 3 Categories</span>
-              <span class="text-[9px] font-medium text-slate-500">Grade</span>
+          <!-- Single Criteria Info View -->
+          <div class="space-y-3 flex-1 overflow-y-auto pr-1">
+            <!-- 2-Card KPI Grid: Passing Grade & Average -->
+            <div class="grid grid-cols-2 gap-2.5">
+              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex flex-col justify-between">
+                <span class="text-xs font-medium text-slate-400">Target</span>
+                <span class="text-lg font-bold text-emerald-400 leading-tight my-0.5">
+                  {{ passingGradeLabel(selectedCriterion) }}
+                </span>
+                <span class="text-[11px] text-slate-400">Passing Grade</span>
+              </div>
+              <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex flex-col justify-between">
+                <span class="text-xs font-medium text-slate-400">Average</span>
+                <span class="text-lg font-bold text-red-400 leading-tight my-0.5">
+                  {{ averageValue !== null ? averageValue : '—' }}
+                </span>
+                <span class="text-[11px] text-slate-400">Store Average</span>
+              </div>
             </div>
-            <div class="space-y-1.5">
-              <div
-                v-for="(cat, idx) in (r.data?.topCategories || [])"
-                :key="cat.name"
-                class="flex items-center justify-between px-2 py-1 rounded-lg bg-slate-950/70 border border-slate-800/80 text-xs hover:border-slate-700 transition-colors"
-              >
-                <div class="flex items-center gap-1.5 min-w-0 pr-1.5">
-                  <span class="w-3.5 text-center text-[10px] font-bold text-slate-400 font-mono">#{{ idx + 1 }}</span>
-                  <span class="font-semibold text-slate-200 truncate" :title="cat.name">{{ cat.name }}</span>
-                </div>
-                <span
-                  class="px-1.5 py-0.5 rounded text-[11px] font-black border flex-shrink-0"
-                  :class="cat.grade?.badgeClass || 'bg-slate-800 text-slate-200'"
-                >
-                  {{ cat.grade?.grade || '—' }}
+
+            <!-- Active Criteria Card -->
+            <div v-if="selectedCriterion" class="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Criteria Details</span>
+                <span class="text-xs font-mono font-medium text-purple-300 bg-purple-950/60 border border-purple-800/50 px-2 py-0.5 rounded-md">
+                  {{ selectedCriterion.category }}
                 </span>
               </div>
-              <div v-if="!r.data?.topCategories || !r.data.topCategories.length" class="text-xs text-slate-500 italic py-1.5 text-center">
-                No category audit data
+              <div class="text-sm font-semibold text-white leading-snug">
+                {{ selectedCriterion.label }}
+              </div>
+            </div>
+
+            <!-- Scoring Rubric / Metrics Definition from CSV -->
+            <div v-if="selectedCriterion && selectedCriterion.metrics" class="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+              <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
+                Scoring Rubric (CSV Definition)
+              </span>
+              <div class="text-xs text-slate-300 leading-relaxed whitespace-pre-line font-sans bg-slate-900/80 p-2.5 rounded-lg border border-slate-800/80">
+                {{ selectedCriterion.metrics }}
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Card 4: Grade Index Info (Narrower box, one index per row) -->
-      <div class="w-full lg:w-44 xl:w-48 flex-shrink-0 p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col justify-between shadow-lg">
-        <div>
-          <!-- Header -->
-          <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/80">
-            <div class="flex items-center gap-1.5 text-[11px] font-bold text-white uppercase tracking-wider">
-              <span>📐</span>
-              <span>GRADE INDEX</span>
-            </div>
-            <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-              Scale
+        <!-- Legend footer -->
+        <div class="pt-2.5 border-t border-slate-800 text-xs text-slate-400 flex items-center justify-between flex-shrink-0 mt-3">
+          <div class="flex items-center gap-3">
+            <span class="flex items-center gap-1.5">
+              <span class="w-3 h-1 bg-emerald-500 rounded-full inline-block"></span>
+              Passing Grade
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="w-3 h-1 bg-red-500 rounded-full inline-block"></span>
+              Store Average
             </span>
           </div>
+        </div>
+      </aside>
+    </div>
 
-          <!-- Academic Scale Guide: One index per row -->
-          <div class="space-y-1">
-            <div
-              v-for="item in gradeScaleItems"
-              :key="item.grade"
-              class="flex items-center justify-between px-2 py-0.5 rounded border text-[10px] font-mono leading-tight"
-              :class="item.bgClass"
-            >
-              <span class="font-black" :class="item.textClass">{{ item.grade }}</span>
-              <span class="text-slate-300 font-semibold text-[9px]">{{ item.score }}</span>
-            </div>
-          </div>
+    <!-- Category Pass Rate Section -->
+    <div id="category-passrate-section" class="passrate-section mt-10">
+      <SectionHeader
+        text="Category Pass Rate"
+        description="Analyze compliance percentages across stores for each audit category over time. The bar chart on the left illustrates monthly store achievement relative to the network average (red line), while the panel on the right details all active criteria monitored under this category."
+      />
+
+      <!-- Category selection tabs -->
+      <div class="category-tabs flex items-center gap-2 overflow-x-auto pb-2 mb-3">
+        <button
+          v-for="cat in categories"
+          :key="'tab-' + cat"
+          @click="selectedCategory = cat"
+          type="button"
+          :class="selectedCategory === cat ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/20' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'"
+          class="px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap cursor-pointer"
+        >
+          {{ cat }}
+        </button>
+      </div>
+
+      <div class="store-filter-row mb-3">
+        <CheckboxFilterBar :items="storeFilterItems" v-model="selectedStores" all-label="All stores" />
+      </div>
+
+      <!-- 2-Column Layout matching line chart -->
+      <div class="main-grid grid grid-cols-1 gap-4 md:grid-cols-3 md:items-stretch">
+        <!-- Left: Bar Chart -->
+        <div class="chart-column md:col-span-2 flex flex-col">
+          <ChartCard
+            v-if="selectedCategory"
+            :key="'passrate-' + selectedCategory"
+            :category="selectedCategory"
+            type="bar"
+            fill-height
+            :stores="stores"
+            :selected-stores="selectedStores"
+            :year="2025"
+            :period-from="periodFrom"
+            :period-to="periodTo"
+            :refresh-key="dataVersion"
+            :options="{ title: { text: selectedCategory + ' Compliance Rate' } }"
+          />
         </div>
 
-        <p class="text-[9px] text-slate-400 mt-2 text-center pt-1.5 border-t border-slate-800/80">
-          12-tier academic rubric
-        </p>
+        <!-- Right: Category Info & Criteria List -->
+        <aside class="info-column p-4 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 flex flex-col justify-between shadow-xl">
+          <div>
+            <div class="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+              <h3 class="text-lg font-semibold text-white">{{ selectedCategory }} Info</h3>
+              <span class="text-xs bg-purple-900/60 text-purple-300 px-2 py-0.5 rounded border border-purple-700/50">
+                {{ categoryCriteria.length }} criteria
+              </span>
+            </div>
+
+            <div class="mb-3">
+              <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                Criteria In This Category
+              </h4>
+              <div class="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+                <div
+                  v-for="c in categoryCriteria"
+                  :key="'cat-crit-' + c.id"
+                  class="p-2.5 rounded-lg bg-slate-800/80 border border-slate-700/80 text-xs hover:border-purple-500/50 transition-colors flex items-center justify-between gap-2"
+                >
+                  <div class="font-medium text-slate-100 leading-snug">{{ c.label }}</div>
+                  <span v-if="c.unit" class="text-[11px] text-slate-500 flex-shrink-0">{{ c.unit }}</span>
+                </div>
+                <div v-if="!categoryCriteria.length" class="text-xs text-slate-500 italic p-3">
+                  No criteria found for this category.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+            <span>Red line: Store Average</span>
+            <span class="w-3 h-1.5 bg-red-500 rounded-xs"></span>
+          </div>
+        </aside>
       </div>
     </div>
+
+    <!-- Store passing rate -->
+    <div id="store-passrate-section" class="storerate-section mt-10">
+      <SectionHeader
+        text="Store Pass Rate by Category"
+        description="See how each store performs across every category. Each chart below is one store, with a bar for every category's pass rate per month. The red dashed line is that store's average pass rate, so you can quickly spot which categories are above or below its own average."
+      />
+
+      <div class="category-filter-row mb-3">
+        <CheckboxFilterBar :items="categoryFilterItems" v-model="selectedCategoriesForStore" all-label="All categories" />
+      </div>
+
+      <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2 mt-2">
+        <ChartCard
+          v-for="s in stores"
+          :key="'storerate-' + s.store_id"
+          type="bar"
+          :store-id="s.store_id"
+          :selected-categories="selectedCategoriesForStore"
+          :year="2025"
+          :period-from="periodFrom"
+          :period-to="periodTo"
+          :refresh-key="dataVersion"
+          :options="{ title: { text: stripStoreBrand(s.name) } }"
+        />
+      </div>
+    </div>
+
+    <!-- Interactive Infraction & Auditor Notes Drilldown Modal -->
+    <DrilldownModal
+      :is-open="showDrilldown"
+      :stores="stores"
+      :categories="categories"
+      :initial-store-id="inspectStoreId || stores[0]?.store_id"
+      :initial-category="selectedCriterion?.category || 'Aplikasi'"
+      :initial-year="2025"
+      :initial-month="8"
+      @close="showDrilldown = false"
+    />
+
+    <!-- Quick Scroll Navigation (Back to Top / Back to Bottom) -->
+    <ScrollNavButtons />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import StoreMascot from './StoreMascot.vue'
+import Header from '../components/Header.vue'
+import CriteriaSelect from '../components/CriteriaSelect.vue'
+import ChartCard from '../components/ChartCard.vue'
+import SectionHeader from '../components/SectionHeader.vue'
+import CheckboxFilterBar from '../components/CheckboxFilterBar.vue'
+import ExecutiveKpiBar from '../components/ExecutiveKpiBar.vue'
+import DrilldownModal from '../components/DrilldownModal.vue'
+import ScrollNavButtons from '../components/ScrollNavButtons.vue'
 import {
-  STORE_META,
-  stripStoreBrand,
-  calculateAlphabetGrade
+  getStoreMeta,
+  getStoreColor,
+  getCategoryColor,
+  stripStoreBrand
 } from '../store-meta.js'
 
-const gradeScaleItems = [
-  { grade: 'Grade A', score: '100%', textClass: 'text-emerald-300', bgClass: 'bg-emerald-950/40 border-emerald-500/30' },
-  { grade: 'Grade A-', score: '≥ 91.7%', textClass: 'text-emerald-400', bgClass: 'bg-emerald-950/30 border-emerald-500/20' },
-  { grade: 'Grade B+', score: '≥ 83.3%', textClass: 'text-cyan-300', bgClass: 'bg-cyan-950/40 border-cyan-500/30' },
-  { grade: 'Grade B', score: '≥ 75.0%', textClass: 'text-blue-300', bgClass: 'bg-blue-950/40 border-blue-500/30' },
-  { grade: 'Grade B-', score: '≥ 66.7%', textClass: 'text-blue-400', bgClass: 'bg-blue-950/30 border-blue-600/20' },
-  { grade: 'Grade C+', score: '≥ 56.7%', textClass: 'text-amber-300', bgClass: 'bg-amber-950/40 border-amber-500/30' },
-  { grade: 'Grade C', score: '≥ 50.0%', textClass: 'text-yellow-300', bgClass: 'bg-yellow-950/40 border-yellow-500/30' },
-  { grade: 'Grade C-', score: '≥ 46.7%', textClass: 'text-amber-400', bgClass: 'bg-amber-950/30 border-amber-600/20' },
-  { grade: 'Grade D+', score: '≥ 38.3%', textClass: 'text-orange-300', bgClass: 'bg-orange-950/40 border-orange-500/30' },
-  { grade: 'Grade D', score: '≥ 25.0%', textClass: 'text-orange-400', bgClass: 'bg-orange-950/30 border-orange-600/20' },
-  { grade: 'Grade D-', score: '≥ 12.3%', textClass: 'text-rose-400', bgClass: 'bg-rose-950/30 border-rose-700/20' },
-  { grade: 'Grade E', score: '< 12.3%', textClass: 'text-rose-500', bgClass: 'bg-rose-950/50 border-rose-500/30' }
-]
+function colorForId(id) {
+  return getStoreColor(id)
+}
 
 const props = defineProps({
-  year: { type: [Number, String], default: 2026 },
-  stores: { type: Array, default: () => [] },
-  periodFrom: { type: [Number, String], default: null },
-  periodTo: { type: [Number, String], default: null }
+  year: { type: Number, default: 2025 }
 })
 
-const loading = ref(false)
-const rankedStores = ref([])
+const criteria = ref([])
+const categories = ref([])
+const stores = ref([])
+const selectedStores = ref([])
+const selectedCategoriesForStore = ref([])
+const selectedCategory = ref('')
+const averageValue = ref(null)
+const selectedCriterionId = ref(null)
+const dataVersion = ref(0)
+const periodFrom = ref(null)
+const periodTo = ref(null)
+const showDrilldown = ref(false)
+const inspectStoreId = ref(null)
+
+function handleInspectStore(storeId) {
+  inspectStoreId.value = storeId
+  showDrilldown.value = true
+}
 
 const monthNames = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
-  'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
 ]
 
-const periodLabel = computed(() => {
-  if (props.periodFrom && props.periodTo) {
-    const from = monthNames[Number(props.periodFrom) - 1] || props.periodFrom
-    const to = monthNames[Number(props.periodTo) - 1] || props.periodTo
-    return `${from} – ${to}`
+// Safeguard period range selection from inversions
+watch(periodFrom, (newFrom) => {
+  if (newFrom !== null && periodTo.value !== null && periodTo.value < newFrom) {
+    periodTo.value = newFrom
   }
-  return ''
+})
+watch(periodTo, (newTo) => {
+  if (newTo !== null && periodFrom.value !== null && periodFrom.value > newTo) {
+    periodFrom.value = newTo
+  }
 })
 
-async function loadRanks() {
-  loading.value = true
-  try {
-    const targetStores = props.stores.length ? props.stores : Object.values(STORE_META)
-    const results = await Promise.all(
-      targetStores.map(async (s) => {
-        const storeId = s.store_id ?? s.id
-        const meta = STORE_META[storeId] || {
-          id: storeId,
-          name: s.name,
-          shortName: stripStoreBrand(s.name),
-          color: '#3b82f6',
-          mascotName: 'Outlet'
-        }
-
-        try {
-          const res = await fetch(`/api/store/${storeId}/passrate?year=${props.year}`)
-          if (!res.ok) throw new Error(`HTTP ${res.status}`)
-          const data = await res.json()
-
-          const labels = Array.isArray(data.labels) ? data.labels : []
-          let validIndices = labels.map((_, i) => i)
-
-          // Strict year filter: only keep indices matching props.year
-          if (props.year) {
-            const yearPrefix = `${props.year}-`
-            validIndices = validIndices.filter(idx => {
-              const label = labels[idx]
-              return label && String(label).startsWith(yearPrefix)
-            })
-          }
-
-          if (props.periodFrom !== null || props.periodTo !== null) {
-            validIndices = validIndices.filter(idx => {
-              const label = labels[idx]
-              if (!label) return true
-              const monthNum = parseInt(label.split('-')[1], 10)
-              if (props.periodFrom !== null && monthNum < props.periodFrom) return false
-              if (props.periodTo !== null && monthNum > props.periodTo) return false
-              return true
-            })
-          }
-
-          const categories = (data.datasets || []).map(ds => {
-            const seriesData = validIndices.map(i => ds.data?.[i]).filter(v => v !== null && v !== undefined)
-            let avg = 0
-            if (seriesData.length > 0) {
-              avg = seriesData.reduce((acc, val) => acc + Number(val), 0) / seriesData.length
-            }
-            const passRate = Math.round(avg * 1000) / 10
-            return {
-              name: ds.label,
-              passRate,
-              grade: calculateAlphabetGrade(passRate)
-            }
-          })
-
-          // Extract top 3 performing categories
-          const topCategories = [...categories]
-            .sort((a, b) => b.passRate - a.passRate)
-            .slice(0, 3)
-
-          const catAverages = categories.map(c => c.passRate)
-          let storeOverallAvg = 0
-          if (catAverages.length > 0) {
-            storeOverallAvg = Math.round((catAverages.reduce((a, b) => a + b, 0) / catAverages.length) * 10) / 10
-          }
-
-          return {
-            id: storeId,
-            name: meta.name,
-            shortName: meta.shortName,
-            color: meta.color,
-            mascotName: meta.mascotName,
-            passRate: storeOverallAvg,
-            grade: calculateAlphabetGrade(storeOverallAvg),
-            topCategories,
-            hasData: categories.length > 0 && catAverages.some(v => v > 0)
-          }
-        } catch (err) {
-          return {
-            id: storeId,
-            name: meta.name,
-            shortName: meta.shortName,
-            color: meta.color,
-            mascotName: meta.mascotName,
-            passRate: 0,
-            grade: calculateAlphabetGrade(null),
-            topCategories: [],
-            hasData: false
-          }
-        }
-      })
-    )
-
-    // Sort descending by pass rate
-    rankedStores.value = results
-      .filter(s => s.hasData || s.passRate > 0)
-      .sort((a, b) => b.passRate - a.passRate)
-  } catch (e) {
-    console.error('Failed to load store ranks', e)
-  } finally {
-    loading.value = false
-  }
-}
-
-const rank1 = computed(() => rankedStores.value[0] || null)
-const rank2 = computed(() => rankedStores.value[1] || null)
-const rank3 = computed(() => rankedStores.value[2] || null)
-
-const rankList = computed(() => [
-  { rankNum: 1, medal: '🥇', label: 'RANK 1', sublabel: 'Leader', data: rank1.value },
-  { rankNum: 2, medal: '🥈', label: 'RANK 2', sublabel: 'Runner-Up', data: rank2.value },
-  { rankNum: 3, medal: '🥉', label: 'RANK 3', sublabel: 'Top 3', data: rank3.value }
-])
-
-function getCardStyle(store) {
-  if (!store || !store.color) {
-    return {
-      borderColor: 'rgba(51, 65, 85, 0.8)',
-      background: 'rgba(15, 23, 42, 0.9)'
-    }
-  }
-  const c = store.color
+const storeFilterItems = computed(() => stores.value.map(s => {
+  const meta = getStoreMeta(s.store_id)
   return {
-    borderColor: `${c}cc`,
-    background: `linear-gradient(155deg, ${c}55 0%, ${c}25 40%, rgba(15, 23, 42, 0.94) 100%)`,
-    boxShadow: `0 12px 30px -4px ${c}45, inset 0 1px 1px ${c}60`
+    id: s.store_id,
+    label: stripStoreBrand(s.name),
+    color: meta?.color || colorForId(s.store_id)
   }
+}))
+
+const categoryFilterItems = computed(() => categories.value.map((cat, idx) => ({
+  id: cat,
+  label: cat,
+  color: getCategoryColor(cat) || colorForId(idx + 1)
+})))
+
+const categoryCriteria = computed(() => {
+  if (!selectedCategory.value) return []
+  return criteria.value.filter(c => c.category === selectedCategory.value)
+})
+
+async function loadLookups() {
+  const [critRes, catRes, storesRes] = await Promise.all([
+    fetch('/api/criteria?year=2025'),
+    fetch('/api/categories'),
+    fetch('/api/stores')
+  ])
+  try {
+    criteria.value = await critRes.json()
+  } catch (e) { criteria.value = [] }
+  try {
+    categories.value = await catRes.json()
+  } catch (e) { categories.value = [] }
+  try {
+    stores.value = await storesRes.json()
+  } catch (e) { stores.value = [] }
 }
 
-watch(
-  [() => props.year, () => props.stores, () => props.periodFrom, () => props.periodTo],
-  () => {
-    loadRanks()
-  },
-  { deep: true }
-)
-
-onMounted(() => {
-  loadRanks()
+onMounted(async () => {
+  await loadLookups()
+  selectedStores.value = stores.value.map(s => s.store_id)
+  selectedCategoriesForStore.value = categories.value.slice()
+  if (!selectedCriterionId.value && criteria.value.length) {
+    selectedCriterionId.value = criteria.value[0].id
+  }
+  if (!selectedCategory.value && categories.value.length) {
+    selectedCategory.value = categories.value[0]
+  }
 })
+
+const selectedCriterion = computed(() => {
+  return criteria.value.find(c => c.id === selectedCriterionId.value) || null
+})
+
+function categoryPassingGradeFor(categoryName) {
+  if (!selectedCriterion.value || selectedCriterion.value.category !== categoryName) return null
+  const val = selectedCriterion.value.passing_grade
+  return (val === null || val === undefined) ? null : Number(val)
+}
+
+function passingGradeLabel(criterion) {
+  if (!criterion) return 'No threshold available'
+  const val = criterion.passing_grade
+  if (val === null || val === undefined) return 'No threshold available'
+  const unit = criterion.unit || ''
+  return unit ? `${val}${unit === 'percent' || unit === '%' ? '%' : ' ' + unit}` : String(val)
+}
 </script>
+
+<style scoped>
+.page-gutter {
+  padding-top: 6.5rem;
+}
+.main-grid {
+  margin-top: 0.5rem;
+}
+.chart-column,
+.info-column {
+  height: 460px;
+}
+#criteria-section,
+#category-passrate-section,
+#store-passrate-section {
+  scroll-margin-top: 6.5rem;
+}
+.label-on-page {
+  color: #94a3b8;
+}
+</style>
