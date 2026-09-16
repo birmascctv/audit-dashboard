@@ -107,36 +107,31 @@ try:
     cursor.execute("PRAGMA foreign_keys = ON;")
 
     # -------------------------
-    # Detect if existing scores FK references criteria_old
-    # If so, recreate scores to reference criteria instead.
+    # Detect if existing scores FK references criteria or criteria_old.
+    # If so, recreate scores referencing ONLY audits(audit_id) so that
+    # criteria2025 (year 2025) and criteria (year 2026) can both link scores.
     # -------------------------
-    def scores_references_criteria_old():
+    def scores_has_restrictive_criteria_fk():
         try:
             fk_rows = cursor.execute("PRAGMA foreign_key_list('scores')").fetchall()
-            # PRAGMA foreign_key_list returns rows where the 3rd column is the referenced table name
             for r in fk_rows:
-                # r format: (id, seq, table, from, to, on_update, on_delete, match)
-                if len(r) >= 3 and r[2] == 'criteria_old':
+                if len(r) >= 3 and r[2] in ('criteria', 'criteria_old'):
                     return True
             return False
         except sqlite3.OperationalError:
-            # scores table may not exist yet
             return False
 
-    if scores_references_criteria_old():
-        print("Detected scores -> criteria_old foreign key. Repairing schema to reference criteria.")
-        # Temporarily disable FK enforcement to perform schema change
+    if scores_has_restrictive_criteria_fk():
+        print("Detected scores -> criteria/criteria_old foreign key. Repairing schema to decouple criteria table FK.")
         cursor.execute("PRAGMA foreign_keys = OFF;")
         conn.commit()
 
-        # Rename existing scores to scores_old (if exists)
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scores';")
         if cursor.fetchone():
             cursor.execute("ALTER TABLE scores RENAME TO scores_old;")
             conn.commit()
             print("Renamed existing scores -> scores_old")
 
-        # Create new scores table referencing criteria(criteria_id)
         cursor.executescript("""
         CREATE TABLE IF NOT EXISTS scores (
             score_id INTEGER PRIMARY KEY,
@@ -145,35 +140,39 @@ try:
             score REAL,
             pass_fail TEXT,
             notes TEXT,
-            FOREIGN KEY (audit_id) REFERENCES audits(audit_id),
-            FOREIGN KEY (criteria_id) REFERENCES criteria(criteria_id)
+            FOREIGN KEY (audit_id) REFERENCES audits(audit_id)
         );
         """)
         conn.commit()
-        print("Created new scores table referencing criteria(criteria_id).")
+        print("Created new scores table without restrictive criteria FK.")
 
-        # If scores_old exists, copy rows across (criteria_id values are preserved)
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scores_old';")
         if cursor.fetchone():
-            # Copy rows where columns match; ignore conflicts
             cursor.executescript("""
             INSERT OR IGNORE INTO scores (score_id, audit_id, criteria_id, score, pass_fail, notes)
               SELECT score_id, audit_id, criteria_id, score, pass_fail, notes FROM scores_old;
             """)
             conn.commit()
-            print("Copied rows from scores_old into new scores table (if any).")
+            print("Copied rows from scores_old into new scores table.")
 
-            # Drop the old table
             cursor.executescript("""
             DROP TABLE IF EXISTS scores_old;
             """)
             conn.commit()
             print("Dropped scores_old.")
 
-        # Re-enable foreign keys
         cursor.execute("PRAGMA foreign_keys = ON;")
         conn.commit()
         print("Foreign key enforcement re-enabled after schema repair.")
+
+    # Ensure criteria has metrics column if it existed previously
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='criteria';")
+    if cursor.fetchone():
+        cursor.execute("PRAGMA table_info('criteria')")
+        crit_cols = [r[1] for r in cursor.fetchall()]
+        if "metrics" not in crit_cols:
+            cursor.execute("ALTER TABLE criteria ADD COLUMN metrics TEXT")
+            conn.commit()
 
     # -------------------------
     # Create schema (idempotent) and commit
@@ -342,8 +341,7 @@ try:
     """)
     conn.commit()
     try:
-        cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('criteria', 'criteria2025');")
-        cursor.execute("INSERT OR IGNORE INTO sqlite_sequence (name, seq) VALUES ('criteria', 10000);")
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('criteria', 'criteria2025', 'scores', 'audits');")
         conn.commit()
     except Exception:
         pass
@@ -414,6 +412,96 @@ try:
     print(f"Found {len(audit_entries)} CSV audit files to import.")
 
     # -------------------------
+    # Seed standard criteria using Sudirman CSV as baseline
+    # -------------------------
+    def find_reference_csv(target_year):
+        sudirman_dir = None
+        for item in os.listdir(root_folder):
+            if "sudirman" in item.lower() and os.path.isdir(os.path.join(root_folder, item)):
+                sudirman_dir = os.path.join(root_folder, item)
+                break
+        if sudirman_dir:
+            y_dir = os.path.join(sudirman_dir, str(target_year))
+            if os.path.isdir(y_dir):
+                for m in sorted(os.listdir(y_dir), reverse=True):
+                    m_path = os.path.join(y_dir, m)
+                    if os.path.isdir(m_path):
+                        for f in sorted(os.listdir(m_path), reverse=True):
+                            if f.lower().endswith(".csv"):
+                                return os.path.join(m_path, f)
+        for entry in audit_entries:
+            if entry[1] == target_year:
+                return entry[4]
+        return None
+
+    ref_2025 = find_reference_csv(2025)
+    ref_2026 = find_reference_csv(2026)
+
+    def seed_from_csv(csv_path, target_tbl, yr):
+        if not csv_path or not os.path.exists(csv_path):
+            return
+        print(f"Seeding standard criteria for year {yr} from baseline: {csv_path}")
+        rows = read_audit_rows(csv_path)
+        for r in rows:
+            cat = str(r.get("Category", "") or "").strip()
+            name = normalize_criteria_name(r.get("Criteria", "") or "")
+            if not name or cat.lower() in ["absensi", "maintenance"]:
+                continue
+            raw_pg = r.get("Passing Grade", None)
+            try:
+                pg = float(raw_pg) if raw_pg is not None and str(raw_pg).strip() != "" else None
+            except Exception:
+                pg = None
+            raw_m = r.get("Metrics", None)
+            m_val = str(raw_m).strip() if raw_m is not None and str(raw_m).strip() != "" else None
+            cursor.execute(
+                f"INSERT OR IGNORE INTO {target_tbl} (year, category, name, passing_grade, metrics) VALUES (?,?,?,?,?)",
+                (yr, cat, name, pg, m_val)
+            )
+
+    seed_from_csv(ref_2025, "criteria2025", 2025)
+    seed_from_csv(ref_2026, "criteria", 2026)
+
+    # Ingest any additional store-specific criteria from other CSVs so no audit items are missed
+    for store_id, year, month, file, file_path in audit_entries:
+        target_tbl = "criteria2025" if year == 2025 else "criteria"
+        try:
+            rows = read_audit_rows(file_path)
+            for r in rows:
+                cat = str(r.get("Category", "") or "").strip()
+                name = normalize_criteria_name(r.get("Criteria", "") or "")
+                if not name or cat.lower() in ["absensi", "maintenance"]:
+                    continue
+                raw_pg = r.get("Passing Grade", None)
+                try:
+                    pg = float(raw_pg) if raw_pg is not None and str(raw_pg).strip() != "" else None
+                except Exception:
+                    pg = None
+                raw_m = r.get("Metrics", None)
+                m_val = str(raw_m).strip() if raw_m is not None and str(raw_m).strip() != "" else None
+                cursor.execute(
+                    f"INSERT OR IGNORE INTO {target_tbl} (year, category, name, passing_grade, metrics) VALUES (?,?,?,?,?)",
+                    (year, cat, name, pg, m_val)
+                )
+                if m_val:
+                    cursor.execute(
+                        f"UPDATE {target_tbl} SET metrics = ? WHERE year = ? AND name = ? AND (metrics IS NULL OR metrics = '')",
+                        (m_val, year, name)
+                    )
+        except Exception:
+            pass
+
+    conn.commit()
+
+    # Pre-cache criteria IDs for fast score insertion
+    cursor.execute("SELECT criteria_id, name FROM criteria2025 WHERE year = 2025;")
+    criteria_map_2025 = {row[1]: row[0] for row in cursor.fetchall()}
+
+    cursor.execute("SELECT criteria_id, name FROM criteria WHERE year = 2026;")
+    criteria_map_2026 = {row[1]: row[0] for row in cursor.fetchall()}
+    print(f"Seeded criteria: {len(criteria_map_2025)} criteria for 2025, {len(criteria_map_2026)} criteria for 2026.")
+
+    # -------------------------
     # Insert audits and scores
     # -------------------------
     for store_id, year, month, file, file_path in audit_entries:
@@ -431,7 +519,7 @@ try:
         not_null_count = 0
         row_count = 0
 
-        target_criteria_table = "criteria2025" if year == 2025 else "criteria"
+        crit_map = criteria_map_2025 if year == 2025 else criteria_map_2026
 
         for row in rows:
             row_count += 1
@@ -440,32 +528,8 @@ try:
             if not name or category.lower() in ["absensi", "maintenance"]:
                 continue
 
-            raw_pg = row.get("Passing Grade", None)
-            try:
-                passing_grade = float(raw_pg) if raw_pg is not None and str(raw_pg).strip() != "" else None
-            except (ValueError, TypeError):
-                passing_grade = None
-
-            raw_metrics = row.get("Metrics", None)
-            metrics_val = str(raw_metrics).strip() if raw_metrics is not None and str(raw_metrics).strip() != "" else None
-
-            cursor.execute(
-                f"INSERT OR IGNORE INTO {target_criteria_table} (year, category, name, passing_grade, metrics) VALUES (?,?,?,?,?)",
-                (year, category, name, passing_grade, metrics_val)
-            )
-            if metrics_val:
-                cursor.execute(
-                    f"UPDATE {target_criteria_table} SET metrics = ? WHERE year = ? AND name = ? AND (metrics IS NULL OR metrics = '')",
-                    (metrics_val, year, name)
-                )
-
-            criteria_row = cursor.execute(
-                f"SELECT criteria_id FROM {target_criteria_table} WHERE year=? AND name=?",
-                (year, name)
-            ).fetchone()
-            criteria_id = safe_fetchone_first(criteria_row)
+            criteria_id = crit_map.get(name)
             if criteria_id is None:
-                print(f"WARNING: criteria_id missing for {name} (year {year})", file=sys.stderr)
                 continue
 
             raw_score = row.get("Score", None)

@@ -117,6 +117,9 @@ function buildUrl(kind = 'monthly') {
   if (props.year) {
     url += (url.includes('?') ? '&' : '?') + `year=${props.year}`
   }
+  if (props.excludeYear) {
+    url += (url.includes('?') ? '&' : '?') + `exclude_year=${props.excludeYear}`
+  }
   return url
 }
 
