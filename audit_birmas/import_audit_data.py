@@ -13,6 +13,7 @@ import sqlite3
 import sys
 import traceback
 import re
+import json
 from datetime import datetime
 
 # -------------------------
@@ -492,6 +493,29 @@ try:
             pass
 
     conn.commit()
+
+    # -------------------------
+    # Auto-export criteriaMetrics.json for frontend build
+    # -------------------------
+    try:
+        metrics_export = {"2025": {}, "2026": {}}
+        c25 = cursor.execute("SELECT name, metrics FROM criteria2025 WHERE metrics IS NOT NULL AND metrics != ''").fetchall()
+        for name, m in c25:
+            metrics_export["2025"][name] = m
+
+        c26 = cursor.execute("SELECT name, metrics FROM criteria WHERE metrics IS NOT NULL AND metrics != ''").fetchall()
+        for name, m in c26:
+            metrics_export["2026"][name] = m
+
+        project_root = os.path.dirname(root_folder) if os.path.basename(root_folder) == "audit_birmas" else root_folder
+        data_dir = os.path.join(project_root, "src", "data")
+        os.makedirs(data_dir, exist_ok=True)
+        json_path = os.path.join(data_dir, "criteriaMetrics.json")
+        with open(json_path, "w", encoding="utf-8") as jf:
+            json.dump(metrics_export, jf, indent=2, ensure_ascii=False)
+        print(f"Exported criteriaMetrics.json to {json_path} (2025: {len(metrics_export['2025'])} items, 2026: {len(metrics_export['2026'])} items)")
+    except Exception as ex:
+        print(f"Warning: could not export criteriaMetrics.json: {ex}", file=sys.stderr)
 
     # Pre-cache criteria IDs for fast score insertion
     cursor.execute("SELECT criteria_id, name FROM criteria2025 WHERE year = 2025;")
