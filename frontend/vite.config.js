@@ -142,7 +142,8 @@ function localAuditApiPlugin() {
 
             let critId = parseInt(critRaw, 10)
             if (isNaN(critId)) {
-              const findStmt = db.prepare('SELECT criteria_id FROM all_criteria WHERE name = ? AND category = ? LIMIT 1')
+              const table = year === 2025 ? 'criteria2025' : 'all_criteria'
+              const findStmt = db.prepare(`SELECT criteria_id FROM ${table} WHERE name = ? AND category = ? LIMIT 1`)
               const found = findStmt.get(critRaw, cat)
               if (found) critId = found.criteria_id
             }

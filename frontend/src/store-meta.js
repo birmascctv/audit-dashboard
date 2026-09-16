@@ -1,4 +1,6 @@
 // src/store-meta.js
+import criteriaMetrics from './data/criteriaMetrics.json'
+
 /**
  * Centralized store metadata, color definitions, animal mascots,
  * and academic alphabet grading scale for Birmas Audit.
@@ -284,3 +286,29 @@ export function calculateAlphabetGrade(rawScore) {
     badgeClass: `border font-bold ${badgeClass}`
   }
 }
+
+/**
+ * Robustly resolve scoring metric definition text for a given year & criteria label.
+ * Handles exact matches, trailing index strips like " (1)", and case insensitivity.
+ */
+export function lookupCriteriaMetric(year, label) {
+  if (!label) return null
+  const yrStr = String(year)
+  const yrData = criteriaMetrics[yrStr] || {}
+
+  // 1. Direct exact lookup
+  if (yrData[label]) return yrData[label]
+
+  // 2. Strip trailing parenthesized numbers e.g. "Meja (1)" -> "Meja"
+  const clean = label.replace(/\s*\(\d+\)\s*$/, '').trim()
+  if (yrData[clean]) return yrData[clean]
+
+  // 3. Case-insensitive fallback
+  const lower = clean.toLowerCase()
+  for (const [k, v] of Object.entries(yrData)) {
+    if (k.toLowerCase() === lower) return v
+  }
+
+  return null
+}
+

@@ -124,12 +124,15 @@
             </div>
 
             <!-- Scoring Rubric / Metrics Definition from CSV -->
-            <div v-if="selectedCriterion && selectedCriterion.metrics" class="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+            <div v-if="selectedCriterion" class="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
               <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
                 Scoring Rubric (CSV Definition)
               </span>
-              <div class="text-xs text-slate-300 leading-relaxed whitespace-pre-line font-sans bg-slate-900/80 p-2.5 rounded-lg border border-slate-800/80">
+              <div v-if="selectedCriterion.metrics" class="text-xs text-slate-300 leading-relaxed whitespace-pre-line font-sans bg-slate-900/80 p-2.5 rounded-lg border border-slate-800/80">
                 {{ selectedCriterion.metrics }}
+              </div>
+              <div v-else class="text-xs text-slate-500 italic bg-slate-900/40 p-2.5 rounded-lg border border-slate-800/50">
+                No scoring rubric definition provided in CSV for this criterion.
               </div>
             </div>
           </div>
@@ -292,7 +295,8 @@ import {
   getStoreMeta,
   getStoreColor,
   getCategoryColor,
-  stripStoreBrand
+  stripStoreBrand,
+  lookupCriteriaMetric
 } from '../store-meta.js'
 
 function colorForId(id) {
@@ -366,7 +370,11 @@ async function loadLookups() {
     fetch('/api/stores')
   ])
   try {
-    criteria.value = await critRes.json()
+    const rawCrit = await critRes.json()
+    criteria.value = (rawCrit || []).map(c => ({
+      ...c,
+      metrics: c.metrics || lookupCriteriaMetric(2025, c.label) || null
+    }))
   } catch (e) { criteria.value = [] }
   try {
     categories.value = await catRes.json()
@@ -375,6 +383,15 @@ async function loadLookups() {
     stores.value = await storesRes.json()
   } catch (e) { stores.value = [] }
 }
+
+watch(criteria, (newVal) => {
+  if (newVal && newVal.length) {
+    const exists = newVal.some(c => c.id === selectedCriterionId.value)
+    if (!exists) {
+      selectedCriterionId.value = newVal[0].id
+    }
+  }
+}, { immediate: true })
 
 onMounted(async () => {
   await loadLookups()

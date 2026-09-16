@@ -24,7 +24,9 @@ from urllib.parse import unquote
 import statistics
 
 # Configuration
-DB_PATH = os.environ.get("AUDIT_DB_PATH", "/root/audit-dashboard/audit_birmas/audit_birmas.db")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+AUDIT_ROOT = os.environ.get("AUDIT_ROOT", os.path.join(BASE_DIR, "audit_birmas"))
+DB_PATH = os.environ.get("AUDIT_DB_PATH", os.path.join(AUDIT_ROOT, "audit_birmas.db"))
 DEFAULT_LIMIT_RECENT = 50
 
 app = Flask(__name__)
@@ -380,13 +382,14 @@ def category_criterion_monthly(category, criterion):
         crit_raw = criterion if criterion is not None else request.args.get("criterion")
         stores_param = request.args.get("stores", "")
         year = request.args.get("year", type=int)
+        exclude_year = request.args.get("exclude_year", type=int)
 
         store_ids = parse_stores_param(stores_param)
 
         # resolve criterion id if a name was provided
         conn = get_conn()
         try:
-            crit_table = "all_criteria" if table_has_column("all_criteria", "name") else "criteria"
+            crit_table = "criteria2025" if year == 2025 and table_has_column("criteria2025", "name") else ("all_criteria" if table_has_column("all_criteria", "name") else "criteria")
             crit_id = None
             if str(crit_raw).isdigit():
                 crit_id = int(crit_raw)
@@ -413,6 +416,9 @@ def category_criterion_monthly(category, criterion):
             if year:
                 where_year = "AND a.year = ?"
                 params.append(year)
+            elif exclude_year:
+                where_year = "AND a.year != ?"
+                params.append(exclude_year)
 
             # Fetch raw per-audit scores; the median (not average) is used
             # per store/year/month so that multiple audits within the same
