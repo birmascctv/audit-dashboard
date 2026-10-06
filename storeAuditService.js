@@ -139,6 +139,7 @@ export function getCategoryMonthly(category, query = {}) {
   try {
     const storeIds = parseStoresParam(query.stores);
     const year = query.year ? parseInt(query.year, 10) : null;
+    const excludeYear = query.exclude_year ? parseInt(query.exclude_year, 10) : null;
     const metric = query.metric === 'norm' ? 'median_normalized' : 'median_score';
 
     const params = [category];
@@ -151,6 +152,9 @@ export function getCategoryMonthly(category, query = {}) {
     if (year) {
       whereYear = 'AND m.year = ?';
       params.push(year);
+    } else if (excludeYear) {
+      whereYear = 'AND m.year != ?';
+      params.push(excludeYear);
     }
 
     const sql = `
@@ -213,6 +217,7 @@ export function getCategoryCriterionMonthly(category, criterion, query = {}) {
 
     const storeIds = parseStoresParam(query.stores);
     const year = query.year ? parseInt(query.year, 10) : null;
+    const excludeYear = query.exclude_year ? parseInt(query.exclude_year, 10) : null;
 
     const params = [critId];
     let whereStore = '';
@@ -224,6 +229,9 @@ export function getCategoryCriterionMonthly(category, criterion, query = {}) {
     if (year) {
       whereYear = 'AND a.year = ?';
       params.push(year);
+    } else if (excludeYear) {
+      whereYear = 'AND a.year != ?';
+      params.push(excludeYear);
     }
 
     const sql = `
@@ -363,12 +371,16 @@ export function getStorePassrate(storeId, query = {}) {
   if (!db) return { labels: [], datasets: [] };
   try {
     const year = query.year ? parseInt(query.year, 10) : null;
+    const excludeYear = query.exclude_year ? parseInt(query.exclude_year, 10) : null;
 
     const params = [storeId];
     let whereYear = '';
     if (year) {
       whereYear = 'AND m.year = ?';
       params.push(year);
+    } else if (excludeYear) {
+      whereYear = 'AND m.year != ?';
+      params.push(excludeYear);
     }
 
     const sql = `
