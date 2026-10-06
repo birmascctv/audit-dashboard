@@ -1184,6 +1184,15 @@ async function startServer() {
     }
   });
 
+  app.get('/api/stores/:storeId/passrate', (req, res) => {
+    try {
+      const data = storeAuditService.getStorePassrate(req.params.storeId, req.query);
+      res.json(data);
+    } catch (err) {
+      res.status(500).json({ labels: [], datasets: [] });
+    }
+  });
+
   app.get('/api/passing-grades', (req, res) => {
     try {
       const grades = storeAuditService.getPassingGrades(req.query);
