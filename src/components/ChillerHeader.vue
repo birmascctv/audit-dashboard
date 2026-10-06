@@ -29,7 +29,18 @@ const emit = defineEmits(['toggleSound', 'openGuide']);
 
 const route = useRoute();
 const router = useRouter();
-const { currentUser, isAuditor, isAdmin, isSuperAdmin, logout } = useAuth();
+const {
+  currentUser,
+  isAuditor,
+  isAdmin,
+  isSuperAdmin,
+  canAccessStoreAudit,
+  canAccessUploadAudits,
+  canAccessStockAudit,
+  canAccessAuditRecords,
+  canAccessSalesReport,
+  logout
+} = useAuth();
 const { stores, selectedStoreId, selectStore } = useAuditStore();
 
 const currentTime = ref('');
@@ -65,7 +76,10 @@ onUnmounted(() => {
       <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <!-- Logo & Navigation Tabs -->
         <div class="flex flex-wrap items-center gap-3 sm:gap-5">
-          <router-link to="/dashboard" class="flex items-center gap-2.5 group">
+          <router-link
+            :to="isAdmin ? '/sales' : '/dashboard'"
+            class="flex items-center gap-2.5 group"
+          >
             <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-teal-600 to-cyan-600 flex items-center justify-center text-white shadow-md shadow-teal-500/20 group-hover:scale-105 transition-transform">
               <ClipboardCheck class="w-5 h-5 text-white" />
             </div>
@@ -82,15 +96,16 @@ onUnmounted(() => {
             </div>
           </router-link>
 
-          <!-- Main Navigation Links -->
+          <!-- Main Navigation Links with Strict Role Visibility -->
           <nav class="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200/80 flex-wrap">
-            <!-- 1. Store Audit Dashboard -->
+            <!-- 1. Store Audit Dashboard (Auditor & Superadmin only) -->
             <router-link
+              v-if="canAccessStoreAudit"
               to="/dashboard"
               class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
               :class="
                 route.path.startsWith('/dashboard')
-                  ? 'bg-slate-900 text-white shadow-xs'
+                  ? 'bg-teal-600 text-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               "
             >
@@ -98,8 +113,24 @@ onUnmounted(() => {
               <span>Store Audit</span>
             </router-link>
 
-            <!-- 2. Physical Stock Audit -->
+            <!-- 2. Upload Store Audits (Auditor & Superadmin only - Right of Store Audit) -->
             <router-link
+              v-if="canAccessUploadAudits"
+              to="/upload"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
+              :class="
+                route.path === '/upload'
+                  ? 'bg-teal-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              "
+            >
+              <UploadCloud class="w-3.5 h-3.5" />
+              <span>Upload Audits</span>
+            </router-link>
+
+            <!-- 3. Physical Stock Audit (Auditor & Superadmin only) -->
+            <router-link
+              v-if="canAccessStockAudit"
               to="/audit"
               class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
               :class="
@@ -112,8 +143,9 @@ onUnmounted(() => {
               <span>Stock Audit</span>
             </router-link>
 
-            <!-- 3. Stock Audit History -->
+            <!-- 4. Stock Audit History (Auditor & Superadmin only) -->
             <router-link
+              v-if="canAccessAuditRecords"
               to="/history"
               class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
               :class="
@@ -126,8 +158,9 @@ onUnmounted(() => {
               <span>Audit Records</span>
             </router-link>
 
-            <!-- 4. Sales Report -->
+            <!-- 5. Sales Report (Admin & Superadmin only) -->
             <router-link
+              v-if="canAccessSalesReport"
               to="/sales"
               class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
               :class="
@@ -138,20 +171,6 @@ onUnmounted(() => {
             >
               <TrendingUp class="w-3.5 h-3.5" />
               <span>Sales Report</span>
-            </router-link>
-
-            <!-- 5. Upload Store Audit Data -->
-            <router-link
-              to="/upload"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
-              :class="
-                route.path === '/upload'
-                  ? 'bg-teal-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-              "
-            >
-              <UploadCloud class="w-3.5 h-3.5" />
-              <span>Upload Audits</span>
             </router-link>
           </nav>
         </div>

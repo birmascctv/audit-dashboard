@@ -10,7 +10,7 @@ export const DEFAULT_ACCOUNTS = [
     name: 'Super Admin',
     role: 'superadmin',
     roleLabel: 'Super Admin',
-    accessScope: 'Stock Audit & Sales Report',
+    accessScope: 'Store Audit, Upload Audits, Stock Audit, Audit Records & Sales Report',
     hint: 'Password: superadmin666',
   },
   {
@@ -20,7 +20,7 @@ export const DEFAULT_ACCOUNTS = [
     name: 'Sales Admin',
     role: 'admin',
     roleLabel: 'Sales Admin',
-    accessScope: 'Audit Sales Report Only',
+    accessScope: 'Sales Report Only',
     hint: 'Password: admin666',
   },
   {
@@ -29,8 +29,8 @@ export const DEFAULT_ACCOUNTS = [
     email: 'chrisna@birmas.id',
     name: 'Chrisna (Auditor)',
     role: 'auditor',
-    roleLabel: 'Stock Auditor',
-    accessScope: 'Stock Physical Audit Only',
+    roleLabel: 'Store & Stock Auditor',
+    accessScope: 'Store Audit, Upload Audits, Stock Audit & Audit Records',
     hint: 'Password: auditor666',
   },
 ];
@@ -121,8 +121,14 @@ export function useAuth() {
   const isAdmin = computed(() => role.value === 'admin');
   const isSuperAdmin = computed(() => role.value === 'superadmin');
 
-  // RBAC Access Control
+  // Strict RBAC Access Controls:
+  // - Auditor: Store Audit, Upload Audits, Stock Audit, Audit Records
+  // - Admin: Sales Report Only
+  // - Superadmin: Everything
+  const canAccessStoreAudit = computed(() => role.value === 'auditor' || role.value === 'superadmin');
+  const canAccessUploadAudits = computed(() => role.value === 'auditor' || role.value === 'superadmin');
   const canAccessStockAudit = computed(() => role.value === 'auditor' || role.value === 'superadmin');
+  const canAccessAuditRecords = computed(() => role.value === 'auditor' || role.value === 'superadmin');
   const canAccessSalesReport = computed(() => role.value === 'admin' || role.value === 'superadmin');
 
   return {
@@ -131,7 +137,10 @@ export function useAuth() {
     isAuditor,
     isAdmin,
     isSuperAdmin,
+    canAccessStoreAudit,
+    canAccessUploadAudits,
     canAccessStockAudit,
+    canAccessAuditRecords,
     canAccessSalesReport,
     isAuthenticated,
     loginWithBackend,

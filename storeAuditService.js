@@ -14,6 +14,9 @@ export function getCctvDb() {
   if (!cctvDbInstance) {
     if (fs.existsSync(CCTV_DB_PATH)) {
       cctvDbInstance = new DatabaseSync(CCTV_DB_PATH);
+      try {
+        cctvDbInstance.exec('ALTER TABLE criteria ADD COLUMN unit TEXT;');
+      } catch (_) {}
     }
   }
   return cctvDbInstance;
@@ -103,8 +106,13 @@ export function getCctvCriteria(query = {}) {
       params.push(String(excludeYear));
     }
 
+    const colNames = db.prepare('PRAGMA table_info(criteria)').all().map((c) => c.name);
+    const selectCols = ['criteria_id', 'name', 'category', 'passing_grade'];
+    if (colNames.includes('unit')) selectCols.push('unit');
+    if (colNames.includes('metrics')) selectCols.push('metrics');
+
     const rows = db.prepare(`
-      SELECT criteria_id, name, category, passing_grade, unit, metrics
+      SELECT ${selectCols.join(', ')}
       FROM criteria
       ${where}
       ORDER BY category, name
@@ -418,8 +426,12 @@ export function getPassingGrades(query = {}) {
       params.push(String(excludeYear));
     }
 
+    const colNames = db.prepare('PRAGMA table_info(criteria)').all().map((c) => c.name);
+    const selectCols = ['criteria_id', 'name', 'category', 'passing_grade'];
+    if (colNames.includes('unit')) selectCols.push('unit');
+
     const rows = db.prepare(`
-      SELECT criteria_id, name, category, passing_grade, unit
+      SELECT ${selectCols.join(', ')}
       FROM criteria
       ${where}
       ORDER BY category, name
@@ -463,10 +475,14 @@ export function getCctvDrilldown(query = {}) {
     const month = query.month ? parseInt(query.month, 10) : null;
     const category = query.category || null;
 
+    const colNames = db.prepare('PRAGMA table_info(criteria)').all().map((c) => c.name);
+    const unitCol = colNames.includes('unit') ? 'c.unit' : 'NULL AS unit';
+    const metricsCol = colNames.includes('metrics') ? 'c.metrics' : 'NULL AS metrics';
+
     let sql = `
       SELECT sc.score_id, sc.audit_id, sc.criteria_id, sc.score, sc.notes,
              a.store_id, s.name AS store_name, a.year, a.month, a.audit_date,
-             c.name AS criteria_name, c.category, c.passing_grade, c.unit, c.metrics
+             c.name AS criteria_name, c.category, c.passing_grade, ${unitCol}, ${metricsCol}
       FROM scores sc
       JOIN audits a ON sc.audit_id = a.audit_id
       JOIN stores s ON a.store_id = s.store_id

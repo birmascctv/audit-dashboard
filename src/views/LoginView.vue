@@ -42,7 +42,7 @@ async function handleLogin() {
       if (result.user?.role === 'admin') {
         router.push('/sales');
       } else {
-        router.push('/audit');
+        router.push('/dashboard');
       }
     } else {
       errorMessage.value = result.message || 'Invalid username or password';

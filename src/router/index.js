@@ -10,43 +10,52 @@ import LoginView from '../views/LoginView.vue';
 const routes = [
   {
     path: '/',
-    redirect: '/dashboard',
+    redirect: (to) => {
+      try {
+        const session = sessionStorage.getItem('birmas_audit_session_v4');
+        if (session) {
+          const user = JSON.parse(session);
+          if (user.role === 'admin') return '/sales';
+        }
+      } catch {}
+      return '/dashboard';
+    },
   },
   {
     path: '/dashboard',
     name: 'StoreAudit',
     component: StoreAuditView,
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
   },
   {
     path: '/dashboard/2025',
     name: 'StoreAudit2025',
     component: StoreAudit2025View,
-    meta: { requiresAuth: true },
-  },
-  {
-    path: '/audit',
-    name: 'StockAudit',
-    component: AuditView,
-    meta: { requiresAuth: true },
-  },
-  {
-    path: '/history',
-    name: 'AuditHistory',
-    component: AuditHistoryView,
-    meta: { requiresAuth: true },
-  },
-  {
-    path: '/sales',
-    name: 'SalesReport',
-    component: SalesReportView,
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
   },
   {
     path: '/upload',
     name: 'StoreAuditUpload',
     component: StoreAuditUploadView,
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
+  },
+  {
+    path: '/audit',
+    name: 'StockAudit',
+    component: AuditView,
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
+  },
+  {
+    path: '/history',
+    name: 'AuditHistory',
+    component: AuditHistoryView,
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
+  },
+  {
+    path: '/sales',
+    name: 'SalesReport',
+    component: SalesReportView,
+    meta: { requiresAuth: true, allowedRoles: ['admin', 'superadmin'] },
   },
   {
     path: '/login',
@@ -55,7 +64,7 @@ const routes = [
   },
   {
     path: '/:pathMatch(.*)*',
-    redirect: '/dashboard',
+    redirect: '/login',
   },
 ];
 
@@ -79,13 +88,28 @@ router.beforeEach((to, from, next) => {
   }
 
   const isAuth = !!user;
+  const userRole = user?.role || '';
 
   if (to.path !== '/login' && !isAuth) {
     return next('/login');
   }
 
   if (to.path === '/login' && isAuth) {
+    if (userRole === 'admin') {
+      return next('/sales');
+    }
     return next('/dashboard');
+  }
+
+  // Strict Role-Based Access Control check
+  if (to.meta?.allowedRoles && !to.meta.allowedRoles.includes(userRole)) {
+    if (userRole === 'admin') {
+      return next('/sales');
+    }
+    if (userRole === 'auditor') {
+      return next('/dashboard');
+    }
+    return next('/login');
   }
 
   next();
