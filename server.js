@@ -254,14 +254,14 @@ export async function runBirmasServerSync(options = {}) {
     let page = 1;
     let hasMore = true;
 
-    while (hasMore && page <= 25) {
-      const url = `${baseUrl.replace(/\/+$/, '')}/wp-json/api/v1/product_stocks?per_page=30&page=${page}`;
+    while (hasMore && page <= 10) {
+      const url = `${baseUrl.replace(/\/+$/, '')}/wp-json/api/v1/product_stocks?per_page=100&page=${page}`;
       let items = [];
 
       try {
         const res = await fetch(url, {
           headers: { 'user-agent': 'BirmasStockAudit/2.0' },
-          signal: AbortSignal.timeout(45000),
+          signal: AbortSignal.timeout(10000),
         });
 
         if (!res.ok) {
