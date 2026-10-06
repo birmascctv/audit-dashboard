@@ -567,9 +567,42 @@ async function startServer() {
   // Ensure SQLite tables are initialized
   db.getDb();
 
-  // 1. Stores API
+  // 1. Stores API (Unified for both Store Audit CCTV and Physical Stock Audit)
   app.get('/api/stores', (req, res) => {
-    res.json(db.getAllStores());
+    try {
+      const cctvStores = storeAuditService.getCctvStores();
+      const stockStores = db.getAllStores() || [];
+
+      if (cctvStores && cctvStores.length > 0) {
+        const combined = cctvStores.map((cs, idx) => {
+          const cleanCsName = String(cs.name || '').toLowerCase().replace('birmas ', '').trim();
+          const match = stockStores.find((s) => {
+            const cleanSName = String(s.name || '').toLowerCase().replace('birmas ', '').trim();
+            const cleanSId = String(s.id || '').toLowerCase().replace('birmas-', '').trim();
+            return cleanSName === cleanCsName || cleanSId === cleanCsName || cleanSId.includes(cleanCsName);
+          });
+
+          return {
+            id: match?.id || `birmas-${cs.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+            store_id: cs.store_id || idx + 1,
+            name: cs.name,
+            locationCode: match?.locationCode || `BRM-${cs.name.replace('Birmas ', '').substring(0, 3).toUpperCase()}`,
+            esbBranchCode: match?.esbBranchCode || cs.name.replace('Birmas ', '').toUpperCase(),
+          };
+        });
+        return res.json(combined);
+      }
+
+      // Fallback: If cctvStores empty, return stock stores augmented with store_id
+      const fallbackStores = stockStores.map((s, idx) => ({
+        ...s,
+        store_id: s.store_id || idx + 1,
+      }));
+      res.json(fallbackStores);
+    } catch (err) {
+      console.warn('[/api/stores] Fallback error:', err.message);
+      res.json(db.getAllStores());
+    }
   });
 
   app.post('/api/stores', (req, res) => {

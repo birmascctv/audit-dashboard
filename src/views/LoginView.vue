@@ -1,15 +1,13 @@
 <script setup>
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { useAuth, DEFAULT_ACCOUNTS } from '../composables/useAuth.js';
+import { useAuth } from '../composables/useAuth.js';
 import {
   ClipboardCheck,
   Lock,
   User as UserIcon,
   ArrowRight,
-  AlertCircle,
-  ShieldCheck,
-  KeyRound
+  AlertCircle
 } from 'lucide-vue-next';
 
 const router = useRouter();
@@ -19,14 +17,6 @@ const username = ref('');
 const password = ref('');
 const isLoading = ref(false);
 const errorMessage = ref(null);
-
-function selectPreset(acc) {
-  username.value = acc.username;
-  if (acc.username === 'superadmin') password.value = 'superadmin666';
-  else if (acc.username === 'admin') password.value = 'admin666';
-  else if (acc.username === 'chrisna' || acc.username === 'auditor') password.value = 'auditor666';
-  handleLogin();
-}
 
 async function handleLogin() {
   errorMessage.value = null;
@@ -144,53 +134,6 @@ async function handleLogin() {
             <ArrowRight class="w-4 h-4" />
           </button>
         </form>
-
-        <!-- Quick 1-Click Role Switcher Profiles -->
-        <div class="mt-6 pt-5 border-t border-slate-100">
-          <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2.5">
-            Quick Sign In by Role:
-          </span>
-          <div class="space-y-2">
-            <!-- Superadmin -->
-            <button
-              @click="selectPreset(DEFAULT_ACCOUNTS[0])"
-              type="button"
-              class="w-full p-2.5 rounded-xl border border-purple-200 bg-purple-50/60 hover:bg-purple-100 text-left transition-colors flex items-center justify-between cursor-pointer group"
-            >
-              <div>
-                <span class="text-xs font-bold text-purple-900 block">Super Admin (superadmin)</span>
-                <span class="text-[10px] text-purple-700">Access: Both Stock Audit & Sales Report</span>
-              </div>
-              <ArrowRight class="w-3.5 h-3.5 text-purple-600 group-hover:translate-x-1 transition-transform" />
-            </button>
-
-            <!-- Admin -->
-            <button
-              @click="selectPreset(DEFAULT_ACCOUNTS[1])"
-              type="button"
-              class="w-full p-2.5 rounded-xl border border-blue-200 bg-blue-50/60 hover:bg-blue-100 text-left transition-colors flex items-center justify-between cursor-pointer group"
-            >
-              <div>
-                <span class="text-xs font-bold text-blue-900 block">Admin (admin)</span>
-                <span class="text-[10px] text-blue-700">Access: Sales Report Only</span>
-              </div>
-              <ArrowRight class="w-3.5 h-3.5 text-blue-600 group-hover:translate-x-1 transition-transform" />
-            </button>
-
-            <!-- Auditor -->
-            <button
-              @click="selectPreset(DEFAULT_ACCOUNTS[2])"
-              type="button"
-              class="w-full p-2.5 rounded-xl border border-teal-200 bg-teal-50/60 hover:bg-teal-100 text-left transition-colors flex items-center justify-between cursor-pointer group"
-            >
-              <div>
-                <span class="text-xs font-bold text-teal-900 block">Auditor (chrisna)</span>
-                <span class="text-[10px] text-teal-700">Access: Stock Physical Audit Only</span>
-              </div>
-              <ArrowRight class="w-3.5 h-3.5 text-teal-600 group-hover:translate-x-1 transition-transform" />
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   </div>
