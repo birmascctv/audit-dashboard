@@ -1,0 +1,162 @@
+{
+  "stores": [
+    {
+      "id": "birmas-kuningan",
+      "name": "Birmas Kuningan",
+      "chillerName": "Chiller #1 (Beverages)",
+      "locationCode": "BRM-KNG"
+    },
+    {
+      "id": "birmas-kwitang",
+      "name": "Birmas Kwitang",
+      "chillerName": "Chiller #1 (Cold Drinks)",
+      "locationCode": "BRM-KWT"
+    },
+    {
+      "id": "birmas-lebak-bulus",
+      "name": "Birmas Lebak Bulus",
+      "chillerName": "Chiller #1 (Hard Ciders)",
+      "locationCode": "BRM-LBB"
+    },
+    {
+      "id": "birmas-sudirman",
+      "name": "Birmas Sudirman",
+      "chillerName": "Chiller #1 (Cold Storage)",
+      "locationCode": "BRM-SDR"
+    }
+  ],
+  "products": [
+    {
+      "id": "wp-101",
+      "barcode": "8997026800122",
+      "sku": "KULT-LYC-24",
+      "brand": "Kulturale",
+      "varian": "Lychee",
+      "price": 35000,
+      "stockByStore": {
+        "birmas-kuningan": 24,
+        "birmas-kwitang": 18,
+        "birmas-lebak-bulus": 20,
+        "birmas-sudirman": 24
+      },
+      "wpStatus": "publish",
+      "lastUpdated": "2026-09-28T00:00:00Z"
+    },
+    {
+      "id": "wp-102",
+      "barcode": "8997026800030",
+      "sku": "KULT-MNG-24",
+      "brand": "Kulturale",
+      "varian": "Mango",
+      "price": 35000,
+      "stockByStore": {
+        "birmas-kuningan": 24,
+        "birmas-kwitang": 20,
+        "birmas-lebak-bulus": 16,
+        "birmas-sudirman": 22
+      },
+      "wpStatus": "publish",
+      "lastUpdated": "2026-09-28T00:00:00Z"
+    },
+    {
+      "id": "wp-103",
+      "barcode": "8997026800078",
+      "sku": "KULT-APP-24",
+      "brand": "Kulturale",
+      "varian": "Apple",
+      "price": 35000,
+      "stockByStore": {
+        "birmas-kuningan": 24,
+        "birmas-kwitang": 15,
+        "birmas-lebak-bulus": 22,
+        "birmas-sudirman": 20
+      },
+      "wpStatus": "publish",
+      "lastUpdated": "2026-09-28T00:00:00Z"
+    },
+    {
+      "id": "wp-104",
+      "barcode": "8997026800016",
+      "sku": "KULT-ORI-24",
+      "brand": "Kulturale",
+      "varian": "Original",
+      "price": 35000,
+      "stockByStore": {
+        "birmas-kuningan": 24,
+        "birmas-kwitang": 24,
+        "birmas-lebak-bulus": 12,
+        "birmas-sudirman": 18
+      },
+      "wpStatus": "publish",
+      "lastUpdated": "2026-09-28T00:00:00Z"
+    },
+    {
+      "id": "wp-105",
+      "barcode": "8993156000074",
+      "sku": "ALB-STOUT-20",
+      "brand": "Albens",
+      "varian": "LL Stout",
+      "price": 45000,
+      "stockByStore": {
+        "birmas-kuningan": 20,
+        "birmas-kwitang": 14,
+        "birmas-lebak-bulus": 10,
+        "birmas-sudirman": 16
+      },
+      "wpStatus": "publish",
+      "lastUpdated": "2026-09-28T00:00:00Z"
+    },
+    {
+      "id": "wp-106",
+      "barcode": "8993156668267",
+      "sku": "ALB-AMAR-20",
+      "brand": "Albens",
+      "varian": "Amarillo",
+      "price": 45000,
+      "stockByStore": {
+        "birmas-kuningan": 20,
+        "birmas-kwitang": 16,
+        "birmas-lebak-bulus": 18,
+        "birmas-sudirman": 20
+      },
+      "wpStatus": "publish",
+      "lastUpdated": "2026-09-28T00:00:00Z"
+    },
+    {
+      "id": "wp-107",
+      "barcode": "8993156668229",
+      "sku": "ALB-NAGA-20",
+      "brand": "Albens",
+      "varian": "Naganini",
+      "price": 45000,
+      "stockByStore": {
+        "birmas-kuningan": 20,
+        "birmas-kwitang": 12,
+        "birmas-lebak-bulus": 15,
+        "birmas-sudirman": 18
+      },
+      "wpStatus": "publish",
+      "lastUpdated": "2026-09-28T00:00:00Z"
+    }
+  ],
+  "wpConfig": {
+    "wpUrl": "https://demo-store.local",
+    "apiType": "esb_custom_api",
+    "customEndpoint": "/wp-json/esb/v1/stock",
+    "consumerKey": "",
+    "consumerSecret": "",
+    "apiKeyHeaderName": "X-API-KEY",
+    "apiKeyHeaderValue": "",
+    "isConnected": true,
+    "lastSyncedAt": "2026-09-28T00:00:00Z",
+    "selectedStoreId": "birmas-kuningan"
+  },
+  "activeAuditCounts": {
+    "birmas-kuningan": {},
+    "birmas-kwitang": {},
+    "birmas-lebak-bulus": {},
+    "birmas-sudirman": {}
+  },
+  "scanLogs": [],
+  "auditHistory": []
+}

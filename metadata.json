@@ -1,0 +1,6 @@
+{
+  "name": "Birmas Audit Dashboard",
+  "description": "Executive quality and compliance audit dashboard for Birmas retail outlets, featuring KPI cards, store trend trajectories, and infraction drilldown analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
