@@ -1221,9 +1221,76 @@ async function startServer() {
   app.get('/api/uploaded-files', (req, res) => {
     try {
       const files = storeAuditService.getCctvUploadedFiles();
-      res.json({ files });
+      res.json(files);
     } catch (err) {
-      res.status(500).json({ files: [] });
+      console.error('/api/uploaded-files error:', err);
+      res.status(500).json([]);
+    }
+  });
+
+  app.get('/api/download-audit-file', (req, res) => {
+    try {
+      const auditId = req.query.audit_id ? parseInt(req.query.audit_id, 10) : null;
+      if (!auditId) {
+        return res.status(400).send('audit_id is required');
+      }
+
+      const files = storeAuditService.getCctvUploadedFiles();
+      const match = files.find((f) => f.audit_id === auditId);
+
+      const indonesianMonths = [
+        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+      ];
+
+      if (match) {
+        const monthName = indonesianMonths[(match.month || 1) - 1] || 'Januari';
+        const possiblePaths = [
+          path.join(__dirname, 'audit_birmas', match.store_name || '', String(match.year), monthName, match.file_name),
+          path.join(__dirname, 'audit_birmas', match.store_name || '', match.file_name),
+          path.join(__dirname, 'audit_birmas', match.file_name),
+        ];
+
+        for (const p of possiblePaths) {
+          if (fs.existsSync(p)) {
+            return res.download(p, match.file_name || `Audit_${match.store_name}_${match.year}_${monthName}.csv`);
+          }
+        }
+      }
+
+      // If physical file is not on disk, generate CSV from SQLite scores
+      const cctvDb = storeAuditService.getCctvDb();
+      if (!cctvDb) {
+        return res.status(404).send('Audit database not found');
+      }
+
+      const rows = cctvDb.prepare(`
+        SELECT c.name AS criteria_name, c.category, c.passing_grade, sc.score
+        FROM scores sc
+        JOIN criteria c ON sc.criteria_id = c.criteria_id
+        WHERE sc.audit_id = ?
+        ORDER BY c.category, c.name
+      `).all(auditId);
+
+      if (!rows || rows.length === 0) {
+        return res.status(404).send('No scores found for this audit ID');
+      }
+
+      let csvContent = 'Criteria,Category,Passing Grade,Score,Status\n';
+      for (const r of rows) {
+        const status = r.score >= r.passing_grade ? 'PASS' : 'FAIL';
+        const cleanCrit = `"${(r.criteria_name || '').replace(/"/g, '""')}"`;
+        const cleanCat = `"${(r.category || '').replace(/"/g, '""')}"`;
+        csvContent += `${cleanCrit},${cleanCat},${r.passing_grade || ''},${r.score || ''},${status}\n`;
+      }
+
+      const dlFilename = match?.file_name || `Audit_Export_${auditId}.csv`;
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${dlFilename}"`);
+      return res.send(csvContent);
+    } catch (err) {
+      console.error('/api/download-audit-file error:', err);
+      res.status(500).send('Failed to generate audit download file');
     }
   });
 

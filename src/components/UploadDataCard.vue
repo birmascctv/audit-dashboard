@@ -1,16 +1,16 @@
 <!-- Upload Data section: Drag and drop or browse Excel/CSV with dynamic year and clean Birmas store names -->
 <template>
-  <div class="upload-card p-6 rounded-2xl bg-slate-900 border border-slate-700 text-slate-100 shadow-xl">
+  <div class="upload-card p-6 rounded-2xl bg-white border border-slate-200 text-slate-800 shadow-sm">
     <form class="space-y-5" @submit.prevent="submit">
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <!-- 1. Birmas Store Selector -->
         <div>
-          <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+          <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
             Birmas
           </label>
           <select
             v-model="store"
-            class="w-full px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-white text-sm focus:outline-none focus:border-blue-500"
+            class="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-slate-900 text-sm font-semibold focus:outline-none focus:border-teal-500 focus:bg-white shadow-xs"
           >
             <option value="" disabled>Select outlet</option>
             <option
@@ -25,12 +25,12 @@
 
         <!-- 2. Audit Year (Dynamic 2025 to Current Year) -->
         <div>
-          <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+          <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
             Audit Year
           </label>
           <select
             v-model="year"
-            class="w-full px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-white text-sm focus:outline-none focus:border-blue-500"
+            class="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-slate-900 text-sm font-semibold focus:outline-none focus:border-teal-500 focus:bg-white shadow-xs"
           >
             <option
               v-for="y in availableYears"
@@ -44,12 +44,12 @@
 
         <!-- 3. Audit Month -->
         <div>
-          <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+          <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
             Audit Month
           </label>
           <select
             v-model="month"
-            class="w-full px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-white text-sm focus:outline-none focus:border-blue-500"
+            class="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-slate-900 text-sm font-semibold focus:outline-none focus:border-teal-500 focus:bg-white shadow-xs"
           >
             <option value="" disabled>Select month</option>
             <option v-for="m in months" :key="m" :value="m">{{ m }}</option>
@@ -60,10 +60,10 @@
       <!-- Drag & Drop or Browse Zone (CSV Only) -->
       <div>
         <div class="flex items-center justify-between mb-1.5">
-          <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider">
             Audit Data File (.csv only)
           </label>
-          <span class="text-[11px] font-mono font-medium text-blue-400 bg-blue-950/60 border border-blue-800/50 px-2 py-0.5 rounded-md">
+          <span class="text-[11px] font-mono font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md">
             CSV ONLY
           </span>
         </div>
@@ -73,12 +73,12 @@
           @dragover.prevent="isDragging = true"
           @drop.prevent="handleDrop"
           :class="[
-            'relative border-2 border-dashed rounded-2xl p-8 text-center transition-all cursor-pointer',
+            'relative border-2 border-dashed rounded-2xl p-8 text-center transition-all cursor-pointer shadow-xs',
             isDragging
-              ? 'border-blue-500 bg-blue-950/20'
+              ? 'border-teal-500 bg-teal-50/50'
               : file
-              ? 'border-emerald-500/60 bg-emerald-950/20'
-              : 'border-slate-700 hover:border-slate-600 bg-slate-950/40'
+              ? 'border-emerald-500 bg-emerald-50/40'
+              : 'border-slate-300 hover:border-teal-500 hover:bg-teal-50/20 bg-slate-50/70'
           ]"
           @click="triggerBrowse"
         >
@@ -92,22 +92,22 @@
 
           <!-- File Selected State -->
           <div v-if="file" class="flex flex-col items-center gap-2">
-            <div class="w-12 h-12 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xl font-bold">
+            <div class="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl font-bold border border-emerald-200">
               📊
             </div>
             <div>
               <div class="flex items-center justify-center gap-2">
-                <p class="text-sm font-semibold text-white">{{ file.name }}</p>
-                <span class="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                <p class="text-sm font-bold text-slate-900">{{ file.name }}</p>
+                <span class="text-[10px] uppercase font-black tracking-wider px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
                   CSV
                 </span>
               </div>
-              <p class="text-xs text-slate-400 mt-0.5">{{ (file.size / 1024).toFixed(1) }} KB • Ready to upload</p>
+              <p class="text-xs text-slate-500 mt-0.5">{{ (file.size / 1024).toFixed(1) }} KB • Ready to upload</p>
             </div>
             <button
               type="button"
               @click.stop="clearFile"
-              class="text-xs text-rose-400 hover:text-rose-300 underline mt-1"
+              class="text-xs font-bold text-rose-600 hover:text-rose-700 underline mt-1 cursor-pointer"
             >
               Remove file
             </button>
@@ -115,15 +115,15 @@
 
           <!-- Empty Browse State -->
           <div v-else class="flex flex-col items-center gap-2">
-            <div class="w-12 h-12 rounded-xl bg-slate-800 text-blue-400 flex items-center justify-center text-xl font-bold">
+            <div class="w-12 h-12 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center text-xl font-bold border border-teal-200">
               📥
             </div>
             <div>
-              <p class="text-sm font-semibold text-slate-200">
-                Drag & drop CSV file here, or <span class="text-blue-400 underline">browse</span>
+              <p class="text-sm font-bold text-slate-800">
+                Drag & drop CSV file here, or <span class="text-teal-600 underline">browse</span>
               </p>
               <p class="text-xs text-slate-500 mt-0.5">
-                Strictly .csv format supported (e.g. Audit_Store_Januari_2026.csv)
+                Strictly .csv format supported (e.g. Log Auditor OL Sudirman 4 Agustus 2026.csv)
               </p>
             </div>
           </div>
@@ -132,7 +132,7 @@
 
       <!-- Submit Button & Overwrite Prompt -->
       <div class="flex items-center justify-between gap-4 pt-2">
-        <div v-if="needsConfirm" class="text-xs text-amber-300 font-medium flex items-center gap-1.5">
+        <div v-if="needsConfirm" class="text-xs text-amber-800 font-bold flex items-center gap-1.5 bg-amber-50 p-2 rounded-xl border border-amber-300">
           <span>⚠️</span>
           <span>Existing file has differences. Click "Upload Anyway" to replace it with this file.</span>
         </div>
@@ -142,10 +142,10 @@
           type="submit"
           :disabled="submitting || !store || !year || !month || !file"
           :class="[
-            'px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-lg transition-all ml-auto disabled:opacity-40 disabled:cursor-not-allowed',
+            'px-5 py-2.5 rounded-xl text-sm font-bold text-white shadow-md transition-all ml-auto disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer',
             needsConfirm
               ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/20 ring-2 ring-amber-400/50'
-              : 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/20'
+              : 'bg-teal-600 hover:bg-teal-500 shadow-teal-600/20'
           ]"
         >
           {{ submitting ? 'Uploading…' : (needsConfirm ? 'Upload Anyway' : 'Upload CSV File') }}

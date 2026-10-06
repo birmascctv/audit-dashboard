@@ -302,39 +302,17 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Action Bar: Add Barcode, Sync WordPress/ESB, Finalize -->
+      <!-- Action Bar: Add Barcode, Finalize -->
       <div class="flex flex-wrap items-center gap-2 sm:gap-2.5">
         <!-- Add New Barcode Button -->
         <button
           @click="openAddBarcodeWithPrefill()"
           type="button"
-          class="px-3.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
-          title="Add a new barcode based on WordPress variant or entirely new product"
+          class="px-3.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+          title="Add a new barcode based on variant or new product"
         >
           <Plus class="w-3.5 h-3.5 text-teal-700" />
           <span>Add New Barcode</span>
-        </button>
-
-        <!-- Refresh Stock Button (Birmas Central Server) -->
-        <button
-          @click="handleBirmasServerSync"
-          :disabled="isSyncing || isSyncingBirmas"
-          type="button"
-          class="px-3.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
-          title="Refresh real-time catalog & stock from Birmas Central Server"
-        >
-          <RefreshCw class="w-3.5 h-3.5 text-teal-600" :class="{ 'animate-spin': isSyncing || isSyncingBirmas }" />
-          <span>{{ isSyncing || isSyncingBirmas ? 'Syncing...' : 'Refresh Stock' }}</span>
-        </button>
-
-        <!-- Sync Settings Button -->
-        <button
-          @click="isSessionModalOpen = true"
-          type="button"
-          class="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 border border-slate-300 transition-colors shadow-sm cursor-pointer"
-          title="Server Sync Settings"
-        >
-          <Settings class="w-4 h-4" />
         </button>
 
         <!-- Finalize Audit Button -->
@@ -348,29 +326,6 @@ onMounted(() => {
         </button>
       </div>
     </div>
-
-    <!-- Live Direct ESB Sync Status Banner -->
-    <transition enter-active-class="transition duration-300 ease-out" enter-from-class="opacity-0 -translate-y-2" enter-to-class="opacity-100 translate-y-0" leave-active-class="transition duration-200 ease-in" leave-from-class="opacity-100 translate-y-0" leave-to-class="opacity-0 -translate-y-2">
-      <div
-        v-if="lastSyncStatus"
-        class="p-4 rounded-2xl flex items-center justify-between text-xs font-bold border shadow-sm transition-all"
-        :class="lastSyncStatus.success ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-rose-50 border-rose-300 text-rose-900'"
-      >
-        <div class="flex items-center gap-2.5">
-          <CheckCircle2 v-if="lastSyncStatus.success" class="w-5 h-5 text-emerald-600 shrink-0" />
-          <AlertCircle v-else class="w-5 h-5 text-rose-600 shrink-0" />
-          <span class="text-sm font-semibold">{{ lastSyncStatus.message }}</span>
-        </div>
-        <button
-          @click="lastSyncStatus = null"
-          type="button"
-          class="p-1 rounded-lg hover:bg-black/5 text-slate-500 cursor-pointer"
-          title="Dismiss"
-        >
-          <X class="w-4 h-4" />
-        </button>
-      </div>
-    </transition>
 
     <!-- Counting Station (Light theme with tosca accents) -->
     <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">

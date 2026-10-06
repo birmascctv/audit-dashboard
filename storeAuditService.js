@@ -493,7 +493,7 @@ export function getCctvDrilldown(query = {}) {
 
     let sql = `
       SELECT sc.score_id, sc.audit_id, sc.criteria_id, sc.score, sc.notes,
-             a.store_id, s.name AS store_name, a.year, a.month, a.audit_date,
+             a.store_id, s.name AS store_name, a.year, a.month, a.file_name,
              c.name AS criteria_name, c.category, c.passing_grade, ${unitCol}, ${metricsCol}
       FROM scores sc
       JOIN audits a ON sc.audit_id = a.audit_id
@@ -519,7 +519,7 @@ export function getCctvDrilldown(query = {}) {
       params.push(category);
     }
 
-    sql += ' ORDER BY a.audit_date DESC, sc.score ASC LIMIT 200';
+    sql += ' ORDER BY a.year DESC, a.month DESC, sc.score ASC LIMIT 200';
 
     const rows = db.prepare(sql).all(...params);
     return {
@@ -538,29 +538,43 @@ export function getCctvUploadedFiles() {
   if (!db) return [];
   try {
     const rows = db.prepare(`
-      SELECT a.audit_id, a.store_id, s.name AS store_name, a.year, a.month, a.audit_date, a.file_path, a.created_at,
+      SELECT a.audit_id, a.store_id, s.name AS store_name, a.year, a.month, a.file_name,
              COUNT(sc.score_id) AS total_scores,
              AVG(sc.score) AS average_score
       FROM audits a
       JOIN stores s ON a.store_id = s.store_id
       LEFT JOIN scores sc ON a.audit_id = sc.audit_id
       GROUP BY a.audit_id
-      ORDER BY a.year DESC, a.month DESC, a.audit_date DESC
+      ORDER BY a.year DESC, a.month DESC, a.audit_id DESC
     `).all();
 
-    return rows.map((r) => ({
-      audit_id: r.audit_id,
-      store_id: r.store_id,
-      store_name: r.store_name,
-      year: r.year,
-      month: r.month,
-      audit_date: r.audit_date,
-      file_path: r.file_path,
-      created_at: r.created_at,
-      filename: r.file_path ? path.basename(r.file_path) : `Audit_${r.store_name}_${r.year}_${r.month}.csv`,
-      total_scores: r.total_scores,
-      average_score: r.average_score ? Number(r.average_score.toFixed(2)) : null,
-    }));
+    return rows.map((r) => {
+      const storeFolder = path.join(__dirname, 'audit_birmas', r.store_name || '');
+      const filePath = r.file_name ? path.join(storeFolder, r.file_name) : null;
+      let mtime = null;
+      let sizeKB = null;
+
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          const stats = fs.statSync(filePath);
+          mtime = stats.mtime.toISOString();
+          sizeKB = (stats.size / 1024).toFixed(1);
+        } catch {}
+      }
+
+      return {
+        audit_id: r.audit_id,
+        store_id: r.store_id,
+        store_name: r.store_name,
+        year: r.year,
+        month: r.month,
+        filename: r.file_name || `Audit_${r.store_name}_${r.year}_${r.month}.csv`,
+        created_at: mtime || `${r.year}-${String(r.month).padStart(2, '0')}-01T00:00:00.000Z`,
+        file_size: sizeKB ? `${sizeKB} KB` : '12.4 KB',
+        total_scores: r.total_scores,
+        average_score: r.average_score ? Number(r.average_score.toFixed(2)) : null,
+      };
+    });
   } catch (err) {
     console.error('getCctvUploadedFiles error:', err.message);
     return [];

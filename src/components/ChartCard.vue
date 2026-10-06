@@ -3,11 +3,11 @@
     <!-- Store Header with Mascot if storeId is provided (Store Pass Rate by Category) -->
     <div
       v-if="storeId != null"
-      class="flex items-center justify-between gap-2 mb-2 px-1 pb-2 border-b border-slate-800/80 select-none"
+      class="flex items-center justify-between gap-2 mb-2 px-1 pb-2 border-b border-slate-100 select-none"
     >
       <div class="flex items-center gap-2.5">
         <StoreMascot :store="storeId" size="md" class="flex-shrink-0" />
-        <span class="text-sm sm:text-base font-bold text-white tracking-tight leading-snug">
+        <span class="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-snug">
           {{ currentStoreMeta?.shortName || currentStoreMeta?.name || stripStoreBrand(options?.title?.text) || 'Store' }}
         </span>
       </div>
@@ -785,11 +785,11 @@ onBeforeUnmount(() => {
 <style scoped>
 .card {
   padding: 1rem;
-  border-radius: 0.75rem;
-  background: #1f2937; /* grey */
-  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-  border: 1px solid #4b5563;
-  color: #f1f5f9;
+  border-radius: 1rem;
+  background: #ffffff;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+  border: 1px solid #e2e8f0;
+  color: #0f172a;
   height: 250px;
   width: 100%;
   position: relative;
@@ -808,21 +808,22 @@ canvas { display:block; width:100%; height:100%; }
   display:flex;
   align-items:center;
   justify-content:center;
-  background: rgba(2,6,23,0.45);
+  background: rgba(255, 255, 255, 0.7);
   z-index: 5;
 }
-.loader { color: #e2e8f0; font-weight:600; }
+.loader { color: #0d9488; font-weight: 700; font-size: 0.875rem; }
 
 .chart-error {
   position: absolute;
   left: 12px;
   bottom: 12px;
   right: 12px;
-  background: rgba(176,0,32,0.08);
-  color: #fecaca;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
   padding: 8px;
-  border-radius: 6px;
+  border-radius: 8px;
   z-index: 6;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 </style>

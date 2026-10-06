@@ -7,17 +7,17 @@
         description="Add new store audit data here. Choose the store, year, and month, then upload the CSV file for that audit. Once uploaded, all the charts on the dashboard update automatically with the new data."
       />
 
-      <div class="mt-6 p-6 rounded-2xl bg-slate-900 border border-slate-700 shadow-xl max-w-3xl">
+      <div class="mt-6 p-6 rounded-2xl bg-white border border-slate-200 shadow-sm max-w-3xl">
         <UploadDataCard :stores="stores" @uploaded="onUploaded" />
 
-        <div v-if="uploadComplete" class="mt-5 p-4 rounded-xl bg-emerald-950/40 border border-emerald-800/50 text-emerald-300 text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div v-if="uploadComplete" class="mt-5 p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
           <div class="flex items-center gap-2.5">
             <span class="text-base">✅</span>
-            <span>Audit data saved to SQLite database. Dashboard charts and table below now reflect this update.</span>
+            <span class="font-medium">Audit data saved to SQLite database. Dashboard charts and table below now reflect this update.</span>
           </div>
           <router-link
             to="/dashboard"
-            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs whitespace-nowrap transition-colors text-center shadow-lg shadow-emerald-600/20"
+            class="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs whitespace-nowrap transition-colors text-center shadow-md shadow-teal-600/20"
           >
             View Dashboard →
           </router-link>

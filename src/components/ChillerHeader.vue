@@ -183,26 +183,8 @@ onUnmounted(() => {
           </nav>
         </div>
 
-        <!-- Right Side: Year Switcher (if on Store Audit), User Role Profile, Tools & Logout -->
+        <!-- Right Side: User Role Profile, Tools & Logout -->
         <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
-          <!-- Year Switcher (Shown when on Store Audit dashboard) -->
-          <div v-if="route.path.startsWith('/dashboard')" class="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
-            <router-link
-              to="/dashboard"
-              class="px-2.5 py-1 rounded-lg text-xs font-bold transition-all"
-              :class="route.path === '/dashboard' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'"
-            >
-              2026
-            </router-link>
-            <router-link
-              to="/dashboard/2025"
-              class="px-2.5 py-1 rounded-lg text-xs font-bold transition-all"
-              :class="route.path === '/dashboard/2025' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'"
-            >
-              2025
-            </router-link>
-          </div>
-
           <!-- Current User Profile & Role Badge -->
           <div v-if="currentUser" class="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl shadow-xs">
             <div class="w-6 h-6 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center font-black text-[11px]">
@@ -251,6 +233,31 @@ onUnmounted(() => {
             <LogOut class="w-3.5 h-3.5" />
             <span class="hidden sm:inline">Logout</span>
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Store Audit Submenu Bar (2026 / 2025 Audit Selector) -->
+    <div v-if="route.path.startsWith('/dashboard')" class="bg-slate-50/90 border-t border-slate-200/80 px-4 sm:px-6 lg:px-8 py-1.5">
+      <div class="max-w-[1560px] mx-auto flex items-center gap-3">
+        <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+          Store Audit Period:
+        </span>
+        <div class="inline-flex items-center bg-white p-0.5 rounded-xl border border-slate-200 shadow-xs">
+          <router-link
+            to="/dashboard"
+            class="px-3 py-1 rounded-lg text-xs font-bold transition-all"
+            :class="route.path === '/dashboard' ? 'bg-teal-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'"
+          >
+            2026 Audit (Current)
+          </router-link>
+          <router-link
+            to="/dashboard/2025"
+            class="px-3 py-1 rounded-lg text-xs font-bold transition-all"
+            :class="route.path === '/dashboard/2025' ? 'bg-teal-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'"
+          >
+            2025 Audit (Archive)
+          </router-link>
         </div>
       </div>
     </div>
