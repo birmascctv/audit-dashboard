@@ -80,8 +80,16 @@ onUnmounted(() => {
             :to="isAdmin ? '/sales' : '/dashboard'"
             class="flex items-center gap-2.5 group"
           >
-            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-teal-600 to-cyan-600 flex items-center justify-center text-white shadow-md shadow-teal-500/20 group-hover:scale-105 transition-transform">
-              <ClipboardCheck class="w-5 h-5 text-white" />
+            <div class="w-9 h-9 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform p-0.5">
+              <img
+                src="/birmas_logo.png"
+                alt="Birmas Logo"
+                class="w-full h-full object-contain"
+                onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';"
+              />
+              <div class="w-full h-full rounded-lg bg-gradient-to-tr from-teal-600 to-cyan-600 hidden items-center justify-center text-white">
+                <ClipboardCheck class="w-4 h-4 text-white" />
+              </div>
             </div>
             <div>
               <div class="flex items-center gap-1.5">

@@ -64,8 +64,16 @@ async function handleLogin() {
     <div class="w-full max-w-md relative z-10 space-y-4">
       <!-- Brand Logo / Header -->
       <div class="text-center mb-6">
-        <div class="inline-flex w-16 h-16 rounded-2xl bg-gradient-to-tr from-teal-600 to-cyan-600 items-center justify-center text-white shadow-xl shadow-teal-600/20 mb-3">
-          <ClipboardCheck class="w-8 h-8 text-white" />
+        <div class="inline-flex w-16 h-16 rounded-2xl bg-white border border-slate-200 overflow-hidden items-center justify-center shadow-xl shadow-slate-300/40 mb-3 p-1">
+          <img
+            src="/birmas_logo.png"
+            alt="Birmas Logo"
+            class="w-full h-full object-contain"
+            onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';"
+          />
+          <div class="w-full h-full rounded-xl bg-gradient-to-tr from-teal-600 to-cyan-600 hidden items-center justify-center text-white">
+            <ClipboardCheck class="w-8 h-8 text-white" />
+          </div>
         </div>
         <h1 class="text-2xl font-black text-slate-900 tracking-tight">
           Birmas Audit Dashboard
