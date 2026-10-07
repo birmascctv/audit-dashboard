@@ -1572,7 +1572,7 @@ async function startServer() {
     }
   });
 
-  const server = app.listen(PORT, () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Birmas Server] SQLite Tables Ready at http://localhost:${PORT}`);
 
     // Combined automatic sync routine:
