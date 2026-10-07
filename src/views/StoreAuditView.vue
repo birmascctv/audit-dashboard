@@ -242,8 +242,25 @@
         description="See how each store performs across every category. Each chart below is one store, with a bar for every category's pass rate per month. The red dashed line is that store's average pass rate, so you can quickly spot which categories are above or below its own average."
       />
 
-      <div class="category-filter-row mb-3">
-        <CheckboxFilterBar :items="categoryFilterItems" v-model="selectedCategoriesForStore" all-label="All categories" />
+      <div class="category-filter-row mb-3 flex flex-wrap items-center justify-between gap-3">
+        <CheckboxFilterBar :items="categoryFilterItems" v-model="selectedCategoriesForStore" all-label="Filter Categories" />
+
+        <!-- Shared Category Color Legend Reference Bar -->
+        <div class="flex items-center gap-3 flex-wrap bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs text-xs font-semibold text-slate-700">
+          <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Legend:</span>
+          <div
+            v-for="cat in activeCategoryLegends"
+            :key="'legend-' + cat.name"
+            class="flex items-center gap-1.5"
+          >
+            <span class="w-2.5 h-2.5 rounded-full border border-black/10" :style="{ backgroundColor: cat.color }"></span>
+            <span class="text-xs text-slate-700">{{ cat.name }}</span>
+          </div>
+          <div class="flex items-center gap-1.5 pl-2 border-l border-slate-200 text-rose-600 font-bold">
+            <span class="w-3 h-1 bg-rose-500 rounded-full inline-block"></span>
+            <span>Store Average</span>
+          </div>
+        </div>
       </div>
 
       <div class="passrate-grid grid grid-cols-1 gap-4 md:grid-cols-2 mt-2">
@@ -355,6 +372,16 @@ const categoryFilterItems = computed(() => categories.value.map((cat, idx) => ({
   color: getCategoryColor(cat) || colorForId(idx + 1)
 })))
 
+const activeCategoryLegends = computed(() => {
+  const selected = selectedCategoriesForStore.value || []
+  return categories.value
+    .filter(cat => selected.length === 0 || selected.includes(cat))
+    .map((cat, idx) => ({
+      name: cat,
+      color: getCategoryColor(cat) || colorForId(idx + 1)
+    }))
+})
+
 const categoryCriteria = computed(() => {
   if (!selectedCategory.value) return []
   return criteria.value.filter(c => c.category === selectedCategory.value)
@@ -424,7 +451,7 @@ function passingGradeLabel(criterion) {
 
 <style scoped>
 .page-gutter {
-  padding-top: 1.25rem;
+  padding-top: 0.35rem;
 }
 .main-grid {
   margin-top: 0.5rem;

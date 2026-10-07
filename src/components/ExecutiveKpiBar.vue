@@ -1,5 +1,5 @@
 <template>
-  <div class="store-ranks-panel mt-3 sm:mt-4 mb-5 p-4 sm:p-5 rounded-2xl bg-white border border-slate-200 shadow-sm text-slate-800">
+  <div class="store-ranks-panel mt-1 mb-4 p-4 sm:p-5 rounded-2xl bg-white border border-slate-200 shadow-sm text-slate-800">
     <!-- Header row: STORE RANKS with active Year -->
     <div class="flex items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
       <div class="flex items-center gap-2.5">

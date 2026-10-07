@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from '../composables/useAuth.js';
 import { useAuditStore } from '../composables/useAuditStore.js';
@@ -43,39 +43,23 @@ const {
 } = useAuth();
 const { stores, selectedStoreId, selectStore } = useAuditStore();
 
-const currentTime = ref('');
-let timer = null;
-
-function updateTime() {
-  const now = new Date();
-  currentTime.value = now.toLocaleTimeString('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
+const cleanUserName = computed(() => {
+  if (!currentUser.value?.name) return 'User';
+  return currentUser.value.name.replace(/\s*\([^)]*\)/g, '').trim();
+});
 
 function handleLogout() {
   logout();
   router.push('/login');
 }
-
-onMounted(() => {
-  updateTime();
-  timer = window.setInterval(updateTime, 1000);
-});
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer);
-});
 </script>
 
 <template>
   <header class="bg-white border-b border-slate-200 text-slate-800 sticky top-0 z-30 shadow-xs">
-    <div class="max-w-[1560px] mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
+    <div class="max-w-[1560px] mx-auto px-4 sm:px-6 lg:px-8 py-2">
       <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <!-- Logo & Navigation Tabs -->
-        <div class="flex flex-wrap items-center gap-3 sm:gap-5">
+        <div class="flex flex-wrap items-center gap-3 sm:gap-4">
           <router-link
             :to="isAdmin ? '/sales' : '/dashboard'"
             class="flex items-center gap-2.5 group"
@@ -106,22 +90,39 @@ onUnmounted(() => {
 
           <!-- Main Navigation Links with Strict Role Visibility -->
           <nav class="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200/80 flex-wrap">
-            <!-- 1. Store Audit Dashboard (Auditor & Superadmin only) -->
-            <router-link
+            <!-- 1. Store Audit Dashboard (2026 / 2025 Inline Switcher) -->
+            <div
               v-if="canAccessStoreAudit"
-              to="/dashboard"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
-              :class="
-                route.path.startsWith('/dashboard')
-                  ? 'bg-teal-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-              "
+              class="flex items-center bg-white/80 p-0.5 rounded-xl border border-slate-200 shadow-2xs"
             >
-              <Store class="w-3.5 h-3.5" />
-              <span>Store Audit</span>
-            </router-link>
+              <router-link
+                to="/dashboard"
+                class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all"
+                :class="
+                  route.path === '/dashboard'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'text-slate-700 hover:text-slate-900 hover:bg-slate-100'
+                "
+              >
+                <Store class="w-3.5 h-3.5" />
+                <span>Store Audit</span>
+                <span class="text-[10px] font-mono font-bold px-1 rounded" :class="route.path === '/dashboard' ? 'bg-teal-700/60 text-white' : 'bg-slate-200/70 text-slate-600'">2026</span>
+              </router-link>
+              <router-link
+                to="/dashboard/2025"
+                class="px-2 py-1.5 rounded-lg text-xs font-bold transition-all"
+                :class="
+                  route.path === '/dashboard/2025'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+                "
+                title="Historical 2025 Store Audit Archive"
+              >
+                <span>2025</span>
+              </router-link>
+            </div>
 
-            <!-- 2. Upload Store Audits (Auditor & Superadmin only - Right of Store Audit) -->
+            <!-- 2. Upload Store Audits (Auditor & Superadmin only) -->
             <router-link
               v-if="canAccessUploadAudits"
               to="/upload"
@@ -183,16 +184,16 @@ onUnmounted(() => {
           </nav>
         </div>
 
-        <!-- Right Side: User Role Profile, Tools & Logout -->
+        <!-- Right Side: User Profile & Logout (Time removed) -->
         <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
-          <!-- Current User Profile & Role Badge -->
-          <div v-if="currentUser" class="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl shadow-xs">
+          <!-- Current User Profile & Role Badge (without brackets in username) -->
+          <div v-if="currentUser" class="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl shadow-xs">
             <div class="w-6 h-6 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center font-black text-[11px]">
-              {{ currentUser.name ? currentUser.name.charAt(0) : 'U' }}
+              {{ cleanUserName.charAt(0) }}
             </div>
             <div>
               <div class="flex items-center gap-1.5">
-                <span class="text-xs font-bold text-slate-900 leading-tight">{{ currentUser.name }}</span>
+                <span class="text-xs font-bold text-slate-900 leading-tight">{{ cleanUserName }}</span>
                 <span
                   class="text-[9px] font-bold px-1.5 py-0.2 rounded uppercase tracking-wider"
                   :class="{
@@ -212,52 +213,22 @@ onUnmounted(() => {
             v-if="route.path === '/audit'"
             @click="emit('toggleSound')"
             type="button"
-            class="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors shadow-xs"
+            class="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors shadow-xs cursor-pointer"
             :title="soundEnabled ? 'Mute Scanner Beeper' : 'Unmute Scanner Beeper'"
           >
             <component :is="soundEnabled ? Volume2 : VolumeX" class="w-4 h-4" />
           </button>
 
-          <!-- Clock -->
-          <div class="hidden xl:flex items-center text-xs font-mono font-bold text-slate-500 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200">
-            {{ currentTime }}
-          </div>
-
           <!-- Logout Button -->
           <button
             @click="handleLogout"
             type="button"
-            class="p-2 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors text-xs font-bold flex items-center gap-1.5 shadow-xs"
+            class="px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer"
             title="Log Out"
           >
             <LogOut class="w-3.5 h-3.5" />
-            <span class="hidden sm:inline">Logout</span>
+            <span>Logout</span>
           </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Store Audit Submenu Bar (2026 / 2025 Audit Selector) -->
-    <div v-if="route.path.startsWith('/dashboard')" class="bg-slate-50/90 border-t border-slate-200/80 px-4 sm:px-6 lg:px-8 py-1.5">
-      <div class="max-w-[1560px] mx-auto flex items-center gap-3">
-        <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-          Store Audit Period:
-        </span>
-        <div class="inline-flex items-center bg-white p-0.5 rounded-xl border border-slate-200 shadow-xs">
-          <router-link
-            to="/dashboard"
-            class="px-3 py-1 rounded-lg text-xs font-bold transition-all"
-            :class="route.path === '/dashboard' ? 'bg-teal-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'"
-          >
-            2026 Audit (Current)
-          </router-link>
-          <router-link
-            to="/dashboard/2025"
-            class="px-3 py-1 rounded-lg text-xs font-bold transition-all"
-            :class="route.path === '/dashboard/2025' ? 'bg-teal-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'"
-          >
-            2025 Audit (Archive)
-          </router-link>
         </div>
       </div>
     </div>

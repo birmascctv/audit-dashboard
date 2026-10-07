@@ -192,8 +192,8 @@ function initTables(db) {
       role = excluded.role;
   `);
   upsertUser.run('user-superadmin', 'superadmin', 'superadmin@birmas.id', 'superadmin666', 'Super Admin', 'superadmin');
-  upsertUser.run('user-admin', 'admin', 'admin@birmas.id', 'admin666', 'Admin (Sales & Finance)', 'admin');
-  upsertUser.run('user-chrisna', 'chrisna', 'chrisna@birmas.id', 'auditor666', 'Chrisna (Auditor)', 'auditor');
+  upsertUser.run('user-admin', 'admin', 'admin@birmas.id', 'admin666', 'Admin', 'admin');
+  upsertUser.run('user-chrisna', 'chrisna', 'chrisna@birmas.id', 'auditor666', 'Chrisna', 'auditor');
   upsertUser.run('user-auditor', 'auditor', 'auditor@birmas.id', 'auditor666', 'Auditor Staff', 'auditor');
 
   // Official stores: Kuningan, Sudirman, Kwitang, Lebak Bulus, Nomadic Bandung

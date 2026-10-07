@@ -721,11 +721,10 @@ async function loadData() {
       options.datasets.bar.categoryPercentage = options.datasets.bar.categoryPercentage ?? 0.8
       options.datasets.bar.barPercentage = options.datasets.bar.barPercentage ?? 0.9
 
-      // show the legend so each store's/category's bar color (and the
-      // average reference line) can be identified; informational only
+      // show the legend for category charts, but hide on multi-grid store charts where shared legend is shown above
       options.plugins = options.plugins || {}
       options.plugins.legend = options.plugins.legend || {}
-      options.plugins.legend.display = payload.datasets.length > 0
+      options.plugins.legend.display = props.storeId == null && payload.datasets.length > 0
       options.plugins.legend.labels = options.plugins.legend.labels || {}
       options.plugins.legend.labels.usePointStyle = true
       options.plugins.legend.onClick = function () {}

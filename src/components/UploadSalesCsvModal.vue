@@ -291,44 +291,76 @@ const parsedStats = computed(() => {
   };
 });
 
-// Import into Dashboard (POST to /api/sales/push with raw file tracking)
+const uploadProgress = ref(0);
+const uploadProgressText = ref('');
+
+// Import into Dashboard (Chunked POST to handle 50,000+ rows reliably without network/memory failure)
 async function handleImport() {
   if (parsedRows.value.length === 0 || isUploading.value) return;
 
   isUploading.value = true;
   uploadStatus.value = null;
+  uploadProgress.value = 0;
+  uploadProgressText.value = 'Preparing import batches...';
 
   try {
-    const res = await fetch('/api/sales/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        filename: fileName.value,
-        fileSize: fileSize.value,
-        fileContent: rawCsvText.value,
-        uploadedBy: 'Admin',
-        transactions: parsedRows.value,
-      }),
-    });
+    const totalRows = parsedRows.value.length;
+    const CHUNK_SIZE = 4000;
+    const totalChunks = Math.ceil(totalRows / CHUNK_SIZE);
+    const generatedFileId = `sfile-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
 
-    const data = await res.json();
-    if (res.ok && data.success) {
-      uploadStatus.value = {
-        success: true,
-        message: `Successfully imported ${data.count || parsedRows.value.length} sales records! File has been archived.`,
-      };
-      emit('imported', parsedRows.value);
-      setTimeout(() => {
-        handleClose();
-      }, 1200);
-    } else {
-      uploadStatus.value = {
-        success: false,
-        message: data.message || data.error || 'Server rejected the import.',
-      };
+    // Truncate raw CSV archive string if excessively large to protect browser memory
+    const safeArchiveContent = rawCsvText.value.length > 2000000 
+      ? rawCsvText.value.slice(0, 2000000) + '\n...[Preview truncated for high capacity]' 
+      : rawCsvText.value;
+
+    let savedTotal = 0;
+
+    for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+      const start = chunkIdx * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, totalRows);
+      const chunkRows = parsedRows.value.slice(start, end);
+
+      uploadProgress.value = Math.round(((chunkIdx) / totalChunks) * 100);
+      uploadProgressText.value = `Importing batch ${chunkIdx + 1} of ${totalChunks} (${start + 1} - ${end} of ${totalRows.toLocaleString()} rows)...`;
+
+      const res = await fetch('/api/sales/push', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fileId: generatedFileId,
+          filename: fileName.value,
+          fileSize: fileSize.value,
+          fileContent: chunkIdx === 0 ? safeArchiveContent : '',
+          uploadedBy: 'Admin',
+          transactions: chunkRows,
+          isChunk: true,
+          chunkIndex: chunkIdx,
+          totalChunks: totalChunks,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error || `Failed on batch ${chunkIdx + 1}`);
+      }
+
+      savedTotal += chunkRows.length;
     }
+
+    uploadProgress.value = 100;
+    uploadProgressText.value = 'Completed!';
+    uploadStatus.value = {
+      success: true,
+      message: `Successfully imported all ${savedTotal.toLocaleString()} sales records! File has been archived.`,
+    };
+
+    emit('imported', parsedRows.value);
+    setTimeout(() => {
+      handleClose();
+    }, 1200);
   } catch (err) {
     uploadStatus.value = {
       success: false,
@@ -542,6 +574,20 @@ function handleClose() {
             </div>
           </div>
 
+          <!-- Status & Progress Indicator -->
+          <div v-if="isUploading" class="space-y-2 p-4 rounded-2xl bg-teal-50 border border-teal-200">
+            <div class="flex items-center justify-between text-xs font-bold text-teal-900">
+              <span>{{ uploadProgressText }}</span>
+              <span>{{ uploadProgress }}%</span>
+            </div>
+            <div class="w-full h-2.5 bg-teal-200/60 rounded-full overflow-hidden">
+              <div
+                class="h-full bg-teal-600 transition-all duration-200 rounded-full"
+                :style="{ width: `${uploadProgress}%` }"
+              ></div>
+            </div>
+          </div>
+
           <!-- Status Message -->
           <div
             v-if="uploadStatus"
@@ -556,25 +602,32 @@ function handleClose() {
       </div>
 
       <!-- Modal Footer -->
-      <div class="px-6 py-4 border-t border-slate-100 flex items-center justify-end bg-slate-50/50 gap-2.5">
-        <button
-          type="button"
-          @click="handleClose"
-          class="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200 transition-colors"
-        >
-          Cancel
-        </button>
+      <div class="px-6 py-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50 gap-2.5">
+        <div class="text-[11px] text-slate-500 hidden sm:block">
+          ⚡ High capacity engine: supports 50,000+ rows with auto-batch streaming.
+        </div>
 
-        <button
-          v-if="parsedRows.length > 0"
-          type="button"
-          @click="handleImport"
-          :disabled="isUploading"
-          class="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-extrabold flex items-center gap-2 shadow-md shadow-teal-600/20 disabled:opacity-50 transition-all cursor-pointer"
-        >
-          <Database class="w-4 h-4" />
-          <span>{{ isUploading ? 'Importing Transactions...' : `Import ${parsedRows.length} Rows to Dashboard` }}</span>
-        </button>
+        <div class="flex items-center gap-2.5">
+          <button
+            type="button"
+            @click="handleClose"
+            :disabled="isUploading"
+            class="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200 transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+
+          <button
+            v-if="parsedRows.length > 0"
+            type="button"
+            @click="handleImport"
+            :disabled="isUploading"
+            class="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-extrabold flex items-center gap-2 shadow-md shadow-teal-600/20 disabled:opacity-50 transition-all cursor-pointer"
+          >
+            <Database class="w-4 h-4" />
+            <span>{{ isUploading ? `Importing (${uploadProgress}%)...` : `Import ${parsedRows.length.toLocaleString()} Rows` }}</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

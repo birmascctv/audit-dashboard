@@ -75,14 +75,13 @@ async function handleLogin() {
       <div class="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xl shadow-slate-200/60">
         <div class="mb-5 border-b border-slate-100 pb-3 flex items-center justify-between">
           <h2 class="text-base font-bold text-slate-900">Sign In</h2>
-          <span class="text-[11px] text-slate-400">Role-Based Access</span>
         </div>
 
         <form @submit.prevent="handleLogin" class="space-y-4">
-          <!-- Username / Email -->
+          <!-- Username -->
           <div>
             <label class="block text-xs font-bold text-slate-700 mb-1.5">
-              Username or Email
+              Username
             </label>
             <div class="relative">
               <UserIcon class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -91,7 +90,7 @@ async function handleLogin() {
                 type="text"
                 required
                 autocomplete="username"
-                placeholder="superadmin, admin, or chrisna..."
+                placeholder="Enter username"
                 class="w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm font-medium placeholder-slate-400 focus:outline-none focus:border-teal-500 focus:bg-white focus:ring-4 focus:ring-teal-100 transition-all"
               />
             </div>
@@ -109,7 +108,7 @@ async function handleLogin() {
                 type="password"
                 required
                 autocomplete="current-password"
-                placeholder="Enter password..."
+                placeholder="Enter password"
                 class="w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm font-medium placeholder-slate-400 focus:outline-none focus:border-teal-500 focus:bg-white focus:ring-4 focus:ring-teal-100 transition-all"
               />
             </div>
