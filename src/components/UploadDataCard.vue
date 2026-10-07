@@ -153,8 +153,21 @@
       </div>
     </form>
 
-    <div v-if="message" :class="['mt-4 p-3.5 rounded-xl text-sm border leading-relaxed', messageClass]">
-      {{ message }}
+    <!-- High-Contrast Status Banner with Distinct Notification Types -->
+    <div
+      v-if="message"
+      :class="[
+        'mt-5 p-4 rounded-2xl border-2 text-sm leading-relaxed shadow-sm transition-all',
+        messageClass
+      ]"
+    >
+      <div class="flex items-start gap-3">
+        <span class="text-xl shrink-0 leading-none mt-0.5">{{ messageIcon }}</span>
+        <div class="flex-1">
+          <h4 v-if="messageTitle" class="text-xs font-black uppercase tracking-wider mb-1">{{ messageTitle }}</h4>
+          <p class="font-bold text-sm leading-snug">{{ message }}</p>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -190,9 +203,29 @@ const file = ref(null)
 const fileInput = ref(null)
 const submitting = ref(false)
 const message = ref('')
+const messageTitle = ref('')
+const messageIcon = ref('ℹ️')
 const messageClass = ref('')
 const needsConfirm = ref(false)
 const isDragging = ref(false)
+
+function setNotification(type, title, text) {
+  message.value = text
+  messageTitle.value = title
+  if (type === 'error') {
+    messageIcon.value = '❌'
+    messageClass.value = 'bg-red-50 text-red-950 border-red-500 font-bold'
+  } else if (type === 'warning') {
+    messageIcon.value = '⚠️'
+    messageClass.value = 'bg-amber-50 text-amber-950 border-amber-500 font-bold'
+  } else if (type === 'info') {
+    messageIcon.value = 'ℹ️'
+    messageClass.value = 'bg-sky-50 text-sky-950 border-sky-500 font-bold'
+  } else if (type === 'success') {
+    messageIcon.value = '✅'
+    messageClass.value = 'bg-emerald-50 text-emerald-950 border-emerald-500 font-bold'
+  }
+}
 
 function stripStoreBrand(name) {
   if (!name) return ''
@@ -209,8 +242,11 @@ function validateAndAssignFile(selectedFile) {
   if (!selectedFile) return
   const fileName = selectedFile.name || ''
   if (!fileName.toLowerCase().endsWith('.csv')) {
-    message.value = 'File format must be CSV'
-    messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
+    setNotification(
+      'error',
+      'File Type Must Be CSV',
+      'Invalid file format. Strictly .csv files are supported (e.g. Log Auditor OL Sudirman 4 Agustus 2026.csv). Please upload a valid CSV file.'
+    )
     clearFile()
     return
   }
@@ -221,26 +257,36 @@ function validateAndAssignFile(selectedFile) {
     try {
       const text = (e.target?.result || '').toString().trim()
       if (!text) {
-        message.value = 'Uploaded CSV file contains no data rows.'
-        messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
+        setNotification(
+          'error',
+          'Empty File',
+          'Uploaded CSV file contains no data rows. Please ensure your audit CSV file is not empty.'
+        )
         clearFile()
         return
       }
       const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0)
       if (lines.length < 2) {
-        message.value = 'Uploaded CSV file contains no data rows.'
-        messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
+        setNotification(
+          'error',
+          'Empty File',
+          'Uploaded CSV file contains no data rows besides the header line.'
+        )
         clearFile()
         return
       }
-      const headerCols = lines[0].split(',').map(col => col.replace(/^["']|["']$/g, '').trim())
-      const requiredCols = ['Category', 'Criteria', 'Score', 'Passing Grade']
+      const headerCols = lines[0].split(',').map(col => col.replace(/^["']|["']$/g, '').trim().toLowerCase())
+      const requiredCols = ['category', 'criteria', 'score', 'passing grade']
       const missing = requiredCols.filter(
-        req => !headerCols.some(col => col.toLowerCase() === req.toLowerCase())
+        req => !headerCols.some(col => col === req || col.includes(req))
       )
       if (missing.length > 0) {
-        message.value = `Data has different table format (failed to upload). Missing columns: ${missing.join(', ')}.`
-        messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
+        const displayMissing = missing.map(m => m.charAt(0).toUpperCase() + m.slice(1)).join(', ')
+        setNotification(
+          'error',
+          'File Structure Is Incorrect',
+          `Data has different table format (failed to upload). Missing required columns: ${displayMissing}. Expected standard columns: Category, Criteria, Score, Passing Grade.`
+        )
         clearFile()
         return
       }
@@ -293,7 +339,14 @@ onMounted(async () => {
 })
 
 async function submit() {
-  if (!store.value || !year.value || !month.value || !file.value) return
+  if (!store.value || !year.value || !month.value || !file.value) {
+    setNotification(
+      'warning',
+      'Incomplete Form',
+      'Please select an outlet store, audit year, audit month, and choose a valid CSV file before uploading.'
+    )
+    return
+  }
   submitting.value = true
   message.value = ''
 
@@ -310,33 +363,46 @@ async function submit() {
     try { data = await res.json() } catch (e) { /* ignore */ }
 
     if (!res.ok || !data) {
-      message.value = (data && data.message) || `Upload failed with server status ${res.status}.`
-      messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
+      const errMsg = (data && data.message) || `Upload failed with server status ${res.status}.`
+      let title = 'Upload Failed'
+      if (data?.errorType === 'INCORRECT_STRUCTURE') title = 'File Structure Is Incorrect'
+      else if (data?.errorType === 'INVALID_FILE_TYPE') title = 'File Type Must Be CSV'
+      else if (data?.errorType === 'EMPTY_FILE') title = 'Empty File'
+      else if (data?.errorType === 'MISSING_FIELDS') title = 'Missing Required Fields'
+
+      setNotification('error', title, errMsg)
       needsConfirm.value = false
     } else if (data.status === 'confirm_required') {
-      message.value = data.message
-      messageClass.value = 'bg-amber-50 text-amber-900 border-amber-300 font-semibold shadow-xs'
+      setNotification(
+        'warning',
+        'File Already Exists',
+        data.message || `File "${file.value?.name}" already exists for ${store.value} (${month.value} ${year.value}) with different data. Click "Upload Anyway" to replace it.`
+      )
       needsConfirm.value = true
       submitting.value = false
       return
     } else if (data.status === 'success') {
-      message.value = data.message || 'Audit file successfully processed and stored!'
-      messageClass.value = 'bg-emerald-50 text-emerald-800 border-emerald-200 font-semibold shadow-xs'
+      setNotification(
+        'success',
+        'Upload Successful',
+        data.message || `Audit file successfully processed and stored for ${store.value} (${month.value} ${year.value})!`
+      )
       needsConfirm.value = false
       clearFile()
       emit('uploaded')
     } else if (data.status === 'unchanged') {
-      message.value = data.message
-      messageClass.value = 'bg-amber-50 text-amber-900 border-amber-300 font-semibold shadow-xs'
+      setNotification(
+        'info',
+        'File Already Exists',
+        data.message || `File already exists: exact same audit records are already recorded for ${store.value} (${month.value} ${year.value}). No changes needed.`
+      )
       needsConfirm.value = false
     } else {
-      message.value = data.message || 'Upload failed.'
-      messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
+      setNotification('error', 'Upload Failed', data.message || 'Data failed to upload.')
       needsConfirm.value = false
     }
   } catch (e) {
-    message.value = 'Upload failed due to network error.'
-    messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
+    setNotification('error', 'Network Connection Error', 'Upload failed due to network error. Please verify server connectivity and retry.')
     needsConfirm.value = false
   } finally {
     submitting.value = false

@@ -6,21 +6,33 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const CCTV_DB_PATH = process.env.AUDIT_DB_PATH || path.join(__dirname, 'audit_birmas', 'audit_birmas.db');
+const AUDIT_DB_PATH = process.env.AUDIT_DB_PATH || path.join(__dirname, 'audit_birmas', 'audit_birmas.db');
 
-let cctvDbInstance = null;
+let storeAuditDbInstance = null;
 
-export function getCctvDb() {
-  if (!cctvDbInstance) {
-    if (fs.existsSync(CCTV_DB_PATH)) {
-      cctvDbInstance = new DatabaseSync(CCTV_DB_PATH);
+export function getStoreAuditDb() {
+  if (!storeAuditDbInstance) {
+    if (fs.existsSync(AUDIT_DB_PATH)) {
+      storeAuditDbInstance = new DatabaseSync(AUDIT_DB_PATH);
       try {
-        cctvDbInstance.exec('ALTER TABLE criteria ADD COLUMN unit TEXT;');
+        storeAuditDbInstance.exec('ALTER TABLE criteria ADD COLUMN unit TEXT;');
       } catch (_) {}
     }
   }
-  return cctvDbInstance;
+  return storeAuditDbInstance;
 }
+
+export function resetStoreAuditDb() {
+  if (storeAuditDbInstance) {
+    try {
+      storeAuditDbInstance.close();
+    } catch (_) {}
+    storeAuditDbInstance = null;
+  }
+}
+
+// Backward-compatible alias
+export const getCctvDb = getStoreAuditDb;
 
 const COLOR_PALETTE = [
   '#a855f7', // Store 1: Lebak Bulus (purple)
@@ -88,9 +100,9 @@ export function getCctvCategories() {
   }
 }
 
-// 3. Criteria list
-export function getCctvCriteria(query = {}) {
-  const db = getCctvDb();
+// 3. Store criteria list
+export function getStoreCriteria(query = {}) {
+  const db = getStoreAuditDb();
   if (!db) return [];
   try {
     const year = query.year ? parseInt(query.year, 10) : null;
@@ -159,10 +171,13 @@ export function getCctvCriteria(query = {}) {
       metrics: r.metrics || null,
     }));
   } catch (err) {
-    console.error('getCctvCriteria error:', err.message);
+    console.error('getStoreCriteria error:', err.message);
     return [];
   }
 }
+
+// Backward-compatible alias
+export const getCctvCriteria = getStoreCriteria;
 
 // 4. Category Monthly Trends
 export function getCategoryMonthly(category, query = {}) {

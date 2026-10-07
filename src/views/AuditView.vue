@@ -12,6 +12,7 @@ import {
   Building2,
   RefreshCw,
   CheckCircle2,
+  ClipboardCheck,
   AlertTriangle,
   AlertCircle,
   FileText,
@@ -276,43 +277,52 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
-    <!-- Top Bar: Birmas Store Selector & ESB Status (Light Gray & Tosca Theme) -->
-    <div class="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-      <!-- Store Location Selector (Overall Store without chiller labels) -->
+    <!-- Standardized Submenu Header Section -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
       <div class="flex items-center gap-3.5">
-        <div class="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center shrink-0 shadow-sm">
-          <Building2 class="w-6 h-6" />
+        <div class="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 shadow-xs shrink-0">
+          <ClipboardCheck class="w-6 h-6 text-teal-700" />
         </div>
         <div>
-          <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-            STORE LOCATION UNDER AUDIT
-          </span>
-          <div class="relative inline-block mt-0.5">
-            <select
-              :value="selectedStoreId"
-              @change="selectStore($event.target.value)"
-              class="appearance-none bg-slate-50 hover:bg-slate-100 border border-slate-300 text-slate-900 font-extrabold text-base sm:text-lg rounded-xl pl-3 pr-8 py-1.5 focus:outline-none focus:border-teal-500 cursor-pointer transition-colors"
-            >
-              <option v-for="s in stores" :key="s.id" :value="s.id">
-                {{ s.name }}
-              </option>
-            </select>
-            <ChevronDown class="w-4 h-4 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <div class="flex items-center gap-2">
+            <h2 class="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              Physical Stock Audit
+            </h2>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
+              Station & Reconciliation
+            </span>
           </div>
+          <p class="text-xs text-slate-500 mt-0.5">
+            Physical barcode scanner station, variant bottle count, and live inventory discrepancy verification against ESB records
+          </p>
         </div>
       </div>
 
-      <!-- Action Bar: Add Barcode, Finalize -->
-      <div class="flex flex-wrap items-center gap-2 sm:gap-2.5">
+      <!-- Action Bar: Store Selector, Add Barcode, Complete Audit -->
+      <div class="flex flex-wrap items-center gap-2.5">
+        <!-- Store Location Selector -->
+        <div class="relative inline-block">
+          <select
+            :value="selectedStoreId"
+            @change="selectStore($event.target.value)"
+            class="appearance-none bg-slate-50 hover:bg-slate-100 border border-slate-300 text-slate-900 font-bold text-xs sm:text-sm rounded-xl pl-3 pr-8 py-2 focus:outline-none focus:border-teal-500 cursor-pointer transition-colors shadow-2xs"
+          >
+            <option v-for="s in stores" :key="s.id" :value="s.id">
+              {{ s.name }}
+            </option>
+          </select>
+          <ChevronDown class="w-4 h-4 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
+
         <!-- Add New Barcode Button -->
         <button
           @click="openAddBarcodeWithPrefill()"
           type="button"
-          class="px-3.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+          class="px-3.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
           title="Add a new barcode based on variant or new product"
         >
           <Plus class="w-3.5 h-3.5 text-teal-700" />
-          <span>Add New Barcode</span>
+          <span>Add Barcode</span>
         </button>
 
         <!-- Finalize Audit Button -->

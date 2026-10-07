@@ -208,17 +208,6 @@ function handleLogout() {
             </div>
           </div>
 
-          <!-- Sound Mute Toggle (for stock scanner) -->
-          <button
-            v-if="route.path === '/audit'"
-            @click="emit('toggleSound')"
-            type="button"
-            class="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors shadow-xs cursor-pointer"
-            :title="soundEnabled ? 'Mute Scanner Beeper' : 'Unmute Scanner Beeper'"
-          >
-            <component :is="soundEnabled ? Volume2 : VolumeX" class="w-4 h-4" />
-          </button>
-
           <!-- Logout Button -->
           <button
             @click="handleLogout"

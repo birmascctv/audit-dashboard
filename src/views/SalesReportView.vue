@@ -183,21 +183,42 @@ function formatRupiah(amount) {
   }).format(amount || 0);
 }
 
-// Format Date
-function formatSimpleDate(isoString) {
-  if (!isoString) return '-';
+// Format Date Only (Sales Date)
+function formatSalesDate(dateStr) {
+  if (!dateStr) return '-';
   try {
-    const d = new Date(isoString);
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return String(dateStr).split(' ')[0];
     return d.toLocaleDateString('id-ID', {
       day: '2-digit',
-      month: 'short',
+      month: '2-digit',
+      year: 'numeric',
+    });
+  } catch {
+    return String(dateStr).split(' ')[0];
+  }
+}
+
+// Format Date & Time (Sales Date In)
+function formatSalesDateIn(dateStr) {
+  if (!dateStr) return '-';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
     });
   } catch {
-    return isoString;
+    return dateStr;
   }
+}
+
+function formatSimpleDate(isoString) {
+  return formatSalesDateIn(isoString);
 }
 
 // Date preset handler
@@ -677,44 +698,52 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- Table Container -->
+        <!-- Table Container (Narrower spacing so Unit Price and Total are fully visible) -->
         <div class="overflow-x-auto">
           <table class="w-full text-left text-xs border-collapse">
-            <thead class="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
+            <thead class="bg-slate-50 text-[10px] font-extrabold text-slate-600 uppercase tracking-wider border-b border-slate-200">
               <tr>
-                <th class="py-3 px-4 w-12 text-center">#</th>
-                <th class="py-3 px-4 whitespace-nowrap">Sales Date & Time</th>
-                <th class="py-3 px-4">Branch</th>
-                <th class="py-3 px-4">Visit Purpose</th>
-                <th class="py-3 px-4">Brand</th>
-                <th class="py-3 px-4">Product Variant</th>
-                <th class="py-3 px-4">Category</th>
-                <th class="py-3 px-4 text-center">Qty</th>
-                <th class="py-3 px-4 text-right">Unit Price</th>
-                <th class="py-3 px-4 text-right">Total</th>
-                <th class="py-3 px-4">Payment Method</th>
+                <th class="py-2 px-2 w-10 text-center text-slate-400">#</th>
+                <th class="py-2 px-2.5 whitespace-nowrap">Sales Date</th>
+                <th class="py-2 px-2.5 whitespace-nowrap">Sales Date In</th>
+                <th class="py-2 px-2.5 whitespace-nowrap">Branch</th>
+                <th class="py-2 px-2.5 whitespace-nowrap">Visit Purpose</th>
+                <th class="py-2 px-2.5 whitespace-nowrap">Payment Method</th>
+                <th class="py-2 px-2.5 whitespace-nowrap">Menu Category</th>
+                <th class="py-2 px-2.5 whitespace-nowrap">Menu Category Detail</th>
+                <th class="py-2 px-2.5">Menu</th>
+                <th class="py-2 px-2 text-center whitespace-nowrap">Qty</th>
+                <th class="py-2 px-2.5 text-right whitespace-nowrap">Price</th>
+                <th class="py-2 px-2.5 text-right whitespace-nowrap">Total</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
               <tr
                 v-for="(tx, idx) in paginatedTransactions"
                 :key="tx.id || idx"
-                class="hover:bg-slate-50 transition-colors"
+                class="hover:bg-slate-50/80 transition-colors"
               >
-                <td class="py-3 px-4 text-center font-mono text-slate-400">
+                <td class="py-2 px-2 text-center font-mono text-slate-400 text-[11px]">
                   {{ (currentPage - 1) * pageSize + idx + 1 }}
                 </td>
-                <td class="py-3 px-4 text-slate-600 font-mono whitespace-nowrap text-[11px]">
-                  {{ formatSimpleDate(tx.date) }}
+                <!-- 1. Sales Date: date of sales -->
+                <td class="py-2 px-2.5 text-slate-700 font-mono whitespace-nowrap text-[11px] font-medium">
+                  {{ formatSalesDate(tx.sales_date || tx.date) }}
                 </td>
-                <td class="py-3 px-4">
-                  <span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-800 whitespace-nowrap">
+                <!-- 2. Sales Date In: date and time of sales -->
+                <td class="py-2 px-2.5 text-slate-500 font-mono whitespace-nowrap text-[11px]">
+                  {{ formatSalesDateIn(tx.sales_date_in || tx.date) }}
+                </td>
+                <!-- 3. Branch: store branch -->
+                <td class="py-2 px-2.5 whitespace-nowrap">
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-800">
                     {{ tx.store_name }}
                   </span>
                 </td>
-                <td class="py-3 px-4">
+                <!-- 4. Visit Purpose: product bought via -->
+                <td class="py-2 px-2.5 whitespace-nowrap">
                   <span
-                    class="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap"
+                    class="px-2 py-0.5 rounded-full text-[10px] font-bold"
                     :class="{
                       'bg-blue-50 text-blue-700 border border-blue-200': tx.visit_purpose === 'DINE IN',
                       'bg-orange-50 text-orange-700 border border-orange-200': tx.visit_purpose === 'SHOPEEFOOD',
@@ -727,39 +756,46 @@ onMounted(() => {
                     {{ tx.visit_purpose || 'DINE IN' }}
                   </span>
                 </td>
-                <td class="py-3 px-4">
-                  <span v-if="tx.brand" class="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-teal-50 text-teal-800 border border-teal-200 whitespace-nowrap">
-                    {{ tx.brand }}
+                <!-- 5. Payment method -->
+                <td class="py-2 px-2.5 whitespace-nowrap">
+                  <span class="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-50 text-slate-700 border border-slate-200">
+                    {{ tx.payment_method || 'QRIS BCA' }}
                   </span>
-                  <span v-else class="text-slate-400 text-[10px]">-</span>
                 </td>
-                <td class="py-3 px-4 font-bold text-slate-900">
-                  {{ tx.item_name }}
-                </td>
-                <td class="py-3 px-4">
+                <!-- 6. Menu Category: type of product -->
+                <td class="py-2 px-2.5 whitespace-nowrap">
                   <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
                     {{ tx.category || 'Beverage' }}
                   </span>
                 </td>
-                <td class="py-3 px-4 text-center font-bold text-teal-800 font-mono">
+                <!-- 7. Menu Category Detail: product brand -->
+                <td class="py-2 px-2.5 whitespace-nowrap">
+                  <span v-if="tx.brand" class="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-teal-50 text-teal-800 border border-teal-200">
+                    {{ tx.brand }}
+                  </span>
+                  <span v-else class="text-slate-400 text-[10px]">-</span>
+                </td>
+                <!-- 8. Menu: product variant -->
+                <td class="py-2 px-2.5 font-bold text-slate-900 text-xs min-w-[140px]">
+                  {{ tx.item_name || tx.variant }}
+                </td>
+                <!-- 9. Qty: amount of product per variant per sale -->
+                <td class="py-2 px-2 text-center font-bold text-teal-800 font-mono text-xs">
                   {{ tx.qty }}
                 </td>
-                <td class="py-3 px-4 text-right text-slate-600 font-mono">
+                <!-- 10. Price: price per unit -->
+                <td class="py-2 px-2.5 text-right text-slate-700 font-mono whitespace-nowrap text-xs font-semibold">
                   {{ formatRupiah(tx.unit_price) }}
                 </td>
-                <td class="py-3 px-4 text-right font-black text-slate-900 font-mono">
+                <!-- 11. Total: total amount -->
+                <td class="py-2 px-2.5 text-right font-black text-slate-900 font-mono whitespace-nowrap text-xs">
                   {{ formatRupiah(tx.total) }}
-                </td>
-                <td class="py-3 px-4">
-                  <span class="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-50 text-slate-700 border border-slate-200 whitespace-nowrap">
-                    {{ tx.payment_method }}
-                  </span>
                 </td>
               </tr>
 
               <!-- Empty state -->
               <tr v-if="filteredTransactions.length === 0 && !isLoading">
-                <td colspan="11" class="py-12 text-center">
+                <td colspan="12" class="py-12 text-center">
                   <div class="flex flex-col items-center justify-center gap-2">
                     <FileSpreadsheet class="w-10 h-10 text-slate-300" />
                     <p class="font-bold text-slate-700 text-sm">No transaction records found</p>

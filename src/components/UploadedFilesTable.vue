@@ -2,7 +2,7 @@
 <template>
   <div class="uploaded-files-table-container rounded-2xl bg-white border border-slate-200 shadow-sm p-5 sm:p-6 text-slate-800">
     <!-- Action and Refresh Controls Toolbar -->
-    <div class="flex items-center justify-between gap-4 pb-4 border-b border-slate-100">
+    <div class="flex items-center justify-between gap-4 pb-2 border-b border-slate-100">
       <div class="flex items-center gap-2">
         <span class="text-xs font-bold text-slate-700">Audit Archive</span>
         <span class="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
@@ -27,7 +27,7 @@
     <!-- Backend service notice banner if /api/uploaded-files is not reachable -->
     <div
       v-if="fetchError"
-      class="my-4 p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs"
+      class="my-3 p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs"
     >
       <div class="flex items-start gap-2.5">
         <span class="text-base leading-none">⚠️</span>
@@ -48,7 +48,7 @@
     </div>
 
     <!-- Quick Stats Cards Row -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 my-5">
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2.5 mb-3.5">
       <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 shadow-xs">
         <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Audits</span>
         <span class="text-xl font-black text-slate-900 mt-1 block">{{ files.length }}</span>
@@ -400,11 +400,49 @@ const filterStore = ref('')
 const filterYear = ref('')
 const filterMonth = ref('')
 
-const sortField = ref('timestamp')
+// Default sort: newest to oldest inspection date
+const sortField = ref('audit_date')
 const sortAsc = ref(false)
 
 const currentPage = ref(1)
 const pageSize = ref(10)
+
+const INDO_MONTH_MAP = {
+  januari: 0, jan: 0,
+  februari: 1, feb: 1,
+  maret: 2, mar: 2,
+  april: 3, apr: 3,
+  mei: 4, may: 4,
+  juni: 5, jun: 5,
+  juli: 6, jul: 6,
+  agustus: 7, agu: 7, aug: 7,
+  september: 8, sep: 8,
+  oktober: 9, okt: 9, oct: 9,
+  november: 10, nov: 10,
+  desember: 11, des: 11, dec: 11
+}
+
+function parseInspectionDateToTimestamp(item) {
+  if (!item) return 0
+  const rawDate = String(item.audit_date || item.file_name || '').toLowerCase()
+  const match = rawDate.match(/(\d{1,2})\s+([a-z]+)\s+(\d{4})/i)
+  if (match) {
+    const day = parseInt(match[1], 10)
+    const mName = match[2].toLowerCase()
+    const year = parseInt(match[3], 10)
+    const month = INDO_MONTH_MAP[mName] !== undefined ? INDO_MONTH_MAP[mName] : (parseInt(item.month, 10) - 1 || 0)
+    return new Date(Date.UTC(year, month, day)).getTime()
+  }
+  if (item.year && item.month) {
+    const y = parseInt(item.year, 10)
+    const m = parseInt(item.month, 10) - 1
+    return new Date(Date.UTC(y, m, 1)).getTime()
+  }
+  if (item.timestamp) {
+    return new Date(item.timestamp).getTime() || 0
+  }
+  return 0
+}
 
 async function fetchFiles() {
   loading.value = true
@@ -523,9 +561,9 @@ const filteredFiles = computed(() => {
     let valA = a[sortField.value]
     let valB = b[sortField.value]
 
-    if (sortField.value === 'timestamp') {
-      valA = new Date(valA || 0).getTime()
-      valB = new Date(valB || 0).getTime()
+    if (sortField.value === 'audit_date' || sortField.value === 'timestamp') {
+      valA = parseInspectionDateToTimestamp(a)
+      valB = parseInspectionDateToTimestamp(b)
     } else if (sortField.value === 'file_size' || sortField.value === 'pass_rate') {
       valA = valA ?? -1
       valB = valB ?? -1
