@@ -3,7 +3,7 @@
   <div class="upload-card p-6 rounded-2xl bg-white border border-slate-200 text-slate-800 shadow-sm">
     <form class="space-y-5" @submit.prevent="submit">
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <!-- 1. Birmas Store Selector -->
+        <!-- 1. Birmas Store Selector (Strictly Sudirman, Kuningan, Kwitang) -->
         <div>
           <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
             <span class="flex items-center gap-1.5">
@@ -11,7 +11,7 @@
               <span>Birmas Outlet</span>
               <span class="text-rose-500">*</span>
             </span>
-            <span class="text-[10px] text-teal-700 font-semibold">({{ activeStores.length }} outlets)</span>
+            <span class="text-[10px] text-teal-700 font-semibold">(Sudirman, Kuningan, Kwitang)</span>
           </label>
           <select
             v-model="store"
@@ -135,6 +135,44 @@
         </div>
       </div>
 
+      <!-- File Mismatch Warning Banner -->
+      <div
+        v-if="file && mismatchError"
+        class="p-4 rounded-xl bg-rose-50 border-2 border-rose-300 text-rose-950 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs"
+      >
+        <div class="flex items-start gap-2.5">
+          <span class="text-xl leading-none mt-0.5">❌</span>
+          <div>
+            <span class="font-extrabold text-rose-900 block text-sm">{{ mismatchError.title }}</span>
+            <span class="text-rose-800 block mt-1 font-semibold leading-relaxed">{{ mismatchError.message }}</span>
+          </div>
+        </div>
+        <button
+          v-if="mismatchError.canSync"
+          type="button"
+          @click="syncDropdownToFile"
+          class="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs whitespace-nowrap transition-colors shadow-xs cursor-pointer shrink-0"
+        >
+          Auto-Fix: Sync Selection to File
+        </button>
+      </div>
+
+      <!-- File Verified Success Indicator -->
+      <div
+        v-else-if="file && isFileVerified"
+        class="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs flex items-center justify-between gap-2 shadow-xs"
+      >
+        <div class="flex items-center gap-2">
+          <span class="text-base">✅</span>
+          <span class="font-bold text-emerald-800">
+            File Verified: Matches {{ stripStoreBrand(store) }} • {{ month }} {{ lastDetected?.detectedYear || '' }}
+          </span>
+        </div>
+        <span class="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded">
+          Verified Match
+        </span>
+      </div>
+
       <!-- Submit Button & Overwrite Prompt -->
       <div class="flex items-center justify-between gap-4 pt-2">
         <div v-if="needsConfirm" class="text-xs text-amber-800 font-bold flex items-center gap-1.5 bg-amber-50 p-2 rounded-xl border border-amber-300">
@@ -145,10 +183,12 @@
 
         <button
           type="submit"
-          :disabled="submitting || !store || !year || !month || !file"
+          :disabled="submitting || !store || !year || !month || !file || !!mismatchError"
           :class="[
             'px-5 py-2.5 rounded-xl text-sm font-bold text-white shadow-md transition-all ml-auto disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer',
-            needsConfirm
+            mismatchError
+              ? 'bg-slate-400 cursor-not-allowed'
+              : needsConfirm
               ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/20 ring-2 ring-amber-400/50'
               : 'bg-teal-600 hover:bg-teal-500 shadow-teal-600/20'
           ]"
@@ -189,22 +229,16 @@ const emit = defineEmits(['uploaded'])
 
 const { selectedStoreId } = useAuditStore()
 
-const DEFAULT_OUTLETS = [
-  { store_id: 1, id: 'birmas-kelapa-gading', name: 'Birmas Kelapa Gading' },
+// Strictly limit Birmas Outlet dropdown to Sudirman, Kuningan, and Kwitang
+const ALLOWED_OUTLETS = [
+  { store_id: 5, id: 'birmas-sudirman', name: 'Birmas Sudirman' },
   { store_id: 2, id: 'birmas-kuningan', name: 'Birmas Kuningan' },
   { store_id: 3, id: 'birmas-kwitang', name: 'Birmas Kwitang' },
-  { store_id: 4, id: 'birmas-lebak-bulus', name: 'Birmas Lebak Bulus' },
-  { store_id: 5, id: 'birmas-sudirman', name: 'Birmas Sudirman' },
-  { store_id: 6, id: 'birmas-tebet', name: 'Birmas Tebet' },
-  { store_id: 7, id: 'birmas-nomadic', name: 'Birmas Nomadic (Bandung)' },
-  { store_id: 8, id: 'birmas-nusadua', name: 'Birmas Nusa Dua (Bali)' },
 ]
 
 const localStores = ref([])
 const activeStores = computed(() => {
-  if (props.stores && props.stores.length > 0) return props.stores
-  if (localStores.value && localStores.value.length > 0) return localStores.value
-  return DEFAULT_OUTLETS
+  return ALLOWED_OUTLETS
 })
 
 // Auto-select outlet matching selectedStoreId or first store
@@ -243,11 +277,14 @@ const months = ref([
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
 ])
 
-const store = ref('')
+const store = ref('Birmas Sudirman')
 const year = ref(String(currentYear))
 const month = ref('Januari')
 const file = ref(null)
 const fileInput = ref(null)
+const fileContentSample = ref('')
+const mismatchError = ref(null)
+const lastDetected = ref(null)
 const submitting = ref(false)
 const message = ref('')
 const messageTitle = ref('')
@@ -255,6 +292,15 @@ const messageIcon = ref('ℹ️')
 const messageClass = ref('')
 const needsConfirm = ref(false)
 const isDragging = ref(false)
+
+const isFileVerified = computed(() => {
+  return !!(
+    file.value &&
+    !mismatchError.value &&
+    lastDetected.value &&
+    (lastDetected.value.detectedOutlet || lastDetected.value.detectedMonth)
+  )
+})
 
 function setNotification(type, title, text) {
   message.value = text
@@ -366,21 +412,24 @@ function validateAndAssignFile(selectedFile) {
       }
 
       file.value = selectedFile
+      fileContentSample.value = text.slice(0, 4096)
       needsConfirm.value = false
       message.value = ''
-      autoDetectFromUpload(selectedFile.name, text)
+      checkFileMatchWithInputs()
     } catch {
       file.value = selectedFile
+      fileContentSample.value = ''
       needsConfirm.value = false
       message.value = ''
-      autoDetectFromUpload(selectedFile.name, '')
+      checkFileMatchWithInputs()
     }
   }
   reader.onerror = () => {
     file.value = selectedFile
+    fileContentSample.value = ''
     needsConfirm.value = false
     message.value = ''
-    autoDetectFromUpload(selectedFile.name, '')
+    checkFileMatchWithInputs()
   }
   reader.readAsText(selectedFile.slice(0, 16384))
 }
@@ -398,96 +447,199 @@ function handleDrop(e) {
   }
 }
 
-function autoDetectFromUpload(fileName, csvText = '') {
-  const lowerName = (fileName || '').toLowerCase()
-  const lowerText = (csvText || '').toLowerCase().slice(0, 4096)
+const OUTLET_KEYWORDS = [
+  { key: 'sudirman', name: 'Sudirman', official: 'Birmas Sudirman' },
+  { key: 'kuningan', name: 'Kuningan', official: 'Birmas Kuningan' },
+  { key: 'kwitang', name: 'Kwitang', official: 'Birmas Kwitang' },
+  { key: 'kelapa gading', name: 'Kelapa Gading', official: 'Birmas Kelapa Gading' },
+  { key: 'gading', name: 'Kelapa Gading', official: 'Birmas Kelapa Gading' },
+  { key: 'lebak bulus', name: 'Lebak Bulus', official: 'Birmas Lebak Bulus' },
+  { key: 'bulus', name: 'Lebak Bulus', official: 'Birmas Lebak Bulus' },
+  { key: 'tebet', name: 'Tebet', official: 'Birmas Tebet' },
+  { key: 'nomadic', name: 'Nomadic', official: 'Birmas Nomadic (Bandung)' },
+  { key: 'bandung', name: 'Nomadic', official: 'Birmas Nomadic (Bandung)' },
+  { key: 'nusa dua', name: 'Nusa Dua', official: 'Birmas Nusa Dua (Bali)' },
+  { key: 'nusadua', name: 'Nusa Dua', official: 'Birmas Nusa Dua (Bali)' },
+  { key: 'bali', name: 'Nusa Dua', official: 'Birmas Nusa Dua (Bali)' },
+]
 
-  let detectedStore = ''
-  // 1. Direct activeStores match
-  for (const s of activeStores.value) {
-    const cleanS = stripStoreBrand(s.name).toLowerCase()
-    if (cleanS && (lowerName.includes(cleanS) || lowerText.includes(cleanS))) {
-      detectedStore = s.name
+const MONTH_MAP = {
+  januari: 'Januari', january: 'Januari', jan: 'Januari',
+  februari: 'Februari', february: 'Februari', feb: 'Februari',
+  maret: 'Maret', march: 'Maret', mar: 'Maret',
+  april: 'April', apr: 'April',
+  mei: 'Mei', may: 'Mei',
+  juni: 'Juni', june: 'Juni', jun: 'Juni',
+  juli: 'Juli', july: 'Juli', jul: 'Juli',
+  agustus: 'Agustus', august: 'Agustus', agu: 'Agustus', agt: 'Agustus', aug: 'Agustus',
+  september: 'September', sep: 'September', sept: 'September',
+  oktober: 'Oktober', october: 'Oktober', okt: 'Oktober', oct: 'Oktober',
+  november: 'November', nov: 'November',
+  desember: 'Desember', december: 'Desember', des: 'Desember', dec: 'Desember',
+}
+
+function extractOutletAndMonth(fileName, text = '') {
+  const lowerName = (fileName || '').toLowerCase()
+  const lowerText = (text || '').toLowerCase().slice(0, 4096)
+
+  let detectedOutlet = null
+  for (const item of OUTLET_KEYWORDS) {
+    if (lowerName.includes(item.key)) {
+      detectedOutlet = item
       break
     }
   }
-  // 2. Keyword fallback for common outlet tokens
-  if (!detectedStore) {
-    const storeKeywords = [
-      { key: 'gading', match: 'Birmas Kelapa Gading' },
-      { key: 'kuningan', match: 'Birmas Kuningan' },
-      { key: 'kwitang', match: 'Birmas Kwitang' },
-      { key: 'lebak', match: 'Birmas Lebak Bulus' },
-      { key: 'bulus', match: 'Birmas Lebak Bulus' },
-      { key: 'sudirman', match: 'Birmas Sudirman' },
-      { key: 'tebet', match: 'Birmas Tebet' },
-      { key: 'nomadic', match: 'Birmas Nomadic (Bandung)' },
-      { key: 'bandung', match: 'Birmas Nomadic (Bandung)' },
-      { key: 'nusadua', match: 'Birmas Nusa Dua (Bali)' },
-      { key: 'nusa dua', match: 'Birmas Nusa Dua (Bali)' },
-      { key: 'bali', match: 'Birmas Nusa Dua (Bali)' },
-    ]
-    for (const item of storeKeywords) {
-      if (lowerName.includes(item.key) || lowerText.includes(item.key)) {
-        detectedStore = item.match
+  if (!detectedOutlet) {
+    for (const item of OUTLET_KEYWORDS) {
+      if (lowerText.includes(item.key)) {
+        detectedOutlet = item
         break
       }
     }
   }
 
-  let detectedYear = ''
+  let detectedMonth = null
+  for (const [key, canonical] of Object.entries(MONTH_MAP)) {
+    const regex = new RegExp(`(^|[^a-z0-9])${key}([^a-z0-9]|$)`, 'i')
+    if (regex.test(lowerName)) {
+      detectedMonth = canonical
+      break
+    }
+  }
+  if (!detectedMonth) {
+    for (const [key, canonical] of Object.entries(MONTH_MAP)) {
+      const regex = new RegExp(`(^|[^a-z0-9])${key}([^a-z0-9]|$)`, 'i')
+      if (regex.test(lowerText)) {
+        detectedMonth = canonical
+        break
+      }
+    }
+  }
+
+  let detectedYear = null
   const yMatch = lowerName.match(/\b(202[4-9])\b/) || lowerText.match(/\b(202[4-9])\b/)
   if (yMatch) {
     detectedYear = yMatch[1]
   }
 
-  let detectedMonth = ''
-  const monthMap = {
-    januari: 'Januari', january: 'Januari', jan: 'Januari',
-    februari: 'Februari', february: 'Februari', feb: 'Februari',
-    maret: 'Maret', march: 'Maret', mar: 'Maret',
-    april: 'April', apr: 'April',
-    mei: 'Mei', may: 'Mei',
-    juni: 'Juni', june: 'Juni', jun: 'Juni',
-    juli: 'Juli', july: 'Juli', jul: 'Juli',
-    agustus: 'Agustus', august: 'Agustus', agu: 'Agustus', agt: 'Agustus', aug: 'Agustus',
-    september: 'September', sep: 'September', sept: 'September',
-    oktober: 'Oktober', october: 'Oktober', okt: 'Oktober', oct: 'Oktober',
-    november: 'November', nov: 'November',
-    desember: 'Desember', december: 'Desember', des: 'Desember', dec: 'Desember'
+  return { detectedOutlet, detectedMonth, detectedYear }
+}
+
+function checkFileMatchWithInputs() {
+  if (!file.value) {
+    mismatchError.value = null
+    lastDetected.value = null
+    return
   }
 
-  for (const [key, val] of Object.entries(monthMap)) {
-    // Check whole word or token boundary
-    const regex = new RegExp(`\\b${key}\\b`, 'i')
-    if (regex.test(lowerName) || regex.test(lowerText)) {
-      detectedMonth = val
-      break
+  const detected = extractOutletAndMonth(file.value.name, fileContentSample.value)
+  lastDetected.value = detected
+
+  const selectedCleanStore = stripStoreBrand(store.value || '').toLowerCase().trim()
+  const selectedCleanMonth = String(month.value || '').toLowerCase().trim()
+
+  const detectedStoreKey = (detected.detectedOutlet?.name || '').toLowerCase()
+  const detectedMonthKey = (detected.detectedMonth || '').toLowerCase()
+
+  // 1. Check if the CSV file belongs to an unsupported outlet
+  if (detected.detectedOutlet && !['sudirman', 'kuningan', 'kwitang'].includes(detectedStoreKey)) {
+    mismatchError.value = {
+      title: 'Unsupported Outlet in File',
+      message: `The uploaded CSV file ("${file.value.name}") is for ${detected.detectedOutlet.name}. Only Sudirman, Kuningan, and Kwitang are supported.`,
+      detected,
+      canSync: false,
+    }
+    setNotification('error', mismatchError.value.title, mismatchError.value.message)
+    return
+  }
+
+  // 2. Check outlet match
+  const storeMismatch = detected.detectedOutlet && selectedCleanStore && (selectedCleanStore !== detectedStoreKey)
+
+  // 3. Check month match
+  const monthMismatch = detected.detectedMonth && selectedCleanMonth && (selectedCleanMonth !== detectedMonthKey)
+
+  if (storeMismatch && monthMismatch) {
+    mismatchError.value = {
+      title: 'Outlet & Month Mismatch',
+      message: `The uploaded CSV file ("${file.value.name}") is for ${detected.detectedOutlet.name} (${detected.detectedMonth}), but you selected ${stripStoreBrand(store.value)} (${month.value}). Please change your selection to match the file or upload the matching CSV file.`,
+      detected,
+      canSync: true,
+    }
+    setNotification('error', mismatchError.value.title, mismatchError.value.message)
+    return
+  }
+
+  if (storeMismatch) {
+    mismatchError.value = {
+      title: 'Outlet Mismatch',
+      message: `The uploaded CSV file ("${file.value.name}") is for ${detected.detectedOutlet.name}, but you selected ${stripStoreBrand(store.value)}. Please select Birmas ${detected.detectedOutlet.name} or upload the correct audit CSV file.`,
+      detected,
+      canSync: true,
+    }
+    setNotification('error', mismatchError.value.title, mismatchError.value.message)
+    return
+  }
+
+  if (monthMismatch) {
+    mismatchError.value = {
+      title: 'Month Mismatch',
+      message: `The uploaded CSV file ("${file.value.name}") is for ${detected.detectedMonth}, but you selected ${month.value}. Please select ${detected.detectedMonth} or upload the correct audit CSV file.`,
+      detected,
+      canSync: true,
+    }
+    setNotification('error', mismatchError.value.title, mismatchError.value.message)
+    return
+  }
+
+  // File matches input perfectly
+  mismatchError.value = null
+  if (messageTitle.value.includes('Mismatch') || messageTitle.value.includes('Unsupported')) {
+    message.value = ''
+    messageTitle.value = ''
+  }
+}
+
+// Watch user dropdown changes while a file is uploaded
+watch([store, month], () => {
+  if (file.value) {
+    checkFileMatchWithInputs()
+  }
+})
+
+function syncDropdownToFile() {
+  if (!lastDetected.value) return
+  if (lastDetected.value.detectedOutlet) {
+    const matchedStore = activeStores.value.find(s =>
+      s.name.toLowerCase().includes(lastDetected.value.detectedOutlet.name.toLowerCase())
+    )
+    if (matchedStore) {
+      store.value = matchedStore.name
     }
   }
-
-  const tagParts = []
-  if (detectedStore) {
-    store.value = detectedStore
-    tagParts.push(stripStoreBrand(detectedStore))
+  if (lastDetected.value.detectedMonth) {
+    month.value = lastDetected.value.detectedMonth
   }
-  if (detectedMonth) {
-    month.value = detectedMonth
-    tagParts.push(detectedMonth)
+  if (lastDetected.value.detectedYear) {
+    year.value = String(lastDetected.value.detectedYear)
   }
-  if (detectedYear) {
-    year.value = detectedYear
-    tagParts.push(detectedYear)
-  }
-
-  autoDetectedTag.value = tagParts.length > 0 ? tagParts.join(' • ') : ''
+  mismatchError.value = null
+  message.value = ''
+  messageTitle.value = ''
 }
 
 function clearFile() {
   file.value = null
+  fileContentSample.value = ''
+  mismatchError.value = null
+  lastDetected.value = null
   if (fileInput.value) fileInput.value.value = ''
   needsConfirm.value = false
   autoDetectedTag.value = ''
+  if (messageTitle.value.includes('Mismatch') || messageTitle.value.includes('Unsupported')) {
+    message.value = ''
+    messageTitle.value = ''
+  }
 }
 
 onMounted(async () => {
@@ -510,6 +662,10 @@ onMounted(async () => {
 })
 
 async function submit() {
+  if (mismatchError.value) {
+    setNotification('error', mismatchError.value.title, mismatchError.value.message)
+    return
+  }
   if (!store.value || !year.value || !month.value || !file.value) {
     setNotification(
       'warning',
@@ -536,7 +692,11 @@ async function submit() {
     if (!res.ok || !data) {
       const errMsg = (data && data.message) || `Upload failed with server status ${res.status}.`
       let title = 'Upload Failed'
-      if (data?.errorType === 'INCORRECT_STRUCTURE') title = 'File Structure Is Incorrect'
+      if (data?.errorType === 'OUTLET_MISMATCH') title = 'Outlet Mismatch'
+      else if (data?.errorType === 'MONTH_MISMATCH') title = 'Month Mismatch'
+      else if (data?.errorType === 'MISMATCH_INPUT') title = 'Outlet & Month Mismatch'
+      else if (data?.errorType === 'UNSUPPORTED_OUTLET') title = 'Unsupported Outlet'
+      else if (data?.errorType === 'INCORRECT_STRUCTURE') title = 'File Structure Is Incorrect'
       else if (data?.errorType === 'INVALID_FILE_TYPE') title = 'File Type Must Be CSV'
       else if (data?.errorType === 'EMPTY_FILE') title = 'Empty File'
       else if (data?.errorType === 'MISSING_FIELDS') title = 'Missing Required Fields'

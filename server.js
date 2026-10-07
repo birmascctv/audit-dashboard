@@ -66,7 +66,8 @@ process.on('unhandledRejection', (reason) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+// In AI Studio / Cloud Run, the app must bind strictly to port 3000
+const PORT = 3000;
 
 export const BIRMAS_STORE_KEYWORD_MAP = [
   { storeId: 'birmas-sudirman', name: 'Birmas Sudirman', keywords: ['sudirman', 'outs', 'sdr', 'outlet sudirman', 'brms'] },
@@ -1325,57 +1326,144 @@ async function startServer() {
         });
       }
 
-      // Auto-detect missing fields from filename if needed
-      let storeName = store;
+      // Strictly limit allowed upload outlets to Sudirman, Kuningan, Kwitang
+      const allowedStores = ['sudirman', 'kuningan', 'kwitang'];
+      const rawStore = String(store || '').trim();
+      const cleanInputStore = rawStore.toLowerCase().replace(/^birmas\s+/i, '').trim();
+
+      if (!cleanInputStore || !allowedStores.includes(cleanInputStore)) {
+        return res.status(400).json({
+          status: 'error',
+          errorType: 'UNSUPPORTED_OUTLET',
+          message: 'Birmas Outlet is limited to only Sudirman, Kuningan, and Kwitang. Please choose one of these outlets.',
+        });
+      }
+
+      // Canonical name for the store
+      const canonicalStoreMap = {
+        sudirman: 'Birmas Sudirman',
+        kuningan: 'Birmas Kuningan',
+        kwitang: 'Birmas Kwitang',
+      };
+      const storeName = canonicalStoreMap[cleanInputStore] || rawStore;
       let yr = year;
       let mo = month;
 
-      if (!storeName || !yr || !mo) {
-        const lowerName = fileName.toLowerCase();
-        if (!yr) {
-          const yMatch = lowerName.match(/\b(202[4-9])\b/);
-          yr = yMatch ? yMatch[1] : String(new Date().getFullYear());
-        }
-        if (!mo) {
-          const monthMap = {
-            januari: 'Januari', january: 'Januari',
-            februari: 'Februari', february: 'Februari',
-            maret: 'Maret', march: 'Maret',
-            april: 'April',
-            mei: 'Mei', may: 'Mei',
-            juni: 'Juni', june: 'Juni',
-            juli: 'Juli', july: 'Juli',
-            agustus: 'Agustus', august: 'Agustus', agu: 'Agustus',
-            september: 'September',
-            oktober: 'Oktober', october: 'Oktober',
-            november: 'November',
-            desember: 'Desember', december: 'Desember'
-          };
-          for (const [k, v] of Object.entries(monthMap)) {
-            if (lowerName.includes(k)) { mo = v; break; }
-          }
-          if (!mo) mo = 'Januari';
-        }
-        if (!storeName) {
-          const cctvStores = storeAuditService.getCctvStores() || [];
-          for (const s of cctvStores) {
-            const cleanS = String(s.name || '').toLowerCase().replace(/^birmas\s+/i, '');
-            if (cleanS && lowerName.includes(cleanS)) {
-              storeName = s.name;
-              break;
-            }
-          }
-          if (!storeName && cctvStores.length > 0) {
-            storeName = cctvStores[0].name;
-          }
-        }
-      }
-
-      if (!storeName || !yr || !mo) {
+      if (!yr || !mo) {
         return res.status(400).json({
           status: 'error',
           errorType: 'MISSING_FIELDS',
           message: 'Please select store, audit year, and audit month before uploading.',
+        });
+      }
+
+      // Extract outlet and month from uploaded CSV file (filename + first rows)
+      const lowerName = fileName.toLowerCase();
+      const fileTextSample = file.buffer ? file.buffer.toString('utf-8').slice(0, 4096).toLowerCase() : '';
+
+      const outletKeywords = [
+        { key: 'sudirman', name: 'Sudirman', official: 'Birmas Sudirman' },
+        { key: 'kuningan', name: 'Kuningan', official: 'Birmas Kuningan' },
+        { key: 'kwitang', name: 'Kwitang', official: 'Birmas Kwitang' },
+        { key: 'kelapa gading', name: 'Kelapa Gading', official: 'Birmas Kelapa Gading' },
+        { key: 'gading', name: 'Kelapa Gading', official: 'Birmas Kelapa Gading' },
+        { key: 'lebak bulus', name: 'Lebak Bulus', official: 'Birmas Lebak Bulus' },
+        { key: 'bulus', name: 'Lebak Bulus', official: 'Birmas Lebak Bulus' },
+        { key: 'tebet', name: 'Tebet', official: 'Birmas Tebet' },
+        { key: 'nomadic', name: 'Nomadic', official: 'Birmas Nomadic (Bandung)' },
+        { key: 'bandung', name: 'Nomadic', official: 'Birmas Nomadic (Bandung)' },
+        { key: 'nusa dua', name: 'Nusa Dua', official: 'Birmas Nusa Dua (Bali)' },
+        { key: 'nusadua', name: 'Nusa Dua', official: 'Birmas Nusa Dua (Bali)' },
+        { key: 'bali', name: 'Nusa Dua', official: 'Birmas Nusa Dua (Bali)' },
+      ];
+
+      let detectedFileOutlet = null;
+      for (const o of outletKeywords) {
+        if (lowerName.includes(o.key)) {
+          detectedFileOutlet = o;
+          break;
+        }
+      }
+      if (!detectedFileOutlet) {
+        for (const o of outletKeywords) {
+          if (fileTextSample.includes(o.key)) {
+            detectedFileOutlet = o;
+            break;
+          }
+        }
+      }
+
+      const monthMap = {
+        januari: 'Januari', january: 'Januari', jan: 'Januari',
+        februari: 'Februari', february: 'Februari', feb: 'Februari',
+        maret: 'Maret', march: 'Maret', mar: 'Maret',
+        april: 'April', apr: 'April',
+        mei: 'Mei', may: 'Mei',
+        juni: 'Juni', june: 'Juni', jun: 'Juni',
+        juli: 'Juli', july: 'Juli', jul: 'Juli',
+        agustus: 'Agustus', august: 'Agustus', agu: 'Agustus', agt: 'Agustus', aug: 'Agustus',
+        september: 'September', sep: 'September', sept: 'September',
+        oktober: 'Oktober', october: 'Oktober', okt: 'Oktober', oct: 'Oktober',
+        november: 'November', nov: 'November',
+        desember: 'Desember', december: 'Desember', des: 'Desember', dec: 'Desember',
+      };
+
+      let detectedFileMonth = null;
+      for (const [k, canonical] of Object.entries(monthMap)) {
+        const regex = new RegExp(`(^|[^a-z0-9])${k}([^a-z0-9]|$)`, 'i');
+        if (regex.test(lowerName)) {
+          detectedFileMonth = canonical;
+          break;
+        }
+      }
+      if (!detectedFileMonth) {
+        for (const [k, canonical] of Object.entries(monthMap)) {
+          const regex = new RegExp(`(^|[^a-z0-9])${k}([^a-z0-9]|$)`, 'i');
+          if (regex.test(fileTextSample)) {
+            detectedFileMonth = canonical;
+            break;
+          }
+        }
+      }
+
+      // Check if file belongs to an unsupported outlet
+      if (detectedFileOutlet && !allowedStores.includes(detectedFileOutlet.key)) {
+        return res.status(400).json({
+          status: 'error',
+          errorType: 'UNSUPPORTED_OUTLET',
+          message: `The uploaded CSV file ("${fileName}") is for ${detectedFileOutlet.name}. Only Sudirman, Kuningan, and Kwitang outlets are supported.`,
+        });
+      }
+
+      // Validate that file outlet and month match the user input
+      const fileStoreKey = detectedFileOutlet ? detectedFileOutlet.key : null;
+      const storeMismatch = fileStoreKey && cleanInputStore && (fileStoreKey !== cleanInputStore);
+
+      const userMonthClean = String(mo || '').toLowerCase().trim();
+      const fileMonthClean = detectedFileMonth ? detectedFileMonth.toLowerCase().trim() : null;
+      const monthMismatch = fileMonthClean && userMonthClean && (fileMonthClean !== userMonthClean);
+
+      if (storeMismatch && monthMismatch) {
+        return res.status(400).json({
+          status: 'error',
+          errorType: 'MISMATCH_INPUT',
+          message: `CSV file does not match selected outlet and month: The file ("${fileName}") is for ${detectedFileOutlet.name} (${detectedFileMonth}), but you selected ${storeName} (${mo}).`,
+        });
+      }
+
+      if (storeMismatch) {
+        return res.status(400).json({
+          status: 'error',
+          errorType: 'OUTLET_MISMATCH',
+          message: `CSV file does not match selected outlet: The file ("${fileName}") is for ${detectedFileOutlet.name}, but you selected ${storeName}. Please select Birmas ${detectedFileOutlet.name} or upload the matching file.`,
+        });
+      }
+
+      if (monthMismatch) {
+        return res.status(400).json({
+          status: 'error',
+          errorType: 'MONTH_MISMATCH',
+          message: `CSV file does not match selected month: The file ("${fileName}") is for ${detectedFileMonth}, but you selected ${mo}. Please select ${detectedFileMonth} or upload the matching file.`,
         });
       }
 
@@ -1671,6 +1759,22 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+    app.use('*', async (req, res, next) => {
+      if (req.originalUrl.startsWith('/api')) {
+        return next();
+      }
+      try {
+        const url = req.originalUrl;
+        let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+      } catch (e) {
+        if (vite && vite.ssrFixStacktrace) {
+          vite.ssrFixStacktrace(e);
+        }
+        next(e);
+      }
+    });
   }
 
   // Express global error catching middleware
