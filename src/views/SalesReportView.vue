@@ -42,7 +42,7 @@ const selectedBrand = ref('all');
 const selectedVisitPurpose = ref('all');
 const selectedPayment = ref('all');
 const searchQuery = ref('');
-const datePreset = ref('7d');
+const datePreset = ref('all');
 const startDate = ref('');
 const endDate = ref('');
 const activeViewTab = ref('table'); // 'table' | 'files' | 'byChannel' | 'byStore' | 'byBrand' | 'topItems' | 'byPayment'
@@ -77,9 +77,19 @@ const fileToDelete = ref(null);
 const isDeletingFile = ref(false);
 
 function handleCsvImported(rows) {
+  datePreset.value = 'all';
+  startDate.value = '';
+  endDate.value = '';
+  selectedStoreId.value = 'all';
+  selectedCategory.value = 'all';
+  selectedBrand.value = 'all';
+  selectedVisitPurpose.value = 'all';
+  selectedPayment.value = 'all';
+  searchQuery.value = '';
+  currentPage.value = 1;
   loadSalesReport();
   loadUploadedFiles();
-  syncMessage.value = `Successfully imported ${rows.length} sales records from CSV!`;
+  syncMessage.value = `Successfully imported ${rows.length.toLocaleString()} sales records! Dashboard view updated.`;
 }
 
 // Stores list derived dynamically from uploaded sales data

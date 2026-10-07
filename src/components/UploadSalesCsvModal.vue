@@ -88,6 +88,24 @@ function detectStore(storeName) {
   };
 }
 
+// Standardize date strings (DD/MM/YYYY, YYYY-MM-DD, ISO, etc.) into consistent ISO timestamps
+function normalizeDateString(raw) {
+  if (!raw) return new Date().toISOString();
+  const str = String(raw).trim();
+  
+  // DD/MM/YYYY or DD-MM-YYYY with optional time
+  const dmyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(.*)$/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
+    const year = dmyMatch[3];
+    const timePart = dmyMatch[4].trim() || '00:00:00';
+    return `${year}-${month}-${day} ${timePart}`.trim();
+  }
+  
+  return str;
+}
+
 // Parse CSV content into rows based on exact key column specifications:
 // Sales Date: date of sales
 // Sales Date In: date and time of sales
@@ -214,7 +232,7 @@ function parseCSV(text) {
     parsed.push({
       id: `csv-${i}-${Date.now().toString(36)}`,
       bill_no: billNo,
-      date: dateVal,
+      date: normalizeDateString(dateVal),
       store_id: storeInfo.id,
       store_name: storeInfo.name,
       item_name: menuVariant,

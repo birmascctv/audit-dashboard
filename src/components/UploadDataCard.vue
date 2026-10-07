@@ -210,7 +210,7 @@ function validateAndAssignFile(selectedFile) {
   const fileName = selectedFile.name || ''
   if (!fileName.toLowerCase().endsWith('.csv')) {
     message.value = 'File format must be CSV'
-    messageClass.value = 'bg-rose-950/40 text-rose-300 border-rose-800/40'
+    messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
     clearFile()
     return
   }
@@ -222,14 +222,14 @@ function validateAndAssignFile(selectedFile) {
       const text = (e.target?.result || '').toString().trim()
       if (!text) {
         message.value = 'Uploaded CSV file contains no data rows.'
-        messageClass.value = 'bg-rose-950/40 text-rose-300 border-rose-800/40'
+        messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
         clearFile()
         return
       }
       const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0)
       if (lines.length < 2) {
         message.value = 'Uploaded CSV file contains no data rows.'
-        messageClass.value = 'bg-rose-950/40 text-rose-300 border-rose-800/40'
+        messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
         clearFile()
         return
       }
@@ -240,7 +240,7 @@ function validateAndAssignFile(selectedFile) {
       )
       if (missing.length > 0) {
         message.value = `Data has different table format (failed to upload). Missing columns: ${missing.join(', ')}.`
-        messageClass.value = 'bg-rose-950/40 text-rose-300 border-rose-800/40'
+        messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
         clearFile()
         return
       }
@@ -311,32 +311,32 @@ async function submit() {
 
     if (!res.ok || !data) {
       message.value = (data && data.message) || `Upload failed with server status ${res.status}.`
-      messageClass.value = 'bg-rose-950/40 text-rose-300 border-rose-800/40'
+      messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
       needsConfirm.value = false
     } else if (data.status === 'confirm_required') {
       message.value = data.message
-      messageClass.value = 'bg-amber-950/40 text-amber-300 border-amber-800/40'
+      messageClass.value = 'bg-amber-50 text-amber-900 border-amber-300 font-semibold shadow-xs'
       needsConfirm.value = true
       submitting.value = false
       return
     } else if (data.status === 'success') {
       message.value = data.message || 'Audit file successfully processed and stored!'
-      messageClass.value = 'bg-emerald-950/40 text-emerald-300 border-emerald-800/40'
+      messageClass.value = 'bg-emerald-50 text-emerald-800 border-emerald-200 font-semibold shadow-xs'
       needsConfirm.value = false
       clearFile()
       emit('uploaded')
     } else if (data.status === 'unchanged') {
       message.value = data.message
-      messageClass.value = 'bg-amber-950/40 text-amber-300 border-amber-800/40'
+      messageClass.value = 'bg-amber-50 text-amber-900 border-amber-300 font-semibold shadow-xs'
       needsConfirm.value = false
     } else {
       message.value = data.message || 'Upload failed.'
-      messageClass.value = 'bg-rose-950/40 text-rose-300 border-rose-800/40'
+      messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
       needsConfirm.value = false
     }
   } catch (e) {
     message.value = 'Upload failed due to network error.'
-    messageClass.value = 'bg-rose-950/40 text-rose-300 border-rose-800/40'
+    messageClass.value = 'bg-rose-50 text-rose-800 border-rose-200 font-semibold shadow-xs'
     needsConfirm.value = false
   } finally {
     submitting.value = false

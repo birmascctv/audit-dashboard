@@ -20,6 +20,43 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+export const BIRMAS_STORE_KEYWORD_MAP = [
+  { storeId: 'birmas-sudirman', name: 'Birmas Sudirman', keywords: ['sudirman', 'outs', 'sdr', 'outlet sudirman', 'brms'] },
+  { storeId: 'birmas-kuningan', name: 'Birmas Kuningan', keywords: ['kuningan', 'brmk', 'kng', 'kunngan', 'outlet kuningan'] },
+  { storeId: 'birmas-kwitang', name: 'Birmas Kwitang', keywords: ['kwitang', 'brmkw', 'kwt', 'outlet kwitang'] },
+  { storeId: 'birmas-lebak-bulus', name: 'Birmas Lebak Bulus', keywords: ['lebak bulus', 'lebak', 'bulus', 'brmlb', 'lbb', 'lbulus', 'outlet lebak bulus'] },
+  { storeId: 'birmas-kelapa-gading', name: 'Birmas Kelapa Gading', keywords: ['kelapa gading', 'gading', 'brmkg', 'kgading', 'outlet kelapa gading'] },
+  { storeId: 'birmas-tebet', name: 'Birmas Tebet', keywords: ['tebet', 'brmt', 'tbt', 'outlet tebet'] },
+  { storeId: 'birmas-nomadic', name: 'Birmas Nomadic (Bandung)', keywords: ['nomadic', 'bandung', 'lr00'] },
+  { storeId: 'birmas-nusadua', name: 'Birmas Nusa Dua (Bali)', keywords: ['nusa dua', 'bali', 'nusadua', 'bbnd'] },
+];
+
+export function extractMatchedStoreId(item) {
+  if (!item) return null;
+  if (typeof item === 'string') {
+    const s = String(item).toLowerCase();
+    const found = BIRMAS_STORE_KEYWORD_MAP.find(m => m.storeId === s || m.keywords.some(kw => s.includes(kw)));
+    return found ? found.storeId : null;
+  }
+  if (item.store_id) {
+    const s = String(item.store_id).toLowerCase();
+    const found = BIRMAS_STORE_KEYWORD_MAP.find(m => m.storeId === s || m.keywords.some(kw => s.includes(kw)));
+    if (found) return found.storeId;
+  }
+  const locRaw = item.location || item.branch || item.store || item.outlet || item.location_name || item.branch_name || item.branchCode || '';
+  let locStr = '';
+  if (Array.isArray(locRaw)) {
+    locStr = locRaw.map(l => typeof l === 'object' ? (l.post_title || l.name || l.title || '') : String(l)).join(' ');
+  } else if (typeof locRaw === 'object' && locRaw !== null) {
+    locStr = locRaw.post_title || locRaw.name || locRaw.title || '';
+  } else {
+    locStr = String(locRaw);
+  }
+  const clean = locStr.toLowerCase();
+  const matched = BIRMAS_STORE_KEYWORD_MAP.find(m => clean.includes(m.storeId) || m.keywords.some(kw => clean.includes(kw)));
+  return matched ? matched.storeId : null;
+}
+
 let isEsbSyncing = false;
 
 // Direct ESB Live Sync: Connects straight to ESB POS Cloud to fetch real store stock per branch
@@ -64,22 +101,10 @@ export async function runDirectESBSync() {
       ];
     }
 
-    const birmasBranchCodes = ['OUTS', 'BRMS', 'BRMT', 'BRMK', 'BRMKG', 'BRMLB', 'BRMKW', 'BBND', 'LR00'];
-    const filteredBranches = branches.filter((b) =>
-      birmasBranchCodes.includes(b.branchCode) ||
-      b.branchName?.toLowerCase().includes('birmas') ||
-      b.branchName?.toLowerCase().includes('sudirman')
-    );
-    const targetBranches = filteredBranches.length > 0 ? filteredBranches : [branches.find((b) => b.branchCode === 'OUTS') || branches[0]];
-
-    console.log(`[Direct ESB Sync] Syncing ${targetBranches.length} Birmas branches in SQLite...`);
+    console.log(`[Direct ESB Sync] Syncing ${branches.length} Birmas branches in SQLite...`);
     const branchMap = new Map();
-    for (const b of targetBranches) {
-      const code = (b.branchCode || '').toUpperCase();
-      let storeId = 'birmas-kuningan';
-      if (code.includes('SDR') || code.includes('SUDIRMAN') || code === 'OUTS') storeId = 'birmas-sudirman';
-      else if (code.includes('KWT') || code.includes('KWITANG')) storeId = 'birmas-kwitang';
-      else if (code.includes('LBB') || code.includes('LEBAK')) storeId = 'birmas-lebak-bulus';
+    for (const b of branches) {
+      const storeId = extractMatchedStoreId(b.branchCode) || extractMatchedStoreId(b.branchName) || 'birmas-kuningan';
       branchMap.set(b.branchCode, storeId);
     }
 
@@ -281,9 +306,8 @@ export async function runBirmasServerSync(options = {}) {
       }
 
       for (const item of items) {
-        const locName = (item.location?.[0]?.post_title || '').toLowerCase();
-        const matchedStore = storeKeywordMap.find((m) => locName.includes(m.kw));
-        if (!matchedStore) continue;
+        const storeId = extractMatchedStoreId(item);
+        if (!storeId) continue;
 
         const pv = item.product_variant?.[0];
         const p = pv?.product?.[0];
@@ -336,7 +360,7 @@ export async function runBirmasServerSync(options = {}) {
           lastUpdated: new Date().toISOString(),
         });
 
-        db.setProductStock(matchedStore.storeId, prodId, stockQty);
+        db.setProductStock(storeId, prodId, stockQty);
         totalSyncedProducts++;
       }
 
@@ -1304,32 +1328,22 @@ async function startServer() {
       }
 
       console.log(`[Stock Push] Received ${rawList.length} stock items from Birmas server!`);
-      const storeKeywordMap = [
-        { kw: 'sudirman', storeId: 'birmas-sudirman' },
-        { kw: 'kuningan', storeId: 'birmas-kuningan' },
-        { kw: 'kwitang', storeId: 'birmas-kwitang' },
-        { kw: 'lebak bulus', storeId: 'birmas-lebak-bulus' },
-      ];
 
       let updatedCount = 0;
       for (const item of rawList) {
-        if (item.store_id && item.product_id && item.stock !== undefined) {
-          db.setProductStock(item.store_id, item.product_id, Number(item.stock) || 0);
+        const storeId = extractMatchedStoreId(item);
+        if (!storeId) continue;
+
+        if (item.product_id && item.stock !== undefined) {
+          db.setProductStock(storeId, item.product_id, Number(item.stock) || 0);
           updatedCount++;
-        } else if (item.location && item.product_variant) {
-          const locName = (item.location?.[0]?.post_title || '').toLowerCase();
-          const matchedStore = storeKeywordMap.find((m) => locName.includes(m.kw));
-          if (!matchedStore) continue;
-
+        } else if (item.product_variant || item.esb_menu_id || item.id) {
           const pv = item.product_variant?.[0];
-          const p = pv?.product?.[0];
-          if (!p && !item.esb_menu_id) continue;
-
           const esbId = item.esb_menu_id || item.id;
           const prodId = `erp-${esbId}`;
           const stockQty = parseFloat(item.stock) || 0;
 
-          db.setProductStock(matchedStore.storeId, prodId, stockQty);
+          db.setProductStock(storeId, prodId, stockQty);
           updatedCount++;
         }
       }

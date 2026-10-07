@@ -95,32 +95,9 @@ export function useAuditStore() {
     initializeFromBackend();
   }
 
-  // Filter stock audit stores to ONLY show: Birmas Kuningan, Kwitang, and Sudirman (per user instruction)
-  const STOCK_AUDIT_STORE_KEYWORDS = [
-    'kuningan',
-    'kwitang',
-    'sudirman',
-  ];
-
   const visibleStores = computed(() => {
-    return stores.value
-      .filter((s) => {
-        const nameLower = String(s.name || '').toLowerCase();
-        const idLower = String(s.id || '').toLowerCase();
-        const codeLower = String(s.esbBranchCode || '').toLowerCase();
-        return STOCK_AUDIT_STORE_KEYWORDS.some(
-          (kw) => nameLower.includes(kw) || idLower.includes(kw) || codeLower.includes(kw)
-        );
-      })
-      .sort((a, b) => {
-        const order = ['kuningan', 'kwitang', 'sudirman'];
-        const getRank = (st) => {
-          const n = String(st.name || '').toLowerCase();
-          const idx = order.findIndex((k) => n.includes(k));
-          return idx === -1 ? 99 : idx;
-        };
-        return getRank(a) - getRank(b);
-      });
+    if (!stores.value || stores.value.length === 0) return [];
+    return stores.value.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   });
 
   const currentStore = computed(() => {

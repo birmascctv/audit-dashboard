@@ -196,7 +196,7 @@ function initTables(db) {
   upsertUser.run('user-chrisna', 'chrisna', 'chrisna@birmas.id', 'auditor666', 'Chrisna', 'auditor');
   upsertUser.run('user-auditor', 'auditor', 'auditor@birmas.id', 'auditor666', 'Auditor Staff', 'auditor');
 
-  // Official stores: Kuningan, Sudirman, Kwitang, Lebak Bulus, Nomadic Bandung
+  // Official stores: Kelapa Gading, Kuningan, Kwitang, Lebak Bulus, Sudirman, Tebet, Nomadic Bandung, Nusa Dua Bali
   const upsertStore = db.prepare(`
     INSERT INTO stores (id, name, location_code, esb_branch_code)
     VALUES (?, ?, ?, ?)
@@ -205,11 +205,14 @@ function initTables(db) {
       location_code = excluded.location_code,
       esb_branch_code = excluded.esb_branch_code;
   `);
-  upsertStore.run('birmas-kuningan', 'Birmas Kuningan', 'BRM-KNG', 'KUNINGAN');
-  upsertStore.run('birmas-sudirman', 'Birmas Sudirman', 'BRM-SDR', 'SUDIRMAN');
-  upsertStore.run('birmas-kwitang', 'Birmas Kwitang', 'BRM-KWT', 'KWITANG');
-  upsertStore.run('birmas-lebak-bulus', 'Birmas Lebak Bulus', 'BRM-LBB', 'LEBAKBULUS');
-  upsertStore.run('birmas-nomadic', 'Birmas Nomadic (Bandung)', 'BRM-NMD', 'NOMADIC');
+  upsertStore.run('birmas-kelapa-gading', 'Birmas Kelapa Gading', 'BRM-GND', 'BRMKG');
+  upsertStore.run('birmas-kuningan', 'Birmas Kuningan', 'BRM-KNG', 'BRMK');
+  upsertStore.run('birmas-kwitang', 'Birmas Kwitang', 'BRM-KWT', 'BRMKW');
+  upsertStore.run('birmas-lebak-bulus', 'Birmas Lebak Bulus', 'BRM-LBB', 'BRMLB');
+  upsertStore.run('birmas-sudirman', 'Birmas Sudirman', 'BRM-SDR', 'OUTS');
+  upsertStore.run('birmas-tebet', 'Birmas Tebet', 'BRM-TBT', 'BRMT');
+  upsertStore.run('birmas-nomadic', 'Birmas Nomadic (Bandung)', 'BRM-NMD', 'LR00');
+  upsertStore.run('birmas-nusadua', 'Birmas Nusa Dua (Bali)', 'BRM-BAL', 'BBND');
 
   // Purge any legacy mock barcodes from previous template versions
   db.exec(`
@@ -280,11 +283,9 @@ export function mapProductBarcode(productId, barcode) {
 // Stores Queries
 export function getAllStores() {
   const db = getDb();
-  // Filter strictly to the 4 official store locations requested: Kuningan, Sudirman, Kwitang, Lebak Bulus
   const rows = db.prepare(`
     SELECT id, wp_id as wpId, name, location_code as locationCode, esb_branch_code as esbBranchCode 
     FROM stores 
-    WHERE id IN ('birmas-kuningan', 'birmas-sudirman', 'birmas-kwitang', 'birmas-lebak-bulus')
     ORDER BY name ASC;
   `).all();
   return rows;
@@ -802,6 +803,9 @@ export function saveSalesFileRecord(fileInfo, rows = []) {
     INSERT INTO sales_files (
       id, filename, file_size, uploaded_at, uploaded_by, row_count, total_revenue, stores, file_content
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      row_count = row_count + excluded.row_count,
+      total_revenue = total_revenue + excluded.total_revenue;
   `);
 
   try {

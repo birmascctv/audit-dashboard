@@ -96,14 +96,47 @@ export function getCctvCriteria(query = {}) {
     const year = query.year ? parseInt(query.year, 10) : null;
     const excludeYear = query.exclude_year ? parseInt(query.exclude_year, 10) : null;
 
-    let where = '';
-    const params = [];
     if (year !== null) {
-      where = 'WHERE year = ?';
-      params.push(String(year));
+      // Find criteria that are active in audits for the specified year
+      const rows = db.prepare(`
+        SELECT DISTINCT c.criteria_id, c.name, c.category, c.passing_grade, c.metrics, c.unit
+        FROM criteria c
+        JOIN scores sc ON c.criteria_id = sc.criteria_id
+        JOIN audits a ON sc.audit_id = a.audit_id
+        WHERE a.year = ?
+        ORDER BY c.category, c.name
+      `).all(year);
+
+      if (rows && rows.length > 0) {
+        return rows.map((r) => ({
+          id: r.criteria_id,
+          label: r.name,
+          category: r.category,
+          passing_grade: r.passing_grade,
+          unit: r.unit || null,
+          metrics: r.metrics || null,
+        }));
+      }
     } else if (excludeYear !== null) {
-      where = 'WHERE year != ?';
-      params.push(String(excludeYear));
+      const rows = db.prepare(`
+        SELECT DISTINCT c.criteria_id, c.name, c.category, c.passing_grade, c.metrics, c.unit
+        FROM criteria c
+        JOIN scores sc ON c.criteria_id = sc.criteria_id
+        JOIN audits a ON sc.audit_id = a.audit_id
+        WHERE a.year != ?
+        ORDER BY c.category, c.name
+      `).all(excludeYear);
+
+      if (rows && rows.length > 0) {
+        return rows.map((r) => ({
+          id: r.criteria_id,
+          label: r.name,
+          category: r.category,
+          passing_grade: r.passing_grade,
+          unit: r.unit || null,
+          metrics: r.metrics || null,
+        }));
+      }
     }
 
     const colNames = db.prepare('PRAGMA table_info(criteria)').all().map((c) => c.name);
@@ -114,9 +147,8 @@ export function getCctvCriteria(query = {}) {
     const rows = db.prepare(`
       SELECT ${selectCols.join(', ')}
       FROM criteria
-      ${where}
       ORDER BY category, name
-    `).all(...params);
+    `).all();
 
     return rows.map((r) => ({
       id: r.criteria_id,
@@ -538,29 +570,61 @@ export function getCctvUploadedFiles() {
   if (!db) return [];
   try {
     const rows = db.prepare(`
-      SELECT a.audit_id, a.store_id, s.name AS store_name, a.year, a.month, a.file_name,
-             COUNT(sc.score_id) AS total_scores,
-             AVG(sc.score) AS average_score
+      SELECT 
+        a.audit_id, a.store_id, s.name AS store_name, a.year, a.month, a.file_name,
+        COUNT(sc.score_id) AS total_scores,
+        SUM(CASE WHEN sc.score >= c.passing_grade THEN 1 ELSE 0 END) AS passed_count,
+        SUM(CASE WHEN sc.score IS NOT NULL THEN 1 ELSE 0 END) AS not_null_count,
+        AVG(sc.score) AS average_score
       FROM audits a
       JOIN stores s ON a.store_id = s.store_id
       LEFT JOIN scores sc ON a.audit_id = sc.audit_id
+      LEFT JOIN criteria c ON sc.criteria_id = c.criteria_id
       GROUP BY a.audit_id
       ORDER BY a.year DESC, a.month DESC, a.audit_id DESC
     `).all();
 
-    return rows.map((r) => {
-      const storeFolder = path.join(__dirname, 'audit_birmas', r.store_name || '');
-      const filePath = r.file_name ? path.join(storeFolder, r.file_name) : null;
-      let mtime = null;
-      let sizeKB = null;
+    const indonesianMonths = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
 
-      if (filePath && fs.existsSync(filePath)) {
-        try {
-          const stats = fs.statSync(filePath);
-          mtime = stats.mtime.toISOString();
-          sizeKB = (stats.size / 1024).toFixed(1);
-        } catch {}
+    return rows.map((r) => {
+      const monthName = indonesianMonths[(r.month || 1) - 1] || 'Januari';
+      const possiblePaths = [
+        r.file_name ? path.join(__dirname, 'audit_birmas', r.store_name || '', String(r.year), monthName, r.file_name) : null,
+        r.file_name ? path.join(__dirname, 'audit_birmas', r.store_name || '', r.file_name) : null,
+        r.file_name ? path.join(__dirname, 'audit_birmas', r.file_name) : null,
+      ].filter(Boolean);
+
+      let mtime = null;
+      let sizeBytes = 12800;
+
+      for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+          try {
+            const stats = fs.statSync(p);
+            mtime = stats.mtime.toISOString();
+            sizeBytes = stats.size;
+            break;
+          } catch {}
+        }
       }
+
+      // Extract inspection date from filename if available (e.g., "Log Auditor OL Sudirman 4 Agustus 2026.csv")
+      let auditDate = `${monthName} ${r.year}`;
+      if (r.file_name) {
+        const dateMatch = r.file_name.match(/(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i) || r.file_name.match(/(per\s+\d{1,2}\s+[A-Za-z]+\s+\d{4})/i);
+        if (dateMatch) {
+          auditDate = dateMatch[0].replace(/^per\s+/i, '');
+        }
+      }
+
+      const notNull = r.not_null_count || 0;
+      const passed = r.passed_count || 0;
+      const passRate = notNull > 0 ? Math.round((passed / notNull) * 1000) / 10 : null;
+
+      const timestamp = mtime || `${r.year}-${String(r.month).padStart(2, '0')}-01T00:00:00.000Z`;
 
       return {
         audit_id: r.audit_id,
@@ -568,10 +632,18 @@ export function getCctvUploadedFiles() {
         store_name: r.store_name,
         year: r.year,
         month: r.month,
-        filename: r.file_name || `Audit_${r.store_name}_${r.year}_${r.month}.csv`,
-        created_at: mtime || `${r.year}-${String(r.month).padStart(2, '0')}-01T00:00:00.000Z`,
-        file_size: sizeKB ? `${sizeKB} KB` : '12.4 KB',
+        month_name: monthName,
+        audit_date: auditDate,
+        file_name: r.file_name || `Audit_${r.store_name}_${r.year}_${monthName}.csv`,
+        filename: r.file_name || `Audit_${r.store_name}_${r.year}_${monthName}.csv`,
+        timestamp: timestamp,
+        created_at: timestamp,
+        file_size: sizeBytes,
         total_scores: r.total_scores,
+        total_criteria: r.total_scores,
+        passed_count: passed,
+        not_null_count: notNull,
+        pass_rate: passRate,
         average_score: r.average_score ? Number(r.average_score.toFixed(2)) : null,
       };
     });

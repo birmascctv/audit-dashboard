@@ -1,34 +1,21 @@
 <!-- UploadedFilesTable.vue: Full history table of all uploaded audit CSV files with timestamps -->
 <template>
-  <div class="uploaded-files-table-container rounded-2xl bg-slate-900 border border-slate-700/80 shadow-xl p-5 sm:p-6 text-slate-100">
-    <!-- Header with Live Stats -->
-    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-800">
-      <div>
-        <div class="flex items-center gap-2.5">
-          <span class="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30 text-base font-bold shadow-sm">
-            📁
-          </span>
-          <div>
-            <h3 class="text-lg sm:text-xl font-black text-white tracking-tight flex items-center gap-2">
-              Uploaded CSV Files History
-              <span class="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-slate-800 text-blue-300 border border-blue-500/30">
-                {{ files.length }} Total
-              </span>
-            </h3>
-            <p class="text-xs text-slate-400 mt-0.5">
-              Comprehensive log of audit records stored in SQLite and on disk with exact timestamps
-            </p>
-          </div>
-        </div>
+  <div class="uploaded-files-table-container rounded-2xl bg-white border border-slate-200 shadow-sm p-5 sm:p-6 text-slate-800">
+    <!-- Action and Refresh Controls Toolbar -->
+    <div class="flex items-center justify-between gap-4 pb-4 border-b border-slate-100">
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-bold text-slate-700">Audit Archive</span>
+        <span class="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
+          {{ files.length }} Files Stored
+        </span>
       </div>
 
-      <!-- Action buttons -->
-      <div class="flex items-center gap-2 flex-wrap">
+      <div class="flex items-center gap-2">
         <button
           type="button"
           @click="fetchFiles"
           :disabled="loading"
-          class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+          class="px-3.5 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs disabled:opacity-50 cursor-pointer"
           title="Refresh list"
         >
           <span :class="{ 'animate-spin': loading }">🔄</span>
@@ -40,21 +27,21 @@
     <!-- Backend service notice banner if /api/uploaded-files is not reachable -->
     <div
       v-if="fetchError"
-      class="my-4 p-4 rounded-xl bg-amber-950/40 border border-amber-800/60 text-amber-200 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md"
+      class="my-4 p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs"
     >
       <div class="flex items-start gap-2.5">
         <span class="text-base leading-none">⚠️</span>
         <div>
-          <span class="font-bold text-amber-300 block">Unable to fetch audit records from server</span>
-          <span class="text-slate-300 block mt-0.5">
-            {{ fetchError }}. If you just updated files or ran <code>npm run build</code>, remember to restart your Python/Flask backend service (e.g. <code>systemctl restart audit-dashboard</code> or restart gunicorn/app.py) so the new API route is loaded.
+          <span class="font-bold text-amber-800 block">Unable to fetch audit records from server</span>
+          <span class="text-slate-600 block mt-0.5">
+            {{ fetchError }}.
           </span>
         </div>
       </div>
       <button
         type="button"
         @click="fetchFiles"
-        class="px-3 py-1.5 rounded-lg bg-amber-600/30 hover:bg-amber-600/40 border border-amber-500/40 text-amber-200 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer"
+        class="px-3 py-1.5 rounded-lg bg-amber-200/60 hover:bg-amber-200 text-amber-900 border border-amber-300 text-xs font-bold whitespace-nowrap transition-colors cursor-pointer"
       >
         Retry
       </button>
@@ -62,35 +49,35 @@
 
     <!-- Quick Stats Cards Row -->
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 my-5">
-      <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
-        <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Total Audits</span>
-        <span class="text-xl font-black text-white mt-1 block">{{ files.length }}</span>
+      <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 shadow-xs">
+        <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Audits</span>
+        <span class="text-xl font-black text-slate-900 mt-1 block">{{ files.length }}</span>
         <span class="text-[10px] text-slate-500">CSV files imported</span>
       </div>
 
-      <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
-        <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Outlets</span>
-        <span class="text-xl font-black text-blue-400 mt-1 block">{{ uniqueStoresCount }}</span>
+      <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 shadow-xs">
+        <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Outlets</span>
+        <span class="text-xl font-black text-teal-700 mt-1 block">{{ uniqueStoresCount }}</span>
         <span class="text-[10px] text-slate-500">Birmas branches</span>
       </div>
 
-      <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
-        <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Latest Upload</span>
-        <span class="text-sm font-bold text-emerald-400 mt-1 block truncate" :title="latestUploadDate">
+      <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 shadow-xs">
+        <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Latest Upload</span>
+        <span class="text-sm font-extrabold text-emerald-700 mt-1 block truncate" :title="latestUploadDate">
           {{ latestUploadDateRelative }}
         </span>
         <span class="text-[10px] text-slate-500 truncate block">{{ latestUploadDate }}</span>
       </div>
 
-      <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
-        <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Avg Pass Rate</span>
-        <span class="text-xl font-black text-purple-400 mt-1 block">{{ averagePassRate }}%</span>
+      <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 shadow-xs">
+        <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Avg Pass Rate</span>
+        <span class="text-xl font-black text-teal-800 mt-1 block">{{ averagePassRate }}%</span>
         <span class="text-[10px] text-slate-500">Across all audits</span>
       </div>
     </div>
 
     <!-- Search & Filter Controls Toolbar -->
-    <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 mb-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+    <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 mb-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between shadow-xs">
       <!-- Search input -->
       <div class="relative flex-1 min-w-[200px]">
         <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 text-xs">
@@ -100,13 +87,13 @@
           v-model="searchQuery"
           type="text"
           placeholder="Search by file name, store, date, or year..."
-          class="w-full pl-8 pr-8 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs placeholder:text-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+          class="w-full pl-8 pr-8 py-2 rounded-lg bg-white border border-slate-300 text-slate-900 text-xs placeholder:text-slate-400 focus:outline-none focus:border-teal-500 transition-colors shadow-xs"
         />
         <button
           v-if="searchQuery"
           type="button"
           @click="searchQuery = ''"
-          class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-500 hover:text-slate-300 text-xs"
+          class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs"
         >
           ✕
         </button>
@@ -117,7 +104,7 @@
         <!-- Store filter -->
         <select
           v-model="filterStore"
-          class="px-2.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-medium focus:outline-none focus:border-blue-500 shadow-sm"
+          class="px-2.5 py-2 rounded-lg bg-white border border-slate-300 text-slate-800 text-xs font-semibold focus:outline-none focus:border-teal-500 shadow-xs"
         >
           <option value="">All Stores</option>
           <option v-for="s in storeOptions" :key="s" :value="s">{{ s }}</option>
@@ -126,7 +113,7 @@
         <!-- Year filter -->
         <select
           v-model="filterYear"
-          class="px-2.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-medium focus:outline-none focus:border-blue-500 shadow-sm"
+          class="px-2.5 py-2 rounded-lg bg-white border border-slate-300 text-slate-800 text-xs font-semibold focus:outline-none focus:border-teal-500 shadow-xs"
         >
           <option value="">All Years</option>
           <option v-for="y in yearOptions" :key="y" :value="y">{{ y }}</option>
@@ -135,7 +122,7 @@
         <!-- Month filter -->
         <select
           v-model="filterMonth"
-          class="px-2.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-medium focus:outline-none focus:border-blue-500 shadow-sm"
+          class="px-2.5 py-2 rounded-lg bg-white border border-slate-300 text-slate-800 text-xs font-semibold focus:outline-none focus:border-teal-500 shadow-xs"
         >
           <option value="">All Months</option>
           <option v-for="m in monthOptions" :key="m" :value="m">{{ m }}</option>
@@ -144,7 +131,7 @@
         <!-- Page size -->
         <select
           v-model.number="pageSize"
-          class="px-2.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-xs font-medium focus:outline-none focus:border-blue-500 shadow-sm"
+          class="px-2.5 py-2 rounded-lg bg-white border border-slate-300 text-slate-800 text-xs font-semibold focus:outline-none focus:border-teal-500 shadow-xs"
           title="Rows per page"
         >
           <option :value="10">10 / page</option>
@@ -157,7 +144,7 @@
           v-if="hasActiveFilters"
           type="button"
           @click="resetFilters"
-          class="px-2.5 py-2 rounded-lg bg-rose-950/60 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300 text-xs font-medium transition-colors cursor-pointer"
+          class="px-2.5 py-2 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold transition-colors cursor-pointer"
           title="Reset all filters"
         >
           Reset
@@ -166,42 +153,42 @@
     </div>
 
     <!-- Table Container -->
-    <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50">
+    <div class="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-xs">
       <table class="w-full text-left text-xs">
-        <thead class="bg-slate-900/90 text-slate-400 uppercase tracking-wider text-[10px] font-bold border-b border-slate-800 select-none">
+        <thead class="bg-slate-50 text-slate-700 uppercase tracking-wider text-[10px] font-extrabold border-b border-slate-200 select-none">
           <tr>
-            <th scope="col" class="py-3 px-3 w-12 text-center">#</th>
-            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-white" @click="sortBy('store_name')">
+            <th scope="col" class="py-3 px-3 w-12 text-center text-slate-400">#</th>
+            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-slate-900" @click="sortBy('store_name')">
               <div class="flex items-center gap-1.5">
                 <span>Outlet</span>
                 <span v-if="sortField === 'store_name'">{{ sortAsc ? '▲' : '▼' }}</span>
               </div>
             </th>
-            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-white" @click="sortBy('file_name')">
+            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-slate-900" @click="sortBy('file_name')">
               <div class="flex items-center gap-1.5">
                 <span>File Name</span>
                 <span v-if="sortField === 'file_name'">{{ sortAsc ? '▲' : '▼' }}</span>
               </div>
             </th>
-            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-white" @click="sortBy('audit_date')">
+            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-slate-900" @click="sortBy('audit_date')">
               <div class="flex items-center gap-1.5">
                 <span>Inspection Date</span>
                 <span v-if="sortField === 'audit_date'">{{ sortAsc ? '▲' : '▼' }}</span>
               </div>
             </th>
-            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-white" @click="sortBy('timestamp')">
+            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-slate-900" @click="sortBy('timestamp')">
               <div class="flex items-center gap-1.5">
                 <span>Uploaded Timestamp</span>
                 <span v-if="sortField === 'timestamp'">{{ sortAsc ? '▲' : '▼' }}</span>
               </div>
             </th>
-            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-white" @click="sortBy('file_size')">
+            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-slate-900" @click="sortBy('file_size')">
               <div class="flex items-center gap-1.5">
                 <span>File Size</span>
                 <span v-if="sortField === 'file_size'">{{ sortAsc ? '▲' : '▼' }}</span>
               </div>
             </th>
-            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-white" @click="sortBy('pass_rate')">
+            <th scope="col" class="py-3 px-3 cursor-pointer hover:text-slate-900" @click="sortBy('pass_rate')">
               <div class="flex items-center gap-1.5">
                 <span>Pass Rate</span>
                 <span v-if="sortField === 'pass_rate'">{{ sortAsc ? '▲' : '▼' }}</span>
@@ -210,27 +197,27 @@
             <th scope="col" class="py-3 px-3 text-right">Action</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-slate-800/80">
+        <tbody class="divide-y divide-slate-100">
           <!-- Loading State -->
           <tr v-if="loading">
-            <td colspan="8" class="py-12 text-center text-slate-400">
+            <td colspan="8" class="py-12 text-center text-slate-500">
               <div class="flex flex-col items-center justify-center gap-2">
-                <div class="w-7 h-7 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                <span class="text-xs">Loading uploaded CSV files...</span>
+                <div class="w-7 h-7 border-2 border-teal-600 border-t-transparent rounded-full animate-spin"></div>
+                <span class="text-xs font-semibold">Loading uploaded CSV files...</span>
               </div>
             </td>
           </tr>
 
           <!-- Empty State -->
           <tr v-else-if="!paginatedFiles.length">
-            <td colspan="8" class="py-12 text-center text-slate-400">
+            <td colspan="8" class="py-12 text-center text-slate-500">
               <div class="flex flex-col items-center justify-center gap-2">
                 <span class="text-2xl">🔍</span>
-                <span class="font-semibold text-slate-300">No audit CSV files match your search criteria</span>
+                <span class="font-bold text-slate-700">No audit CSV files match your search criteria</span>
                 <button
                   type="button"
                   @click="resetFilters"
-                  class="mt-2 px-3 py-1.5 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 text-xs hover:bg-blue-600/30 transition-colors"
+                  class="mt-2 px-3 py-1.5 rounded-lg bg-teal-50 text-teal-800 border border-teal-200 text-xs font-bold hover:bg-teal-100 transition-colors"
                 >
                   Clear search and filters
                 </button>
@@ -242,10 +229,10 @@
           <tr
             v-for="(f, idx) in paginatedFiles"
             :key="f.audit_id"
-            class="hover:bg-slate-900/60 transition-colors group"
+            class="hover:bg-slate-50/80 transition-colors group"
           >
             <!-- Index -->
-            <td class="py-3 px-3 text-center text-slate-500 font-mono text-[11px]">
+            <td class="py-3 px-3 text-center text-slate-400 font-mono text-[11px]">
               {{ (currentPage - 1) * pageSize + idx + 1 }}
             </td>
 
@@ -254,10 +241,10 @@
               <div class="flex items-center gap-2.5">
                 <StoreMascot :store="f.store_id" size="sm" class="flex-shrink-0" />
                 <div class="flex flex-col min-w-0">
-                  <span class="font-bold text-white text-xs truncate">
+                  <span class="font-bold text-slate-900 text-xs truncate">
                     {{ stripStoreBrand(f.store_name) }}
                   </span>
-                  <span class="text-[10px] text-slate-400 font-mono">
+                  <span class="text-[10px] text-slate-500 font-mono">
                     {{ f.month_name }} {{ f.year }}
                   </span>
                 </div>
@@ -266,19 +253,14 @@
 
             <!-- File Name -->
             <td class="py-3 px-3">
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-mono font-semibold text-slate-200 group-hover:text-blue-300 transition-colors truncate max-w-[260px] sm:max-w-xs" :title="f.file_name">
-                  {{ f.file_name }}
-                </span>
-                <span class="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  CSV
-                </span>
-              </div>
+              <span class="text-xs font-mono font-bold text-slate-800 group-hover:text-teal-700 transition-colors truncate max-w-[260px] sm:max-w-xs block" :title="f.file_name">
+                {{ f.file_name }}
+              </span>
             </td>
 
             <!-- Inspection Date -->
             <td class="py-3 px-3 whitespace-nowrap">
-              <span class="text-xs font-medium text-slate-300">
+              <span class="text-xs font-semibold text-slate-700">
                 {{ f.audit_date }}
               </span>
             </td>
@@ -286,10 +268,10 @@
             <!-- Upload Timestamp -->
             <td class="py-3 px-3 whitespace-nowrap">
               <div class="flex flex-col" :title="f.timestamp">
-                <span class="text-xs font-mono font-medium text-slate-200">
+                <span class="text-xs font-mono font-medium text-slate-800">
                   {{ formatTimestamp(f.timestamp) }}
                 </span>
-                <span class="text-[10px] text-slate-500 font-sans">
+                <span class="text-[10px] text-slate-400 font-sans">
                   {{ formatRelativeTime(f.timestamp) }}
                 </span>
               </div>
@@ -297,7 +279,7 @@
 
             <!-- File Size -->
             <td class="py-3 px-3 whitespace-nowrap">
-              <span class="text-xs font-mono text-slate-300">
+              <span class="text-xs font-mono text-slate-600">
                 {{ formatFileSize(f.file_size) }}
               </span>
             </td>
@@ -307,14 +289,14 @@
               <div class="flex items-center gap-2">
                 <span
                   v-if="f.pass_rate !== null"
-                  class="px-2 py-0.5 rounded-md text-xs font-black border"
+                  class="px-2 py-0.5 rounded-md text-xs font-extrabold border"
                   :class="getPassRateBadgeClass(f.pass_rate)"
                 >
                   {{ f.pass_rate }}%
                 </span>
-                <span v-else class="text-xs text-slate-500 font-mono">—</span>
+                <span v-else class="text-xs text-slate-400 font-mono">—</span>
 
-                <span v-if="f.total_criteria" class="text-[10px] text-slate-400 font-mono">
+                <span v-if="f.total_criteria" class="text-[10px] text-slate-500 font-mono">
                   ({{ f.passed_count }}/{{ f.not_null_count || f.total_criteria }})
                 </span>
               </div>
@@ -322,15 +304,15 @@
 
             <!-- Action: Download CSV -->
             <td class="py-3 px-3 text-right whitespace-nowrap">
-              <a
-                :href="'/api/download-audit-file?audit_id=' + f.audit_id"
-                download
-                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 text-xs font-semibold transition-all hover:scale-105"
+              <button
+                type="button"
+                @click="downloadAuditFile(f)"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 text-xs font-bold transition-all hover:scale-105 shadow-xs cursor-pointer"
                 title="Download this CSV file"
               >
                 <span>⬇️</span>
                 <span>Download</span>
-              </a>
+              </button>
             </td>
           </tr>
         </tbody>
@@ -338,16 +320,16 @@
     </div>
 
     <!-- Pagination & Results Count Footer -->
-    <div class="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400 pt-3 border-t border-slate-800">
+    <div class="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 pt-3 border-t border-slate-200">
       <div>
         Showing
-        <span class="font-bold text-white">{{ filteredFiles.length ? (currentPage - 1) * pageSize + 1 : 0 }}</span>
+        <span class="font-bold text-slate-900">{{ filteredFiles.length ? (currentPage - 1) * pageSize + 1 : 0 }}</span>
         to
-        <span class="font-bold text-white">{{ Math.min(currentPage * pageSize, filteredFiles.length) }}</span>
+        <span class="font-bold text-slate-900">{{ Math.min(currentPage * pageSize, filteredFiles.length) }}</span>
         of
-        <span class="font-bold text-white">{{ filteredFiles.length }}</span>
+        <span class="font-bold text-slate-900">{{ filteredFiles.length }}</span>
         records
-        <span v-if="filteredFiles.length !== files.length" class="text-slate-500">
+        <span v-if="filteredFiles.length !== files.length" class="text-slate-400">
           (filtered from {{ files.length }} total)
         </span>
       </div>
@@ -357,7 +339,7 @@
           type="button"
           @click="currentPage = 1"
           :disabled="currentPage === 1"
-          class="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-700 transition-colors"
+          class="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors shadow-xs"
           title="First page"
         >
           ««
@@ -366,12 +348,12 @@
           type="button"
           @click="currentPage--"
           :disabled="currentPage === 1"
-          class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-700 transition-colors"
+          class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors shadow-xs font-semibold"
         >
           Previous
         </button>
 
-        <span class="px-3 py-1.5 font-mono font-bold text-slate-200 bg-slate-950 rounded-lg border border-slate-800">
+        <span class="px-3 py-1.5 font-mono font-bold text-slate-800 bg-slate-50 rounded-lg border border-slate-200">
           Page {{ currentPage }} / {{ totalPages || 1 }}
         </span>
 
@@ -379,7 +361,7 @@
           type="button"
           @click="currentPage++"
           :disabled="currentPage >= totalPages"
-          class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-700 transition-colors"
+          class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors shadow-xs font-semibold"
         >
           Next
         </button>
@@ -387,7 +369,7 @@
           type="button"
           @click="currentPage = totalPages"
           :disabled="currentPage >= totalPages"
-          class="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-700 transition-colors"
+          class="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors shadow-xs"
           title="Last page"
         >
           »»
@@ -403,7 +385,10 @@ import StoreMascot from './StoreMascot.vue'
 import { stripStoreBrand } from '../store-meta.js'
 
 const props = defineProps({
-  refreshKey: { type: [Number, String], default: 0 }
+  refreshKey: {
+    type: Number,
+    default: 0
+  }
 })
 
 const files = ref([])
@@ -433,12 +418,9 @@ async function fetchFiles() {
       throw new Error(`Server returned HTTP ${res.status}`)
     }
     const data = await res.json()
-    if (Array.isArray(data)) {
-      files.value = data
-      fetchError.value = ''
-    } else {
-      files.value = []
-    }
+    const list = Array.isArray(data) ? data : (Array.isArray(data?.files) ? data.files : [])
+    files.value = list
+    fetchError.value = ''
   } catch (err) {
     console.error('Failed to load uploaded files list:', err)
     fetchError.value = err.message || 'Failed to fetch uploaded files'
@@ -626,12 +608,31 @@ function formatRelativeTime(iso) {
 
 function getPassRateBadgeClass(rate) {
   if (rate >= 80) {
-    return 'bg-emerald-950/60 text-emerald-400 border-emerald-700/50'
+    return 'bg-emerald-50 text-emerald-800 border-emerald-300'
   }
   if (rate >= 65) {
-    return 'bg-amber-950/60 text-amber-300 border-amber-700/50'
+    return 'bg-amber-50 text-amber-800 border-amber-300'
   }
-  return 'bg-rose-950/60 text-rose-400 border-rose-700/50'
+  return 'bg-rose-50 text-rose-800 border-rose-300'
+}
+
+async function downloadAuditFile(f) {
+  try {
+    const res = await fetch(`/api/download-audit-file?audit_id=${f.audit_id}`);
+    if (!res.ok) throw new Error('File download failed');
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.download = f.file_name || `Audit_${f.store_name}_${f.year}_${f.month_name}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  } catch (err) {
+    window.location.href = `/api/download-audit-file?audit_id=${f.audit_id}`;
+  }
 }
 </script>
 
