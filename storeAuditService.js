@@ -588,8 +588,8 @@ export function getCctvUploadedFiles() {
       SELECT 
         a.audit_id, a.store_id, s.name AS store_name, a.year, a.month, a.file_name,
         COUNT(sc.score_id) AS total_scores,
-        SUM(CASE WHEN sc.score >= c.passing_grade THEN 1 ELSE 0 END) AS passed_count,
-        SUM(CASE WHEN sc.score IS NOT NULL THEN 1 ELSE 0 END) AS not_null_count,
+        SUM(CASE WHEN LOWER(sc.pass_fail) = 'pass' OR (sc.score IS NOT NULL AND c.passing_grade IS NOT NULL AND sc.score >= c.passing_grade) THEN 1 ELSE 0 END) AS passed_count,
+        SUM(CASE WHEN sc.score IS NOT NULL OR (sc.pass_fail IS NOT NULL AND sc.pass_fail != '') THEN 1 ELSE 0 END) AS not_null_count,
         AVG(sc.score) AS average_score
       FROM audits a
       JOIN stores s ON a.store_id = s.store_id
@@ -668,16 +668,37 @@ export function getCctvUploadedFiles() {
   }
 }
 
-// 11. Helper to parse CSV lines safely
+// 11. Helper to parse CSV lines safely with automatic delimiter detection
 export function parseCsvRows(text) {
+  if (!text) return [];
+  // Strip UTF-8 BOM if present
+  const cleanText = text.replace(/^\uFEFF/, '');
+
+  // Detect delimiter: compare comma, semicolon, and tab counts on first non-empty lines
+  const sampleLines = cleanText.split(/\r?\n/).filter((l) => l.trim().length > 0).slice(0, 5);
+  let commaCount = 0;
+  let semiCount = 0;
+  let tabCount = 0;
+  for (const line of sampleLines) {
+    commaCount += (line.match(/,/g) || []).length;
+    semiCount += (line.match(/;/g) || []).length;
+    tabCount += (line.match(/\t/g) || []).length;
+  }
+  let delimiter = ',';
+  if (semiCount > commaCount && semiCount >= tabCount) {
+    delimiter = ';';
+  } else if (tabCount > commaCount && tabCount > semiCount) {
+    delimiter = '\t';
+  }
+
   const lines = [];
   let row = [];
   let current = '';
   let inQuotes = false;
 
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    const nextChar = text[i + 1];
+  for (let i = 0; i < cleanText.length; i++) {
+    const char = cleanText[i];
+    const nextChar = cleanText[i + 1];
 
     if (char === '"') {
       if (inQuotes && nextChar === '"') {
@@ -686,7 +707,7 @@ export function parseCsvRows(text) {
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (char === ',' && !inQuotes) {
+    } else if (char === delimiter && !inQuotes) {
       row.push(current.trim());
       current = '';
     } else if ((char === '\r' || char === '\n') && !inQuotes) {
@@ -871,30 +892,45 @@ export function processAuditUpload({ storeName, year, month, fileName, fileBuffe
     };
   }
 
-  const header = rows[0].map((h) => h.toLowerCase().trim().replace(/^["']|["']$/g, ''));
-  const requiredCols = ['category', 'criteria', 'score', 'passing grade'];
-  const missingCols = requiredCols.filter(
-    (req) => !header.some((col) => col === req || col.includes(req))
-  );
-  if (missingCols.length > 0) {
-    const displayMissing = missingCols.map((m) => m.charAt(0).toUpperCase() + m.slice(1)).join(', ');
+  // Find the actual header row (in case title/metadata rows precede the table)
+  let headerRowIdx = -1;
+  let colIdx = {
+    category: -1,
+    criteria: -1,
+    metrics: -1,
+    score: -1,
+    passingGrade: -1,
+    passFail: -1,
+    notes: -1,
+  };
+
+  for (let r = 0; r < Math.min(rows.length, 15); r++) {
+    const rowCols = rows[r].map((h) => (h || '').toLowerCase().trim().replace(/^["']|["']$/g, ''));
+    const catIdx = rowCols.findIndex((h) => h === 'category' || h.includes('category') || h.includes('kategori'));
+    const critIdx = rowCols.findIndex((h) => h === 'criteria' || h.includes('criteria') || h.includes('kriteria') || h.includes('indikator') || h.includes('item'));
+    const scoreIdx = rowCols.findIndex((h) => h === 'score' || h.includes('score') || h.includes('nilai') || h.includes('skor') || h.includes('poin') || h.includes('hasil'));
+
+    if (catIdx !== -1 && (critIdx !== -1 || scoreIdx !== -1)) {
+      headerRowIdx = r;
+      colIdx.category = catIdx;
+      colIdx.criteria = critIdx !== -1 ? critIdx : 2;
+      colIdx.score = scoreIdx !== -1 ? scoreIdx : 4;
+      colIdx.metrics = rowCols.findIndex((h) => h === 'metrics' || h.includes('metric') || h.includes('metrik') || h.includes('parameter') || h.includes('deskripsi'));
+      colIdx.passingGrade = rowCols.findIndex((h) => h === 'passing grade' || h.includes('passing') || h.includes('grade') || h.includes('target') || h.includes('standar') || h.includes('batas') || h.includes('pg') || h.includes('bobot'));
+      colIdx.passFail = rowCols.findIndex((h) => h === 'pass/not pass' || h.includes('pass') || h.includes('status') || h.includes('kelulusan') || h.includes('keterangan'));
+      colIdx.notes = rowCols.findIndex((h) => h === 'infraction details' || h.includes('infraction') || h.includes('detail') || h.includes('notes') || h.includes('catatan') || h.includes('temuan'));
+      break;
+    }
+  }
+
+  if (headerRowIdx === -1 || colIdx.category === -1) {
     return {
       success: false,
       status: 'error',
       errorType: 'INCORRECT_STRUCTURE',
-      message: `Data has different table format (failed to upload). Missing required columns: ${displayMissing}. Expected standard columns: Category, Criteria, Score, Passing Grade.`,
+      message: 'Data has different table format (failed to upload). Expected standard columns: Category (or Kategori), Criteria (or Kriteria), Score (or Nilai), Passing Grade (or Target).',
     };
   }
-
-  const colIdx = {
-    category: header.findIndex((h) => h === 'category' || h.includes('category') || h.includes('kategori')),
-    criteria: header.findIndex((h) => h === 'criteria' || h.includes('criteria') || h.includes('kriteria')),
-    metrics: header.findIndex((h) => h === 'metrics' || h.includes('metric')),
-    score: header.findIndex((h) => h === 'score' || h.includes('score') || h.includes('nilai')),
-    passingGrade: header.findIndex((h) => h === 'passing grade' || h.includes('passing') || h.includes('grade')),
-    passFail: header.findIndex((h) => h === 'pass/not pass' || h.includes('pass') || h.includes('status')),
-    notes: header.findIndex((h) => h === 'infraction details' || h.includes('infraction') || h.includes('detail') || h.includes('notes') || h.includes('catatan')),
-  };
 
   // 3. Normalize store and month
   const INDO_MONTHS = [
@@ -947,7 +983,7 @@ export function processAuditUpload({ storeName, year, month, fileName, fileBuffe
   // If existing audit found and not confirmed overwrite:
   if (existingAudit && !confirm) {
     const existingScoresCount = db.prepare('SELECT COUNT(*) as count FROM scores WHERE audit_id = ?').get(existingAudit.audit_id)?.count || 0;
-    const nonSkippedRows = rows.slice(1).filter((r) => {
+    const nonSkippedRows = rows.slice(headerRowIdx + 1).filter((r) => {
       const cat = (r[colIdx.category] || '').trim().toLowerCase();
       const crit = (r[colIdx.criteria] || '').trim();
       return crit && cat !== 'absensi' && cat !== 'maintenance';
@@ -996,7 +1032,7 @@ export function processAuditUpload({ storeName, year, month, fileName, fileBuffe
   let passedCount = 0;
   let notNullCount = 0;
 
-  for (let i = 1; i < rows.length; i++) {
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const r = rows[i];
     const rawCat = (colIdx.category !== -1 ? r[colIdx.category] : '') || '';
     const rawCrit = (colIdx.criteria !== -1 ? r[colIdx.criteria] : '') || '';
@@ -1011,20 +1047,37 @@ export function processAuditUpload({ storeName, year, month, fileName, fileBuffe
 
     let rawScore = (colIdx.score !== -1 ? r[colIdx.score] : '') || '';
     let scoreVal = null;
-    if (rawScore !== '' && rawScore !== null && rawScore !== undefined) {
-      const parsed = parseFloat(rawScore);
+    if (rawScore !== '' && rawScore !== null && rawScore !== undefined && rawScore !== '-') {
+      const cleanNum = String(rawScore).trim().replace(',', '.');
+      const parsed = parseFloat(cleanNum);
       if (!isNaN(parsed)) scoreVal = parsed;
     }
 
     let rawPg = (colIdx.passingGrade !== -1 ? r[colIdx.passingGrade] : '') || '';
     let pgVal = null;
     if (rawPg !== '' && rawPg !== null && rawPg !== undefined) {
-      const parsed = parseFloat(rawPg);
+      const cleanPg = String(rawPg).trim().replace(',', '.');
+      const parsed = parseFloat(cleanPg);
       if (!isNaN(parsed)) pgVal = parsed;
     }
 
     let rawMetrics = (colIdx.metrics !== -1 ? r[colIdx.metrics] : '') || '';
     let metricsVal = rawMetrics.trim() || null;
+
+    // Fallback passing grade & metrics from criteria database if omitted
+    if (pgVal === null) {
+      try {
+        const critMeta = db.prepare('SELECT passing_grade, metrics FROM all_criteria WHERE name = ? LIMIT 1').get(criteriaName);
+        if (critMeta && critMeta.passing_grade !== null) {
+          pgVal = critMeta.passing_grade;
+          if (!metricsVal) metricsVal = critMeta.metrics;
+        } else {
+          pgVal = 3.0;
+        }
+      } catch (_) {
+        pgVal = 3.0;
+      }
+    }
 
     let rawPassFail = (colIdx.passFail !== -1 ? r[colIdx.passFail] : '') || '';
     let passFailVal = rawPassFail.trim() || null;
@@ -1066,7 +1119,7 @@ export function processAuditUpload({ storeName, year, month, fileName, fileBuffe
       VALUES (?, ?, ?, ?, ?)
     `).run(auditId, criteriaId, scoreVal, passFailVal, notesVal);
 
-    if (scoreVal !== null) notNullCount++;
+    if (scoreVal !== null || (passFailVal && passFailVal.trim() !== '')) notNullCount++;
     if (passFailVal && passFailVal.toLowerCase() === 'pass') passedCount++;
   }
 

@@ -184,9 +184,27 @@ function handleLogout() {
           </nav>
         </div>
 
-        <!-- Right Side: User Profile & Logout (Time removed) -->
+        <!-- Right Side: Outlet Selector, User Profile & Logout -->
         <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
-          <!-- Current User Profile & Role Badge (without brackets in username) -->
+          <!-- 1. Outlet Location Selector Dropdown -->
+          <div v-if="stores && stores.length" class="flex items-center gap-2 bg-slate-50 border border-slate-300 hover:border-teal-500 px-3 py-1.5 rounded-xl shadow-2xs transition-colors">
+            <Building2 class="w-4 h-4 text-teal-600 shrink-0" />
+            <div class="relative flex items-center">
+              <select
+                :value="selectedStoreId"
+                @change="selectStore($event.target.value)"
+                class="appearance-none bg-transparent text-slate-900 font-bold text-xs pr-5 focus:outline-none cursor-pointer"
+                title="Select Active Birmas Outlet"
+              >
+                <option v-for="s in stores" :key="s.id" :value="s.id">
+                  {{ s.name }}
+                </option>
+              </select>
+              <ChevronDown class="w-3.5 h-3.5 text-slate-500 absolute right-0 pointer-events-none" />
+            </div>
+          </div>
+
+          <!-- 2. Current User Profile & Role Badge -->
           <div v-if="currentUser" class="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl shadow-xs">
             <div class="w-6 h-6 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center font-black text-[11px]">
               {{ cleanUserName.charAt(0) }}

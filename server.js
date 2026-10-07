@@ -643,35 +643,43 @@ async function startServer() {
   // 1. Stores API (Unified for both Store Audit CCTV and Physical Stock Audit)
   app.get('/api/stores', (req, res) => {
     try {
-      const cctvStores = storeAuditService.getCctvStores();
+      const cctvStores = storeAuditService.getCctvStores() || [];
       const stockStores = db.getAllStores() || [];
 
-      if (cctvStores && cctvStores.length > 0) {
-        const combined = cctvStores.map((cs, idx) => {
-          const cleanCsName = String(cs.name || '').toLowerCase().replace('birmas ', '').trim();
-          const match = stockStores.find((s) => {
-            const cleanSName = String(s.name || '').toLowerCase().replace('birmas ', '').trim();
-            const cleanSId = String(s.id || '').toLowerCase().replace('birmas-', '').trim();
-            return cleanSName === cleanCsName || cleanSId === cleanCsName || cleanSId.includes(cleanCsName);
-          });
+      const map = new Map();
 
-          return {
-            id: match?.id || `birmas-${cs.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+      // First register all known store branches from stock database
+      stockStores.forEach((s, idx) => {
+        const cleanName = String(s.name || '').toLowerCase().replace(/^birmas\s+/i, '').trim();
+        map.set(cleanName, {
+          id: s.id,
+          store_id: s.store_id || idx + 1,
+          name: s.name,
+          locationCode: s.locationCode || s.location_code || 'BRM',
+          esbBranchCode: s.esbBranchCode || s.esb_branch_code || 'BRM',
+        });
+      });
+
+      // Merge and update with CCTV audit store records
+      cctvStores.forEach((cs, idx) => {
+        const cleanCsName = String(cs.name || '').toLowerCase().replace(/^birmas\s+/i, '').trim();
+        const existing = map.get(cleanCsName);
+        if (existing) {
+          existing.store_id = cs.store_id || existing.store_id;
+          existing.name = cs.name;
+        } else {
+          map.set(cleanCsName, {
+            id: `birmas-${cleanCsName.replace(/[^a-z0-9]/g, '-')}`,
             store_id: cs.store_id || idx + 1,
             name: cs.name,
-            locationCode: match?.locationCode || `BRM-${cs.name.replace('Birmas ', '').substring(0, 3).toUpperCase()}`,
-            esbBranchCode: match?.esbBranchCode || cs.name.replace('Birmas ', '').toUpperCase(),
-          };
-        });
-        return res.json(combined);
-      }
+            locationCode: `BRM-${cleanCsName.substring(0, 3).toUpperCase()}`,
+            esbBranchCode: cleanCsName.toUpperCase(),
+          });
+        }
+      });
 
-      // Fallback: If cctvStores empty, return stock stores augmented with store_id
-      const fallbackStores = stockStores.map((s, idx) => ({
-        ...s,
-        store_id: s.store_id || idx + 1,
-      }));
-      res.json(fallbackStores);
+      const result = Array.from(map.values()).sort((a, b) => a.store_id - b.store_id);
+      res.json(result);
     } catch (err) {
       console.warn('[/api/stores] Fallback error:', err.message);
       res.json(db.getAllStores());
@@ -1300,14 +1308,6 @@ async function startServer() {
       const { store, year, month, confirm } = req.body;
       const file = req.file;
 
-      if (!store || !year || !month) {
-        return res.status(400).json({
-          status: 'error',
-          errorType: 'MISSING_FIELDS',
-          message: 'Please select store, audit year, and audit month before uploading.',
-        });
-      }
-
       if (!file) {
         return res.status(400).json({
           status: 'error',
@@ -1325,10 +1325,64 @@ async function startServer() {
         });
       }
 
+      // Auto-detect missing fields from filename if needed
+      let storeName = store;
+      let yr = year;
+      let mo = month;
+
+      if (!storeName || !yr || !mo) {
+        const lowerName = fileName.toLowerCase();
+        if (!yr) {
+          const yMatch = lowerName.match(/\b(202[4-9])\b/);
+          yr = yMatch ? yMatch[1] : String(new Date().getFullYear());
+        }
+        if (!mo) {
+          const monthMap = {
+            januari: 'Januari', january: 'Januari',
+            februari: 'Februari', february: 'Februari',
+            maret: 'Maret', march: 'Maret',
+            april: 'April',
+            mei: 'Mei', may: 'Mei',
+            juni: 'Juni', june: 'Juni',
+            juli: 'Juli', july: 'Juli',
+            agustus: 'Agustus', august: 'Agustus', agu: 'Agustus',
+            september: 'September',
+            oktober: 'Oktober', october: 'Oktober',
+            november: 'November',
+            desember: 'Desember', december: 'Desember'
+          };
+          for (const [k, v] of Object.entries(monthMap)) {
+            if (lowerName.includes(k)) { mo = v; break; }
+          }
+          if (!mo) mo = 'Januari';
+        }
+        if (!storeName) {
+          const cctvStores = storeAuditService.getCctvStores() || [];
+          for (const s of cctvStores) {
+            const cleanS = String(s.name || '').toLowerCase().replace(/^birmas\s+/i, '');
+            if (cleanS && lowerName.includes(cleanS)) {
+              storeName = s.name;
+              break;
+            }
+          }
+          if (!storeName && cctvStores.length > 0) {
+            storeName = cctvStores[0].name;
+          }
+        }
+      }
+
+      if (!storeName || !yr || !mo) {
+        return res.status(400).json({
+          status: 'error',
+          errorType: 'MISSING_FIELDS',
+          message: 'Please select store, audit year, and audit month before uploading.',
+        });
+      }
+
       const result = storeAuditService.processAuditUpload({
-        storeName: store,
-        year: parseInt(year, 10),
-        month: month,
+        storeName: storeName,
+        year: parseInt(yr, 10),
+        month: mo,
         fileName: fileName,
         fileBuffer: file.buffer,
         confirm: confirm === '1' || confirm === true,

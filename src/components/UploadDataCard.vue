@@ -5,17 +5,22 @@
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <!-- 1. Birmas Store Selector -->
         <div>
-          <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
-            Birmas
+          <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+            <span class="flex items-center gap-1.5">
+              <span>🏪</span>
+              <span>Birmas Outlet</span>
+              <span class="text-rose-500">*</span>
+            </span>
+            <span class="text-[10px] text-teal-700 font-semibold">({{ activeStores.length }} outlets)</span>
           </label>
           <select
             v-model="store"
-            class="w-full px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 text-slate-900 text-sm font-semibold focus:outline-none focus:border-teal-500 focus:bg-white shadow-xs"
+            class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm font-bold focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100 shadow-xs cursor-pointer transition-colors"
           >
-            <option value="" disabled>Select outlet</option>
+            <option value="" disabled>Select outlet store</option>
             <option
-              v-for="s in stores"
-              :key="s.store_id"
+              v-for="s in activeStores"
+              :key="s.store_id || s.id"
               :value="s.name"
             >
               {{ stripStoreBrand(s.name) }}
@@ -173,13 +178,55 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useAuditStore } from '../composables/useAuditStore.js'
 
 const props = defineProps({
   stores: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['uploaded'])
+
+const { selectedStoreId } = useAuditStore()
+
+const DEFAULT_OUTLETS = [
+  { store_id: 1, id: 'birmas-kelapa-gading', name: 'Birmas Kelapa Gading' },
+  { store_id: 2, id: 'birmas-kuningan', name: 'Birmas Kuningan' },
+  { store_id: 3, id: 'birmas-kwitang', name: 'Birmas Kwitang' },
+  { store_id: 4, id: 'birmas-lebak-bulus', name: 'Birmas Lebak Bulus' },
+  { store_id: 5, id: 'birmas-sudirman', name: 'Birmas Sudirman' },
+  { store_id: 6, id: 'birmas-tebet', name: 'Birmas Tebet' },
+  { store_id: 7, id: 'birmas-nomadic', name: 'Birmas Nomadic (Bandung)' },
+  { store_id: 8, id: 'birmas-nusadua', name: 'Birmas Nusa Dua (Bali)' },
+]
+
+const localStores = ref([])
+const activeStores = computed(() => {
+  if (props.stores && props.stores.length > 0) return props.stores
+  if (localStores.value && localStores.value.length > 0) return localStores.value
+  return DEFAULT_OUTLETS
+})
+
+// Auto-select outlet matching selectedStoreId or first store
+function syncDefaultStore() {
+  if (!store.value && activeStores.value.length > 0) {
+    const match = activeStores.value.find(s => s.id === selectedStoreId?.value || s.store_id === selectedStoreId?.value)
+    if (match) {
+      store.value = match.name
+    } else {
+      store.value = activeStores.value[0].name
+    }
+  }
+}
+watch(activeStores, syncDefaultStore, { immediate: true })
+watch(() => selectedStoreId?.value, () => {
+  if (selectedStoreId?.value && activeStores.value.length > 0) {
+    const match = activeStores.value.find(s => s.id === selectedStoreId.value)
+    if (match) store.value = match.name
+  }
+})
+
+const autoDetectedTag = ref('')
 
 // Dynamically compute years from 2025 up to current year
 const currentYear = new Date().getFullYear()
@@ -238,6 +285,22 @@ function triggerBrowse() {
   }
 }
 
+function detectDelimiterClient(text) {
+  const clean = text.replace(/^\uFEFF/, '')
+  const firstLines = clean.split(/\r?\n/).filter(l => l.trim().length > 0).slice(0, 5)
+  let commaCount = 0
+  let semiCount = 0
+  let tabCount = 0
+  for (const line of firstLines) {
+    commaCount += (line.match(/,/g) || []).length
+    semiCount += (line.match(/;/g) || []).length
+    tabCount += (line.match(/\t/g) || []).length
+  }
+  if (semiCount > commaCount && semiCount >= tabCount) return ';'
+  if (tabCount > commaCount && tabCount > semiCount) return '\t'
+  return ','
+}
+
 function validateAndAssignFile(selectedFile) {
   if (!selectedFile) return
   const fileName = selectedFile.name || ''
@@ -255,7 +318,8 @@ function validateAndAssignFile(selectedFile) {
   const reader = new FileReader()
   reader.onload = (e) => {
     try {
-      const text = (e.target?.result || '').toString().trim()
+      const rawText = (e.target?.result || '').toString().trim()
+      const text = rawText.replace(/^\uFEFF/, '')
       if (!text) {
         setNotification(
           'error',
@@ -275,36 +339,50 @@ function validateAndAssignFile(selectedFile) {
         clearFile()
         return
       }
-      const headerCols = lines[0].split(',').map(col => col.replace(/^["']|["']$/g, '').trim().toLowerCase())
-      const requiredCols = ['category', 'criteria', 'score', 'passing grade']
-      const missing = requiredCols.filter(
-        req => !headerCols.some(col => col === req || col.includes(req))
-      )
-      if (missing.length > 0) {
-        const displayMissing = missing.map(m => m.charAt(0).toUpperCase() + m.slice(1)).join(', ')
+
+      const delimiter = detectDelimiterClient(text)
+      let headerFound = false
+
+      for (let i = 0; i < Math.min(lines.length, 15); i++) {
+        const cols = lines[i].split(delimiter).map(col => col.replace(/^["']|["']$/g, '').trim().toLowerCase())
+        const hasCategory = cols.some(c => c === 'category' || c.includes('category') || c.includes('kategori'))
+        const hasCriteria = cols.some(c => c === 'criteria' || c.includes('criteria') || c.includes('kriteria') || c.includes('indikator') || c.includes('item'))
+        const hasScore = cols.some(c => c === 'score' || c.includes('score') || c.includes('nilai') || c.includes('skor') || c.includes('poin') || c.includes('hasil'))
+
+        if (hasCategory && (hasCriteria || hasScore)) {
+          headerFound = true
+          break
+        }
+      }
+
+      if (!headerFound) {
         setNotification(
           'error',
           'File Structure Is Incorrect',
-          `Data has different table format (failed to upload). Missing required columns: ${displayMissing}. Expected standard columns: Category, Criteria, Score, Passing Grade.`
+          'Data has different table format (failed to upload). Expected standard columns: Category (or Kategori), Criteria (or Kriteria), Score (or Nilai), Passing Grade (or Target).'
         )
         clearFile()
         return
       }
+
       file.value = selectedFile
       needsConfirm.value = false
       message.value = ''
+      autoDetectFromUpload(selectedFile.name, text)
     } catch {
       file.value = selectedFile
       needsConfirm.value = false
       message.value = ''
+      autoDetectFromUpload(selectedFile.name, '')
     }
   }
   reader.onerror = () => {
     file.value = selectedFile
     needsConfirm.value = false
     message.value = ''
+    autoDetectFromUpload(selectedFile.name, '')
   }
-  reader.readAsText(selectedFile.slice(0, 8192))
+  reader.readAsText(selectedFile.slice(0, 16384))
 }
 
 function onFileChange(e) {
@@ -320,21 +398,114 @@ function handleDrop(e) {
   }
 }
 
+function autoDetectFromUpload(fileName, csvText = '') {
+  const lowerName = (fileName || '').toLowerCase()
+  const lowerText = (csvText || '').toLowerCase().slice(0, 4096)
+
+  let detectedStore = ''
+  // 1. Direct activeStores match
+  for (const s of activeStores.value) {
+    const cleanS = stripStoreBrand(s.name).toLowerCase()
+    if (cleanS && (lowerName.includes(cleanS) || lowerText.includes(cleanS))) {
+      detectedStore = s.name
+      break
+    }
+  }
+  // 2. Keyword fallback for common outlet tokens
+  if (!detectedStore) {
+    const storeKeywords = [
+      { key: 'gading', match: 'Birmas Kelapa Gading' },
+      { key: 'kuningan', match: 'Birmas Kuningan' },
+      { key: 'kwitang', match: 'Birmas Kwitang' },
+      { key: 'lebak', match: 'Birmas Lebak Bulus' },
+      { key: 'bulus', match: 'Birmas Lebak Bulus' },
+      { key: 'sudirman', match: 'Birmas Sudirman' },
+      { key: 'tebet', match: 'Birmas Tebet' },
+      { key: 'nomadic', match: 'Birmas Nomadic (Bandung)' },
+      { key: 'bandung', match: 'Birmas Nomadic (Bandung)' },
+      { key: 'nusadua', match: 'Birmas Nusa Dua (Bali)' },
+      { key: 'nusa dua', match: 'Birmas Nusa Dua (Bali)' },
+      { key: 'bali', match: 'Birmas Nusa Dua (Bali)' },
+    ]
+    for (const item of storeKeywords) {
+      if (lowerName.includes(item.key) || lowerText.includes(item.key)) {
+        detectedStore = item.match
+        break
+      }
+    }
+  }
+
+  let detectedYear = ''
+  const yMatch = lowerName.match(/\b(202[4-9])\b/) || lowerText.match(/\b(202[4-9])\b/)
+  if (yMatch) {
+    detectedYear = yMatch[1]
+  }
+
+  let detectedMonth = ''
+  const monthMap = {
+    januari: 'Januari', january: 'Januari', jan: 'Januari',
+    februari: 'Februari', february: 'Februari', feb: 'Februari',
+    maret: 'Maret', march: 'Maret', mar: 'Maret',
+    april: 'April', apr: 'April',
+    mei: 'Mei', may: 'Mei',
+    juni: 'Juni', june: 'Juni', jun: 'Juni',
+    juli: 'Juli', july: 'Juli', jul: 'Juli',
+    agustus: 'Agustus', august: 'Agustus', agu: 'Agustus', agt: 'Agustus', aug: 'Agustus',
+    september: 'September', sep: 'September', sept: 'September',
+    oktober: 'Oktober', october: 'Oktober', okt: 'Oktober', oct: 'Oktober',
+    november: 'November', nov: 'November',
+    desember: 'Desember', december: 'Desember', des: 'Desember', dec: 'Desember'
+  }
+
+  for (const [key, val] of Object.entries(monthMap)) {
+    // Check whole word or token boundary
+    const regex = new RegExp(`\\b${key}\\b`, 'i')
+    if (regex.test(lowerName) || regex.test(lowerText)) {
+      detectedMonth = val
+      break
+    }
+  }
+
+  const tagParts = []
+  if (detectedStore) {
+    store.value = detectedStore
+    tagParts.push(stripStoreBrand(detectedStore))
+  }
+  if (detectedMonth) {
+    month.value = detectedMonth
+    tagParts.push(detectedMonth)
+  }
+  if (detectedYear) {
+    year.value = detectedYear
+    tagParts.push(detectedYear)
+  }
+
+  autoDetectedTag.value = tagParts.length > 0 ? tagParts.join(' • ') : ''
+}
+
 function clearFile() {
   file.value = null
   if (fileInput.value) fileInput.value.value = ''
   needsConfirm.value = false
+  autoDetectedTag.value = ''
 }
 
 onMounted(async () => {
   try {
-    const res = await fetch('/api/months')
-    const data = await res.json()
-    if (Array.isArray(data) && data.length > 0) {
-      months.value = data
+    const [mRes, sRes] = await Promise.all([
+      fetch('/api/months'),
+      fetch('/api/stores')
+    ])
+    const mData = await mRes.json()
+    if (Array.isArray(mData) && mData.length > 0) {
+      months.value = mData
+    }
+    const sData = await sRes.json()
+    if (Array.isArray(sData) && sData.length > 0) {
+      localStores.value = sData
     }
   } catch (e) {
-    // fallback default months
+    // fallback default months and outlets
   }
 })
 

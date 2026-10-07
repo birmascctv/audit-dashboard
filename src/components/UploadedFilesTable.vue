@@ -392,6 +392,7 @@ const props = defineProps({
 })
 
 const files = ref([])
+const allStoresList = ref([])
 const loading = ref(false)
 const fetchError = ref('')
 
@@ -471,8 +472,14 @@ watch(() => props.refreshKey, () => {
   fetchFiles()
 })
 
-onMounted(() => {
+onMounted(async () => {
   fetchFiles()
+  try {
+    const res = await fetch('/api/stores')
+    if (res.ok) {
+      allStoresList.value = await res.json()
+    }
+  } catch (_) {}
 })
 
 // Store, Year, and Month filter options
@@ -481,6 +488,14 @@ const storeOptions = computed(() => {
   files.value.forEach(f => {
     if (f.store_name) set.add(stripStoreBrand(f.store_name))
   })
+  if (Array.isArray(allStoresList.value)) {
+    allStoresList.value.forEach(s => {
+      if (s.name) set.add(stripStoreBrand(s.name))
+    })
+  }
+  if (set.size === 0) {
+    ;['Kelapa Gading', 'Kuningan', 'Kwitang', 'Lebak Bulus', 'Sudirman', 'Tebet'].forEach(n => set.add(n))
+  }
   return Array.from(set).sort()
 })
 
