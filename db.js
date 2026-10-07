@@ -767,6 +767,7 @@ export function saveBulkSalesTransactions(txList, fileId = null) {
       db.exec('ROLLBACK;');
     } catch {}
     console.error('[DB Sales Bulk Error]:', err.message);
+    throw err;
   }
 }
 

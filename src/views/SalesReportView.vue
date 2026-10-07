@@ -377,7 +377,7 @@ watch(
 );
 
 onMounted(() => {
-  applyDatePreset('7d');
+  applyDatePreset('all');
   loadUploadedFiles();
 });
 </script>

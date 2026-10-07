@@ -1153,6 +1153,9 @@ async function startServer() {
       });
 
       const saveRes = db.saveSalesFileRecord(fileInfo, normalized);
+      if (!saveRes.success) {
+        return res.status(500).json({ success: false, error: saveRes.error || 'Failed to save sales file records to database' });
+      }
       db.setConfig('last_sales_pushed_at', new Date().toISOString());
 
       res.json({

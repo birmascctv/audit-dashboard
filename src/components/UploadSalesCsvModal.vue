@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue';
+import * as XLSX from 'xlsx';
 import {
   X,
   UploadCloud,
@@ -132,33 +133,41 @@ function normalizeDateString(raw) {
 }
 
 // Parse CSV content into rows based on exact key column specifications:
-// Sales Date: date of sales
-// Sales Date In: date and time of sales
-// Branch: store branch
-// Visit Purpose: product bought via
-// Payment method: payment method
-// Menu category: type of product
-// Menu Category Detail: product brand
-// Menu: product variant
-// Qty: amount of product per variant per sale
-// Price: price per unit
+// Sales Date, Branch, Visit Purpose, Payment method, Menu, Qty, Price, Total
 function parseCSV(text) {
-  const allLines = text.split(/\r\n|\n|\r/).filter((line) => line.trim().length > 0);
-  if (allLines.length < 2) {
-    throw new Error('CSV file contains no data rows or header.');
+  if (!text || typeof text !== 'string') {
+    throw new Error('File content is empty or unreadable.');
   }
 
-  // Find header line
+  // Strip UTF-8 BOM if present
+  let cleanText = text.replace(/^\uFEFF/, '').trim();
+  const allLines = cleanText.split(/\r\n|\n|\r/).filter((line) => line.trim().length > 0);
+  if (allLines.length < 2) {
+    throw new Error('File contains no data rows or table header.');
+  }
+
+  // Multi-keyword header row finder
+  const searchKeywords = [
+    'sales date', 'salesdate', 'date', 'tanggal', 'tgl',
+    'branch', 'cabang', 'store', 'outlet', 'lokasi',
+    'visit purpose', 'visitpurpose', 'channel', 'tujuan', 'ordermode',
+    'payment', 'pembayaran', 'metode', 'tender',
+    'menu', 'product', 'item', 'produk', 'varian', 'barang',
+    'qty', 'quantity', 'jumlah', 'kuantitas',
+    'price', 'harga', 'unit price', 'rate',
+    'total', 'net sales', 'nett sales', 'subtotal', 'amount'
+  ];
+
   let headerLineIndex = allLines.findIndex((line) => {
     const l = line.toLowerCase();
-    return (l.includes('branch') || l.includes('sales date') || l.includes('sales date in') || l.includes('menu category detail')) &&
-           (l.includes('menu') || l.includes('qty') || l.includes('price') || l.includes('total') || l.includes('visit purpose'));
+    const hits = searchKeywords.filter((kw) => l.includes(kw));
+    return hits.length >= 2;
   });
 
   if (headerLineIndex === -1) {
     headerLineIndex = allLines.findIndex((line) => {
       const l = line.toLowerCase();
-      return l.includes('branch') || l.includes('sales') || l.includes('menu');
+      return l.includes('sales') || l.includes('branch') || l.includes('menu') || l.includes('harga') || l.includes('total');
     });
   }
 
@@ -167,11 +176,17 @@ function parseCSV(text) {
   }
 
   const headerLine = allLines[headerLineIndex];
+
+  // Auto-detect delimiter
+  const delimiters = [',', ';', '\t', '|'];
   let delimiter = ',';
-  if ((headerLine.match(/;/g) || []).length > (headerLine.match(/,/g) || []).length) {
-    delimiter = ';';
-  } else if ((headerLine.match(/\t/g) || []).length > (headerLine.match(/,/g) || []).length) {
-    delimiter = '\t';
+  let maxCount = 0;
+  for (const d of delimiters) {
+    const count = (headerLine.match(new RegExp('\\' + (d === '|' ? '\\|' : d), 'g')) || []).length;
+    if (count > maxCount) {
+      maxCount = count;
+      delimiter = d;
+    }
   }
 
   const splitLine = (line) => {
@@ -181,7 +196,12 @@ function parseCSV(text) {
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
       if (char === '"' || char === "'") {
-        inQuotes = !inQuotes;
+        if (inQuotes && line[i + 1] === char) {
+          current += char;
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
       } else if (char === delimiter && !inQuotes) {
         result.push(current.trim().replace(/^["']|["']$/g, ''));
         current = '';
@@ -193,69 +213,112 @@ function parseCSV(text) {
     return result;
   };
 
-  const headers = splitLine(headerLine).map((h) => h.toLowerCase().trim().replace(/[\s_.-]+/g, ''));
+  const rawHeaders = splitLine(headerLine);
+  const headers = rawHeaders.map((h) => h.toLowerCase().trim().replace(/[\s_.-]+/g, ''));
 
-  // Exact matching for key columns
+  // Comprehensive column index matching
   const colIndex = {
-    salesDate: headers.findIndex((h) => h === 'salesdate'),
-    salesDateIn: headers.findIndex((h) => h === 'salesdatein' || h.includes('datein') || h.includes('datetime') || h.includes('waktu')),
-    branch: headers.findIndex((h) => h === 'branch' || h.includes('cabang') || h.includes('store') || h.includes('outlet')),
-    visitPurpose: headers.findIndex((h) => h === 'visitpurpose' || h.includes('purpose') || h.includes('ordermode') || h.includes('channel')),
-    payment: headers.findIndex((h) => h === 'paymentmethod' || h.includes('payment') || h.includes('metodepembayaran') || h.includes('pembayaran')),
-    menuCategory: headers.findIndex((h) => h === 'menucategory' || h === 'category' || h.includes('kategori')),
-    menuCategoryDetail: headers.findIndex((h) => h === 'menucategorydetail' || h === 'categorydetail' || h === 'brand' || h.includes('merk')),
-    menu: headers.findIndex((h) => h === 'menu' || h === 'menuvariant' || h === 'product' || h === 'itemname' || h.includes('varian')),
-    qty: headers.findIndex((h) => h === 'qty' || h.includes('quantity') || h.includes('jumlah')),
-    price: headers.findIndex((h) => h === 'price' || h.includes('harga') || h.includes('unitprice')),
-    subtotal: headers.findIndex((h) => h === 'subtotal'),
-    discount: headers.findIndex((h) => h === 'discount' || h.includes('diskon')),
-    tax: headers.findIndex((h) => h === 'tax' || h === 'vat' || h.includes('pajak')),
-    total: headers.findIndex((h) => h === 'total' || h === 'nettsales' || h.includes('totalbayar')),
-    billNo: headers.findIndex((h) => h === 'billnumber' || h === 'billno' || h.includes('faktur') || h.includes('invoice')),
+    salesDate: headers.findIndex((h) =>
+      h === 'salesdate' || h === 'date' || h.includes('salesdate') || h.includes('transdate') || h.includes('orderdate') || h.includes('tanggal') || h.includes('tgl')
+    ),
+    salesDateIn: headers.findIndex((h) =>
+      h === 'salesdatein' || h.includes('datein') || h.includes('datetime') || h.includes('waktu')
+    ),
+    branch: headers.findIndex((h) =>
+      h === 'branch' || h.includes('cabang') || h.includes('store') || h.includes('outlet') || h.includes('lokasi') || h.includes('location')
+    ),
+    visitPurpose: headers.findIndex((h) =>
+      h === 'visitpurpose' || h.includes('purpose') || h.includes('ordermode') || h.includes('channel') || h.includes('tujuan') || h.includes('kunjungan')
+    ),
+    payment: headers.findIndex((h) =>
+      h === 'paymentmethod' || h.includes('payment') || h.includes('metodepembayaran') || h.includes('pembayaran') || h.includes('carabayar') || h.includes('tender')
+    ),
+    menuCategory: headers.findIndex((h) =>
+      h === 'menucategory' || h === 'category' || h.includes('kategori')
+    ),
+    menuCategoryDetail: headers.findIndex((h) =>
+      h === 'menucategorydetail' || h === 'categorydetail' || h === 'brand' || h.includes('merk')
+    ),
+    menu: headers.findIndex((h) =>
+      h === 'menu' || h === 'menuvariant' || h === 'product' || h === 'itemname' || h === 'item' || h.includes('varian') || h.includes('produk') || h.includes('namamenu') || h.includes('namaproduk') || h.includes('barang') || h.includes('deskripsi')
+    ),
+    qty: headers.findIndex((h) =>
+      h === 'qty' || h.includes('quantity') || h.includes('jumlah') || h.includes('kuantitas') || h.includes('banyak')
+    ),
+    price: headers.findIndex((h) =>
+      h === 'price' || h.includes('harga') || h.includes('unitprice') || h.includes('rate') || h.includes('tarif') || h.includes('hargasatuan')
+    ),
+    subtotal: headers.findIndex((h) =>
+      h === 'subtotal' || h.includes('subtotal')
+    ),
+    discount: headers.findIndex((h) =>
+      h === 'discount' || h.includes('diskon') || h.includes('potongan')
+    ),
+    tax: headers.findIndex((h) =>
+      h === 'tax' || h === 'vat' || h.includes('pajak') || h.includes('pb1')
+    ),
+    total: headers.findIndex((h) =>
+      h === 'total' || h === 'nettsales' || h === 'netsales' || h.includes('totalbayar') || h.includes('totalamount') || h.includes('totalsales') || h.includes('grandtotal') || h.includes('amount')
+    ),
+    billNo: headers.findIndex((h) =>
+      h === 'billnumber' || h === 'billno' || h.includes('faktur') || h.includes('invoice') || h.includes('transno') || h.includes('nostruk')
+    ),
   };
 
   const parsed = [];
   for (let i = headerLineIndex + 1; i < allLines.length; i++) {
     const rawLine = allLines[i].trim();
     if (!rawLine) continue;
-    
-    // Ignore footer total rows
-    if (rawLine.startsWith(',,,,,') || rawLine.includes('Rounding') || rawLine.includes('Total Rounding') || rawLine.includes('Platform Fee Total')) {
+
+    // Ignore footer summary rows
+    if (
+      rawLine.startsWith(',,,,,') ||
+      rawLine.startsWith(';;;;;') ||
+      /total\s*rounding/i.test(rawLine) ||
+      /platform\s*fee\s*total/i.test(rawLine) ||
+      /grand\s*total/i.test(rawLine)
+    ) {
       continue;
     }
 
     const cols = splitLine(rawLine);
-    if (cols.length < 3) continue;
+    if (cols.length < 2) continue;
 
     const rawBranch = colIndex.branch !== -1 ? cols[colIndex.branch] : 'Branch';
     const storeInfo = detectStore(rawBranch);
 
     const qty = parseNumber(colIndex.qty !== -1 ? cols[colIndex.qty] : 1) || 1;
-    const unitPrice = parseNumber(colIndex.price !== -1 ? cols[colIndex.price] : 0);
+    let unitPrice = parseNumber(colIndex.price !== -1 ? cols[colIndex.price] : 0);
     const discount = parseNumber(colIndex.discount !== -1 ? cols[colIndex.discount] : 0);
     const tax = parseNumber(colIndex.tax !== -1 ? cols[colIndex.tax] : 0);
-    
+
     let subtotal = parseNumber(colIndex.subtotal !== -1 ? cols[colIndex.subtotal] : 0);
     if (!subtotal) subtotal = qty * unitPrice;
 
     let total = parseNumber(colIndex.total !== -1 ? cols[colIndex.total] : 0);
-    if (!total) total = subtotal - discount + tax;
+    if (!total && unitPrice > 0) {
+      total = subtotal - discount + tax;
+    } else if (total > 0 && unitPrice === 0 && qty > 0) {
+      unitPrice = total / qty;
+    }
 
-    const dateVal = (colIndex.salesDateIn !== -1 ? cols[colIndex.salesDateIn] : '') || 
-                    (colIndex.salesDate !== -1 ? cols[colIndex.salesDate] : '') || 
-                    new Date().toISOString();
-    
+    const dateVal =
+      (colIndex.salesDateIn !== -1 ? cols[colIndex.salesDateIn] : '') ||
+      (colIndex.salesDate !== -1 ? cols[colIndex.salesDate] : '') ||
+      new Date().toISOString();
+
     const visitPurpose = (colIndex.visitPurpose !== -1 ? cols[colIndex.visitPurpose] : '') || 'DINE IN';
     const payment = (colIndex.payment !== -1 ? cols[colIndex.payment] : '') || 'QRIS BCA';
     const category = (colIndex.menuCategory !== -1 ? cols[colIndex.menuCategory] : '') || 'Beverage';
     const brand = (colIndex.menuCategoryDetail !== -1 ? cols[colIndex.menuCategoryDetail] : '') || '';
-    const menuVariant = (colIndex.menu !== -1 ? cols[colIndex.menu] : '') || `Product Variant #${i}`;
+    const menuVariant = (colIndex.menu !== -1 ? cols[colIndex.menu] : '') || (cols[colIndex.price !== -1 ? Math.max(0, colIndex.price - 1) : 0] || `Product Variant #${i}`);
     const billNo = (colIndex.billNo !== -1 ? cols[colIndex.billNo] : '') || `ESB-${Date.now()}-${i}`;
 
+    // Skip empty filler lines
     if (!menuVariant && unitPrice === 0 && total === 0) continue;
 
     parsed.push({
-      id: `csv-${i}-${Date.now().toString(36)}`,
+      id: `csv-${i}-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 4)}`,
       bill_no: billNo,
       date: normalizeDateString(dateVal),
       store_id: storeInfo.id,
@@ -276,10 +339,16 @@ function parseCSV(text) {
     });
   }
 
+  if (parsed.length === 0) {
+    throw new Error(
+      `No transaction data rows could be parsed. Detected columns: [${rawHeaders.slice(0, 8).join(', ')}]. Please check your column names (expected Sales Date, Branch, Menu, Qty, Price, Total).`
+    );
+  }
+
   return parsed;
 }
 
-// Handle File Selection
+// Handle File Selection (Supports both .csv/.tsv/.txt and .xlsx/.xls)
 function handleFileSelect(e) {
   const selectedFile = e.target.files?.[0] || e.dataTransfer?.files?.[0];
   if (!selectedFile) return;
@@ -289,30 +358,59 @@ function handleFileSelect(e) {
   fileSize.value = (selectedFile.size / 1024).toFixed(1) + ' KB';
   parseErrors.value = [];
   uploadStatus.value = null;
+  parsedRows.value = [];
   isParsing.value = true;
 
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    try {
-      const text = event.target?.result || '';
-      rawCsvText.value = text;
-      const rows = parseCSV(text);
-      if (rows.length === 0) {
-        parseErrors.value = ['No valid transaction rows found in CSV. Please verify column headers.'];
-      } else {
+  const isExcel =
+    selectedFile.name.endsWith('.xlsx') ||
+    selectedFile.name.endsWith('.xls') ||
+    selectedFile.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    selectedFile.type === 'application/vnd.ms-excel';
+
+  if (isExcel) {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = new Uint8Array(event.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        if (!sheetName) throw new Error('Excel workbook contains no sheets.');
+        const worksheet = workbook.Sheets[sheetName];
+        const csvContent = XLSX.utils.sheet_to_csv(worksheet);
+        rawCsvText.value = csvContent;
+        const rows = parseCSV(csvContent);
         parsedRows.value = rows;
+      } catch (err) {
+        parseErrors.value = [err.message || 'Failed to parse Excel spreadsheet.'];
+      } finally {
+        isParsing.value = false;
       }
-    } catch (err) {
-      parseErrors.value = [err.message || 'Failed to parse CSV file.'];
-    } finally {
+    };
+    reader.onerror = () => {
+      parseErrors.value = ['Error reading Excel file from disk.'];
       isParsing.value = false;
-    }
-  };
-  reader.onerror = () => {
-    parseErrors.value = ['Error reading file from disk.'];
-    isParsing.value = false;
-  };
-  reader.readAsText(selectedFile);
+    };
+    reader.readAsArrayBuffer(selectedFile);
+  } else {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result || '';
+        rawCsvText.value = text;
+        const rows = parseCSV(text);
+        parsedRows.value = rows;
+      } catch (err) {
+        parseErrors.value = [err.message || 'Failed to parse CSV file.'];
+      } finally {
+        isParsing.value = false;
+      }
+    };
+    reader.onerror = () => {
+      parseErrors.value = ['Error reading file from disk.'];
+      isParsing.value = false;
+    };
+    reader.readAsText(selectedFile);
+  }
 }
 
 // Computed stats of parsed CSV
@@ -348,7 +446,7 @@ async function handleImport() {
 
   try {
     const totalRows = parsedRows.value.length;
-    const CHUNK_SIZE = 4000;
+    const CHUNK_SIZE = 1500;
     const totalChunks = Math.ceil(totalRows / CHUNK_SIZE);
     const generatedFileId = `sfile-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
 
@@ -385,9 +483,15 @@ async function handleImport() {
         }),
       });
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        throw new Error(`Server returned non-JSON response (HTTP ${res.status}): ${res.statusText}`);
+      }
+
       if (!res.ok || !data.success) {
-        throw new Error(data.message || data.error || `Failed on batch ${chunkIdx + 1}`);
+        throw new Error(data.message || data.error || `Server rejected batch ${chunkIdx + 1} (HTTP ${res.status})`);
       }
 
       savedTotal += chunkRows.length;
