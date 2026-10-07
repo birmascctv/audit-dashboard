@@ -174,13 +174,16 @@ const totalPages = computed(() => {
   return Math.max(1, Math.ceil(filteredTransactions.value.length / pageSize.value));
 });
 
-// Format Rupiah
+// Format Rupiah (Preserves all zeroes and exact values)
 function formatRupiah(amount) {
+  if (amount === undefined || amount === null) return 'Rp 0';
+  const num = typeof amount === 'number' ? amount : Number(amount) || 0;
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: 'IDR',
-    maximumFractionDigits: 0,
-  }).format(amount || 0);
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(num);
 }
 
 // Format Date Only (Sales Date)
@@ -705,12 +708,9 @@ onMounted(() => {
               <tr>
                 <th class="py-2 px-2 w-10 text-center text-slate-400">#</th>
                 <th class="py-2 px-2.5 whitespace-nowrap">Sales Date</th>
-                <th class="py-2 px-2.5 whitespace-nowrap">Sales Date In</th>
                 <th class="py-2 px-2.5 whitespace-nowrap">Branch</th>
                 <th class="py-2 px-2.5 whitespace-nowrap">Visit Purpose</th>
                 <th class="py-2 px-2.5 whitespace-nowrap">Payment Method</th>
-                <th class="py-2 px-2.5 whitespace-nowrap">Menu Category</th>
-                <th class="py-2 px-2.5 whitespace-nowrap">Menu Category Detail</th>
                 <th class="py-2 px-2.5">Menu</th>
                 <th class="py-2 px-2 text-center whitespace-nowrap">Qty</th>
                 <th class="py-2 px-2.5 text-right whitespace-nowrap">Price</th>
@@ -730,17 +730,13 @@ onMounted(() => {
                 <td class="py-2 px-2.5 text-slate-700 font-mono whitespace-nowrap text-[11px] font-medium">
                   {{ formatSalesDate(tx.sales_date || tx.date) }}
                 </td>
-                <!-- 2. Sales Date In: date and time of sales -->
-                <td class="py-2 px-2.5 text-slate-500 font-mono whitespace-nowrap text-[11px]">
-                  {{ formatSalesDateIn(tx.sales_date_in || tx.date) }}
-                </td>
-                <!-- 3. Branch: store branch -->
+                <!-- 2. Branch: store branch -->
                 <td class="py-2 px-2.5 whitespace-nowrap">
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-800">
                     {{ tx.store_name }}
                   </span>
                 </td>
-                <!-- 4. Visit Purpose: product bought via -->
+                <!-- 3. Visit Purpose: product bought via -->
                 <td class="py-2 px-2.5 whitespace-nowrap">
                   <span
                     class="px-2 py-0.5 rounded-full text-[10px] font-bold"
@@ -756,38 +752,25 @@ onMounted(() => {
                     {{ tx.visit_purpose || 'DINE IN' }}
                   </span>
                 </td>
-                <!-- 5. Payment method -->
+                <!-- 4. Payment method -->
                 <td class="py-2 px-2.5 whitespace-nowrap">
                   <span class="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-50 text-slate-700 border border-slate-200">
                     {{ tx.payment_method || 'QRIS BCA' }}
                   </span>
                 </td>
-                <!-- 6. Menu Category: type of product -->
-                <td class="py-2 px-2.5 whitespace-nowrap">
-                  <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
-                    {{ tx.category || 'Beverage' }}
-                  </span>
-                </td>
-                <!-- 7. Menu Category Detail: product brand -->
-                <td class="py-2 px-2.5 whitespace-nowrap">
-                  <span v-if="tx.brand" class="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-teal-50 text-teal-800 border border-teal-200">
-                    {{ tx.brand }}
-                  </span>
-                  <span v-else class="text-slate-400 text-[10px]">-</span>
-                </td>
-                <!-- 8. Menu: product variant -->
+                <!-- 5. Menu: product variant -->
                 <td class="py-2 px-2.5 font-bold text-slate-900 text-xs min-w-[140px]">
                   {{ tx.item_name || tx.variant }}
                 </td>
-                <!-- 9. Qty: amount of product per variant per sale -->
+                <!-- 6. Qty: amount of product per variant per sale -->
                 <td class="py-2 px-2 text-center font-bold text-teal-800 font-mono text-xs">
                   {{ tx.qty }}
                 </td>
-                <!-- 10. Price: price per unit -->
+                <!-- 7. Price: price per unit -->
                 <td class="py-2 px-2.5 text-right text-slate-700 font-mono whitespace-nowrap text-xs font-semibold">
                   {{ formatRupiah(tx.unit_price) }}
                 </td>
-                <!-- 11. Total: total amount -->
+                <!-- 8. Total: total amount -->
                 <td class="py-2 px-2.5 text-right font-black text-slate-900 font-mono whitespace-nowrap text-xs">
                   {{ formatRupiah(tx.total) }}
                 </td>
@@ -795,7 +778,7 @@ onMounted(() => {
 
               <!-- Empty state -->
               <tr v-if="filteredTransactions.length === 0 && !isLoading">
-                <td colspan="12" class="py-12 text-center">
+                <td colspan="9" class="py-12 text-center">
                   <div class="flex flex-col items-center justify-center gap-2">
                     <FileSpreadsheet class="w-10 h-10 text-slate-300" />
                     <p class="font-bold text-slate-700 text-sm">No transaction records found</p>

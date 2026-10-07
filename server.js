@@ -2,10 +2,58 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import { exec } from 'child_process';
 import { fileURLToPath } from 'url';
+import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import * as db from './db.js';
 import * as storeAuditService from './storeAuditService.js';
+
+export function parseSafeMoney(val) {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  let str = String(val).trim().replace(/^(Rp|IDR)\.?\s*/i, '').trim();
+  if (!str) return 0;
+
+  if (str.includes(',') && str.includes('.')) {
+    const lastComma = str.lastIndexOf(',');
+    const lastDot = str.lastIndexOf('.');
+    if (lastDot > lastComma) {
+      // US format: 1,250,000.00
+      str = str.replace(/,/g, '');
+    } else {
+      // EU/Indonesian format: 1.250.000,00
+      str = str.replace(/\./g, '').replace(',', '.');
+    }
+  } else if (str.includes(',')) {
+    const parts = str.split(',');
+    if (parts.length > 2) {
+      str = str.replace(/,/g, '');
+    } else if (parts.length === 2) {
+      if (parts[1].length === 3) {
+        str = str.replace(/,/g, '');
+      } else if (parts[1].length === 2 && parts[1] === '00') {
+        str = parts[0];
+      } else {
+        str = str.replace(',', '.');
+      }
+    }
+  } else if (str.includes('.')) {
+    const parts = str.split('.');
+    if (parts.length > 2) {
+      str = str.replace(/\./g, '');
+    } else if (parts.length === 2) {
+      if (parts[1].length === 3) {
+        str = str.replace(/\./g, '');
+      } else if (parts[1].length === 2 && parts[1] === '00') {
+        str = parts[0];
+      }
+    }
+  }
+
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : num;
+}
 
 // Prevent unhandled errors from terminating Node
 process.on('uncaughtException', (err) => {
@@ -1092,11 +1140,11 @@ async function startServer() {
           category: tx.category || tx.menu_category || tx.menuCategory || 'Beverage',
           barcode: tx.barcode || '',
           qty: Number(tx.qty || tx.quantity) || 1,
-          unit_price: Number(tx.unit_price || tx.price) || 0,
-          discount: Number(tx.discount) || 0,
-          tax: Number(tx.tax) || 0,
-          subtotal: Number(tx.subtotal) || ((Number(tx.qty) || 1) * (Number(tx.unit_price || tx.price) || 0)),
-          total: Number(tx.total || tx.nett_sales || tx.nettSales) || ((Number(tx.qty) || 1) * (Number(tx.unit_price || tx.price) || 0)),
+          unit_price: parseSafeMoney(tx.unit_price || tx.price),
+          discount: parseSafeMoney(tx.discount),
+          tax: parseSafeMoney(tx.tax),
+          subtotal: parseSafeMoney(tx.subtotal) || ((Number(tx.qty) || 1) * parseSafeMoney(tx.unit_price || tx.price)),
+          total: parseSafeMoney(tx.total || tx.nett_sales || tx.nettSales) || ((Number(tx.qty) || 1) * parseSafeMoney(tx.unit_price || tx.price)),
           payment_method: tx.payment_method || tx.paymentMethod || 'QRIS BCA',
           visit_purpose: visitPurpose,
           cashier: tx.cashier || tx.waiter || 'Kasir',

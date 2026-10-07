@@ -38,33 +38,58 @@ const parsedRows = ref([]);
 const parseErrors = ref([]);
 const uploadStatus = ref(null);
 
-// Format Rupiah
+// Format Rupiah (Preserving all zeroes and precision)
 function formatRupiah(amount) {
+  if (amount === undefined || amount === null) return 'Rp 0';
+  const num = typeof amount === 'number' ? amount : Number(amount) || 0;
   return new Intl.NumberFormat('id-ID', {
     style: 'currency',
     currency: 'IDR',
-    maximumFractionDigits: 0,
-  }).format(amount || 0);
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(num);
 }
 
-// Clean and parse numbers (handles "15.000", "Rp 15.000", "15,000.00", etc.)
+// Clean and parse numbers without ever stripping trailing zeroes (handles "25000", "25.000", "25,000.00", "Rp 25.000", etc.)
 function parseNumber(val) {
   if (val === undefined || val === null || val === '') return 0;
-  if (typeof val === 'number') return val;
-  let str = String(val).trim().replace(/Rp|IDR/gi, '').trim();
-  
-  if (str.includes('.') && !str.includes(',')) {
-    const parts = str.split('.');
-    if (parts.length > 1 && parts[parts.length - 1].length === 3) {
-      str = str.replace(/\./g, '');
-    }
-  } else if (str.includes('.') && str.includes(',')) {
-    str = str.replace(/\./g, '').replace(',', '.');
-  } else if (str.includes(',')) {
-    if (str.split(',')[1]?.length === 3) {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  let str = String(val).trim().replace(/^(Rp|IDR)\.?\s*/i, '').trim();
+  if (!str) return 0;
+
+  if (str.includes(',') && str.includes('.')) {
+    const lastComma = str.lastIndexOf(',');
+    const lastDot = str.lastIndexOf('.');
+    if (lastDot > lastComma) {
+      // US format: 1,250,000.00
       str = str.replace(/,/g, '');
     } else {
-      str = str.replace(',', '.');
+      // EU/Indonesian format: 1.250.000,00
+      str = str.replace(/\./g, '').replace(',', '.');
+    }
+  } else if (str.includes(',')) {
+    const parts = str.split(',');
+    if (parts.length > 2) {
+      str = str.replace(/,/g, '');
+    } else if (parts.length === 2) {
+      if (parts[1].length === 3) {
+        str = str.replace(/,/g, '');
+      } else if (parts[1].length === 2 && parts[1] === '00') {
+        str = parts[0];
+      } else {
+        str = str.replace(',', '.');
+      }
+    }
+  } else if (str.includes('.')) {
+    const parts = str.split('.');
+    if (parts.length > 2) {
+      str = str.replace(/\./g, '');
+    } else if (parts.length === 2) {
+      if (parts[1].length === 3) {
+        str = str.replace(/\./g, '');
+      } else if (parts[1].length === 2 && parts[1] === '00') {
+        str = parts[0];
+      }
     }
   }
 
@@ -539,11 +564,10 @@ function handleClose() {
               <table class="w-full text-left text-xs">
                 <thead class="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 sticky top-0">
                   <tr>
-                    <th class="py-2.5 px-3">Date & Time</th>
+                    <th class="py-2.5 px-3">Sales Date</th>
                     <th class="py-2.5 px-3">Branch</th>
                     <th class="py-2.5 px-3">Visit Purpose</th>
-                    <th class="py-2.5 px-3">Brand (Detail)</th>
-                    <th class="py-2.5 px-3">Product Variant</th>
+                    <th class="py-2.5 px-3">Menu</th>
                     <th class="py-2.5 px-3 text-center">Qty</th>
                     <th class="py-2.5 px-3 text-right">Price</th>
                     <th class="py-2.5 px-3 text-right">Total</th>
@@ -553,7 +577,7 @@ function handleClose() {
                 <tbody class="divide-y divide-slate-100">
                   <tr v-for="(row, idx) in parsedRows.slice(0, 6)" :key="idx" class="hover:bg-slate-50/70">
                     <td class="py-2 px-3 text-[11px] text-slate-600 whitespace-nowrap">
-                      {{ row.date }}
+                      {{ row.date ? String(row.date).split(' ')[0] : '-' }}
                     </td>
                     <td class="py-2 px-3">
                       <span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700">
@@ -568,19 +592,12 @@ function handleClose() {
                         {{ row.visit_purpose }}
                       </span>
                     </td>
-                    <td class="py-2 px-3">
-                      <span v-if="row.brand" class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
-                        {{ row.brand }}
-                      </span>
-                      <span v-else class="text-slate-400 text-[10px]">-</span>
-                    </td>
                     <td class="py-2 px-3 text-slate-900 font-medium">
-                      <span class="font-bold block truncate max-w-[160px]">{{ row.item_name }}</span>
-                      <span v-if="row.category" class="text-slate-400 text-[10px]">{{ row.category }}</span>
+                      <span class="font-bold block truncate max-w-[180px]">{{ row.item_name }}</span>
                     </td>
                     <td class="py-2 px-3 text-center font-bold text-teal-800">{{ row.qty }}</td>
-                    <td class="py-2 px-3 text-right text-slate-600">{{ formatRupiah(row.unit_price) }}</td>
-                    <td class="py-2 px-3 text-right font-extrabold text-slate-900">{{ formatRupiah(row.total) }}</td>
+                    <td class="py-2 px-3 text-right text-slate-600 font-mono">{{ formatRupiah(row.unit_price) }}</td>
+                    <td class="py-2 px-3 text-right font-extrabold text-slate-900 font-mono">{{ formatRupiah(row.total) }}</td>
                     <td class="py-2 px-3 text-slate-600">
                       <span class="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 max-w-[110px] truncate block">
                         {{ row.payment_method }}
