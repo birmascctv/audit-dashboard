@@ -622,6 +622,7 @@ export async function runDirectESBERPSync(options = {}) {
 
 async function startServer() {
   const app = express();
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -1291,6 +1292,60 @@ async function startServer() {
       'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
       'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
     ]);
+  });
+
+  // Upload and process store audit CSV
+  app.post('/api/upload', upload.single('file'), async (req, res) => {
+    try {
+      const { store, year, month, confirm } = req.body;
+      const file = req.file;
+
+      if (!store || !year || !month) {
+        return res.status(400).json({
+          status: 'error',
+          errorType: 'MISSING_FIELDS',
+          message: 'Please select store, audit year, and audit month before uploading.',
+        });
+      }
+
+      if (!file) {
+        return res.status(400).json({
+          status: 'error',
+          errorType: 'EMPTY_FILE',
+          message: 'No CSV file was uploaded. Please choose a valid audit CSV file.',
+        });
+      }
+
+      const fileName = file.originalname || 'audit.csv';
+      if (!fileName.toLowerCase().endsWith('.csv')) {
+        return res.status(400).json({
+          status: 'error',
+          errorType: 'INVALID_FILE_TYPE',
+          message: 'Invalid file format. Strictly .csv files are supported.',
+        });
+      }
+
+      const result = storeAuditService.processAuditUpload({
+        storeName: store,
+        year: parseInt(year, 10),
+        month: month,
+        fileName: fileName,
+        fileBuffer: file.buffer,
+        confirm: confirm === '1' || confirm === true,
+      });
+
+      if (!result.success && result.errorType) {
+        return res.status(400).json(result);
+      }
+
+      res.json(result);
+    } catch (err) {
+      console.error('/api/upload error:', err);
+      res.status(500).json({
+        status: 'error',
+        message: err.message || 'Failed to process audit upload.',
+      });
+    }
   });
 
   app.get('/api/uploaded-files', (req, res) => {

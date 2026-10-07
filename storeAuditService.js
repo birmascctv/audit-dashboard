@@ -594,7 +594,7 @@ export function getCctvUploadedFiles() {
       FROM audits a
       JOIN stores s ON a.store_id = s.store_id
       LEFT JOIN scores sc ON a.audit_id = sc.audit_id
-      LEFT JOIN criteria c ON sc.criteria_id = c.criteria_id
+      LEFT JOIN all_criteria c ON sc.criteria_id = c.criteria_id
       GROUP BY a.audit_id
       ORDER BY a.year DESC, a.month DESC, a.audit_id DESC
     `).all();
@@ -666,4 +666,424 @@ export function getCctvUploadedFiles() {
     console.error('getCctvUploadedFiles error:', err.message);
     return [];
   }
+}
+
+// 11. Helper to parse CSV lines safely
+export function parseCsvRows(text) {
+  const lines = [];
+  let row = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      row.push(current.trim());
+      current = '';
+    } else if ((char === '\r' || char === '\n') && !inQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        i++;
+      }
+      row.push(current.trim());
+      current = '';
+      if (row.some((cell) => cell.length > 0)) {
+        lines.push(row);
+      }
+      row = [];
+    } else {
+      current += char;
+    }
+  }
+  if (current || row.length > 0) {
+    row.push(current.trim());
+    if (row.some((cell) => cell.length > 0)) {
+      lines.push(row);
+    }
+  }
+  return lines;
+}
+
+// Helper to compute median
+function calculateMedian(values) {
+  if (!values || values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return Math.round(((sorted[mid - 1] + sorted[mid]) / 2) * 100) / 100;
+  } else {
+    return Math.round(sorted[mid] * 100) / 100;
+  }
+}
+
+// Helper to recompute aggregates for a store, year, month
+function recomputeStoreMonthAggregates(db, storeId, year, month) {
+  try {
+    // 1. store_monthly_median
+    const storeScores = db.prepare(`
+      SELECT sc.score
+      FROM scores sc
+      JOIN audits a ON sc.audit_id = a.audit_id
+      JOIN all_criteria c ON sc.criteria_id = c.criteria_id
+      WHERE a.store_id = ? AND a.year = ? AND a.month = ?
+        AND sc.score IS NOT NULL
+        AND LOWER(c.category) != 'maintenance'
+    `).all(storeId, year, month).map((r) => r.score);
+
+    const storeMed = calculateMedian(storeScores);
+
+    db.prepare(`
+      DELETE FROM store_monthly_median WHERE store_id = ? AND year = ? AND month = ?
+    `).run(storeId, year, month);
+
+    if (storeMed !== null) {
+      db.prepare(`
+        INSERT INTO store_monthly_median (store_id, year, month, median_score)
+        VALUES (?, ?, ?, ?)
+      `).run(storeId, year, month, storeMed);
+    }
+
+    // 2. category_store_monthly_median & category_store_monthly_passrate
+    const catRows = db.prepare(`
+      SELECT DISTINCT c.category
+      FROM scores sc
+      JOIN audits a ON sc.audit_id = a.audit_id
+      JOIN all_criteria c ON sc.criteria_id = c.criteria_id
+      WHERE a.store_id = ? AND a.year = ? AND a.month = ?
+        AND sc.score IS NOT NULL
+        AND LOWER(c.category) != 'maintenance'
+        AND LOWER(c.category) != 'absensi'
+    `).all(storeId, year, month);
+
+    for (const { category } of catRows) {
+      const catScores = db.prepare(`
+        SELECT sc.score, c.passing_grade
+        FROM scores sc
+        JOIN audits a ON sc.audit_id = a.audit_id
+        JOIN all_criteria c ON sc.criteria_id = c.criteria_id
+        WHERE a.store_id = ? AND a.year = ? AND a.month = ? AND c.category = ?
+          AND sc.score IS NOT NULL
+      `).all(storeId, year, month, category);
+
+      const rawScores = catScores.map((r) => r.score);
+      const sampleSize = rawScores.length;
+      const medRaw = calculateMedian(rawScores);
+
+      const normalized = [];
+      for (const r of catScores) {
+        if (r.passing_grade && Number(r.passing_grade) > 0) {
+          normalized.push(Number(r.score) / Number(r.passing_grade));
+        }
+      }
+      const medNorm = calculateMedian(normalized);
+
+      db.prepare(`
+        DELETE FROM category_store_monthly_median
+        WHERE store_id = ? AND year = ? AND month = ? AND category = ?
+      `).run(storeId, year, month, category);
+
+      db.prepare(`
+        INSERT INTO category_store_monthly_median
+        (store_id, category, year, month, median_score, median_normalized, sample_size)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(storeId, category, year, month, medRaw, medNorm, sampleSize);
+
+      const passedRow = db.prepare(`
+        SELECT COUNT(*) as cnt
+        FROM scores sc
+        JOIN audits a ON sc.audit_id = a.audit_id
+        JOIN all_criteria c ON sc.criteria_id = c.criteria_id
+        WHERE a.store_id = ? AND a.year = ? AND a.month = ? AND c.category = ?
+          AND LOWER(sc.pass_fail) = 'pass'
+      `).get(storeId, year, month, category);
+
+      const totalRow = db.prepare(`
+        SELECT COUNT(*) as cnt
+        FROM scores sc
+        JOIN audits a ON sc.audit_id = a.audit_id
+        JOIN all_criteria c ON sc.criteria_id = c.criteria_id
+        WHERE a.store_id = ? AND a.year = ? AND a.month = ? AND c.category = ?
+      `).get(storeId, year, month, category);
+
+      const passedCount = passedRow?.cnt || 0;
+      const totalCatScores = totalRow?.cnt || 0;
+      const catPassRate = totalCatScores > 0 ? Math.round((passedCount / totalCatScores) * 1000) / 1000 : null;
+
+      db.prepare(`
+        DELETE FROM category_store_monthly_passrate
+        WHERE store_id = ? AND year = ? AND month = ? AND category = ?
+      `).run(storeId, year, month, category);
+
+      db.prepare(`
+        INSERT INTO category_store_monthly_passrate
+        (store_id, category, year, month, pass_rate, sample_size)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(storeId, category, year, month, catPassRate, totalCatScores);
+    }
+  } catch (err) {
+    console.error('[recomputeStoreMonthAggregates] Error:', err.message);
+  }
+}
+
+// 12. Process and store audit CSV upload
+export function processAuditUpload({ storeName, year, month, fileName, fileBuffer, confirm }) {
+  const db = getCctvDb();
+  if (!db) {
+    return { success: false, status: 'error', message: 'Database connection not available.' };
+  }
+
+  // 1. Validate file content
+  if (!fileBuffer || fileBuffer.length === 0) {
+    return {
+      success: false,
+      status: 'error',
+      errorType: 'EMPTY_FILE',
+      message: 'Uploaded CSV file contains no data rows. Please ensure your audit CSV file is not empty.',
+    };
+  }
+
+  const csvText = fileBuffer.toString('utf-8').trim();
+  if (!csvText) {
+    return {
+      success: false,
+      status: 'error',
+      errorType: 'EMPTY_FILE',
+      message: 'Uploaded CSV file contains no data rows. Please ensure your audit CSV file is not empty.',
+    };
+  }
+
+  // 2. Parse CSV
+  const rows = parseCsvRows(csvText);
+  if (rows.length < 2) {
+    return {
+      success: false,
+      status: 'error',
+      errorType: 'EMPTY_FILE',
+      message: 'Uploaded CSV file contains no data rows besides the header line.',
+    };
+  }
+
+  const header = rows[0].map((h) => h.toLowerCase().trim().replace(/^["']|["']$/g, ''));
+  const requiredCols = ['category', 'criteria', 'score', 'passing grade'];
+  const missingCols = requiredCols.filter(
+    (req) => !header.some((col) => col === req || col.includes(req))
+  );
+  if (missingCols.length > 0) {
+    const displayMissing = missingCols.map((m) => m.charAt(0).toUpperCase() + m.slice(1)).join(', ');
+    return {
+      success: false,
+      status: 'error',
+      errorType: 'INCORRECT_STRUCTURE',
+      message: `Data has different table format (failed to upload). Missing required columns: ${displayMissing}. Expected standard columns: Category, Criteria, Score, Passing Grade.`,
+    };
+  }
+
+  const colIdx = {
+    category: header.findIndex((h) => h === 'category' || h.includes('category') || h.includes('kategori')),
+    criteria: header.findIndex((h) => h === 'criteria' || h.includes('criteria') || h.includes('kriteria')),
+    metrics: header.findIndex((h) => h === 'metrics' || h.includes('metric')),
+    score: header.findIndex((h) => h === 'score' || h.includes('score') || h.includes('nilai')),
+    passingGrade: header.findIndex((h) => h === 'passing grade' || h.includes('passing') || h.includes('grade')),
+    passFail: header.findIndex((h) => h === 'pass/not pass' || h.includes('pass') || h.includes('status')),
+    notes: header.findIndex((h) => h === 'infraction details' || h.includes('infraction') || h.includes('detail') || h.includes('notes') || h.includes('catatan')),
+  };
+
+  // 3. Normalize store and month
+  const INDO_MONTHS = [
+    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+  ];
+  let monthNum = 1;
+  let monthName = 'Januari';
+  if (typeof month === 'number' || (!isNaN(parseInt(month, 10)) && parseInt(month, 10) >= 1 && parseInt(month, 10) <= 12)) {
+    monthNum = Math.max(1, Math.min(12, parseInt(month, 10)));
+    monthName = INDO_MONTHS[monthNum - 1];
+  } else {
+    const cleanMonth = String(month || '').trim().toLowerCase();
+    const idx = INDO_MONTHS.findIndex((m) => m.toLowerCase() === cleanMonth);
+    if (idx !== -1) {
+      monthNum = idx + 1;
+      monthName = INDO_MONTHS[idx];
+    }
+  }
+
+  const cleanStoreInput = String(storeName || '').trim().toLowerCase().replace(/^birmas\s+/i, '');
+  const existingStores = db.prepare('SELECT store_id, name FROM stores').all();
+  let storeMatch = existingStores.find((s) => {
+    const cleanS = String(s.name).trim().toLowerCase().replace(/^birmas\s+/i, '');
+    return cleanS === cleanStoreInput || String(s.name).trim().toLowerCase() === String(storeName).trim().toLowerCase();
+  });
+
+  let storeId;
+  let officialStoreName;
+  if (storeMatch) {
+    storeId = storeMatch.store_id;
+    officialStoreName = storeMatch.name;
+  } else {
+    officialStoreName = storeName.toLowerCase().startsWith('birmas') ? storeName : `Birmas ${storeName}`;
+    const ins = db.prepare('INSERT INTO stores (name) VALUES (?)').run(officialStoreName);
+    storeId = Number(ins.lastInsertRowid);
+  }
+
+  const yr = parseInt(year, 10) || 2026;
+  const targetTable = yr === 2025 ? 'criteria2025' : 'criteria';
+
+  // 4. Check for existing audit record
+  const existingAudit = db.prepare(`
+    SELECT audit_id, file_name FROM audits
+    WHERE store_id = ? AND year = ? AND month = ?
+      AND (file_name = ? OR LOWER(file_name) = LOWER(?))
+    LIMIT 1
+  `).get(storeId, yr, monthNum, fileName, fileName);
+
+  // If existing audit found and not confirmed overwrite:
+  if (existingAudit && !confirm) {
+    const existingScoresCount = db.prepare('SELECT COUNT(*) as count FROM scores WHERE audit_id = ?').get(existingAudit.audit_id)?.count || 0;
+    const nonSkippedRows = rows.slice(1).filter((r) => {
+      const cat = (r[colIdx.category] || '').trim().toLowerCase();
+      const crit = (r[colIdx.criteria] || '').trim();
+      return crit && cat !== 'absensi' && cat !== 'maintenance';
+    });
+
+    if (existingScoresCount > 0 && existingScoresCount === nonSkippedRows.length) {
+      return {
+        success: true,
+        status: 'unchanged',
+        message: `File already exists: exact same audit records are already recorded for ${officialStoreName} (${monthName} ${yr}). No changes needed.`,
+      };
+    } else {
+      return {
+        success: true,
+        status: 'confirm_required',
+        message: `File "${fileName}" already exists for ${officialStoreName} (${monthName} ${yr}) with different data. Click "Upload Anyway" to replace it.`,
+      };
+    }
+  }
+
+  // 5. Save physical file to disk
+  try {
+    const dirPath = path.join(__dirname, 'audit_birmas', officialStoreName, String(yr), monthName);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+    fs.writeFileSync(path.join(dirPath, fileName), fileBuffer);
+  } catch (err) {
+    console.warn('[processAuditUpload] Warning writing file to disk:', err.message);
+  }
+
+  // 6. Insert / Replace audit record
+  let auditId;
+  if (existingAudit) {
+    auditId = existingAudit.audit_id;
+    db.prepare('DELETE FROM scores WHERE audit_id = ?').run(auditId);
+    db.prepare('DELETE FROM audit_summary WHERE audit_id = ?').run(auditId);
+    db.prepare('UPDATE audits SET file_name = ? WHERE audit_id = ?').run(fileName, auditId);
+  } else {
+    const ins = db.prepare('INSERT INTO audits (store_id, year, month, file_name) VALUES (?, ?, ?, ?)').run(storeId, yr, monthNum, fileName);
+    auditId = Number(ins.lastInsertRowid);
+  }
+
+  // 7. Parse rows and insert criteria & scores
+  let totalCriteria = 0;
+  let passedCount = 0;
+  let notNullCount = 0;
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const rawCat = (colIdx.category !== -1 ? r[colIdx.category] : '') || '';
+    const rawCrit = (colIdx.criteria !== -1 ? r[colIdx.criteria] : '') || '';
+    const category = rawCat.trim();
+    const criteriaName = rawCrit.replace(/\s*\(\d+\)\s*$/, '').trim();
+
+    if (!criteriaName || category.toLowerCase() === 'absensi' || category.toLowerCase() === 'maintenance') {
+      continue;
+    }
+
+    totalCriteria++;
+
+    let rawScore = (colIdx.score !== -1 ? r[colIdx.score] : '') || '';
+    let scoreVal = null;
+    if (rawScore !== '' && rawScore !== null && rawScore !== undefined) {
+      const parsed = parseFloat(rawScore);
+      if (!isNaN(parsed)) scoreVal = parsed;
+    }
+
+    let rawPg = (colIdx.passingGrade !== -1 ? r[colIdx.passingGrade] : '') || '';
+    let pgVal = null;
+    if (rawPg !== '' && rawPg !== null && rawPg !== undefined) {
+      const parsed = parseFloat(rawPg);
+      if (!isNaN(parsed)) pgVal = parsed;
+    }
+
+    let rawMetrics = (colIdx.metrics !== -1 ? r[colIdx.metrics] : '') || '';
+    let metricsVal = rawMetrics.trim() || null;
+
+    let rawPassFail = (colIdx.passFail !== -1 ? r[colIdx.passFail] : '') || '';
+    let passFailVal = rawPassFail.trim() || null;
+    if (!passFailVal && scoreVal !== null && pgVal !== null) {
+      passFailVal = scoreVal >= pgVal ? 'Pass' : 'Not Pass';
+    }
+
+    let rawNotes = (colIdx.notes !== -1 ? r[colIdx.notes] : '') || '';
+    let notesVal = rawNotes.trim() || null;
+
+    // Ensure criteria exists in target table
+    try {
+      db.prepare(`
+        INSERT OR IGNORE INTO ${targetTable} (year, category, name, passing_grade, metrics)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(yr, category, criteriaName, pgVal, metricsVal);
+    } catch (_) {}
+
+    // Find criteria_id
+    let critRow = db.prepare(`
+      SELECT criteria_id FROM ${targetTable}
+      WHERE year = ? AND name = ?
+      LIMIT 1
+    `).get(yr, criteriaName);
+
+    if (!critRow) {
+      critRow = db.prepare(`
+        SELECT criteria_id FROM ${targetTable}
+        WHERE name = ?
+        LIMIT 1
+      `).get(criteriaName);
+    }
+
+    const criteriaId = critRow?.criteria_id;
+    if (!criteriaId) continue;
+
+    db.prepare(`
+      INSERT INTO scores (audit_id, criteria_id, score, pass_fail, notes)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(auditId, criteriaId, scoreVal, passFailVal, notesVal);
+
+    if (scoreVal !== null) notNullCount++;
+    if (passFailVal && passFailVal.toLowerCase() === 'pass') passedCount++;
+  }
+
+  // 8. Update audit_summary
+  const passRate = notNullCount > 0 ? Math.round((passedCount / notNullCount) * 1000) / 1000 : null;
+  db.prepare(`
+    INSERT OR REPLACE INTO audit_summary (audit_id, total_criteria, passed_count, not_null_count, pass_rate)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(auditId, totalCriteria, passedCount, notNullCount, passRate);
+
+  // 9. Recompute aggregates for this store, year, month
+  recomputeStoreMonthAggregates(db, storeId, yr, monthNum);
+
+  return {
+    success: true,
+    status: 'success',
+    message: `Audit file "${fileName}" successfully processed and stored for ${officialStoreName} (${monthName} ${yr})!`,
+    audit_id: auditId,
+  };
 }
