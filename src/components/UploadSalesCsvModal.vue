@@ -1,6 +1,5 @@
 <script setup>
 import { ref, computed } from 'vue';
-import * as XLSX from 'xlsx';
 import {
   X,
   UploadCloud,
@@ -348,69 +347,47 @@ function parseCSV(text) {
   return parsed;
 }
 
-// Handle File Selection (Supports both .csv/.tsv/.txt and .xlsx/.xls)
+// Handle File Selection (Strictly CSV files only)
 function handleFileSelect(e) {
   const selectedFile = e.target.files?.[0] || e.dataTransfer?.files?.[0];
   if (!selectedFile) return;
 
-  file.value = selectedFile;
-  fileName.value = selectedFile.name;
-  fileSize.value = (selectedFile.size / 1024).toFixed(1) + ' KB';
   parseErrors.value = [];
   uploadStatus.value = null;
   parsedRows.value = [];
+
+  // Strictly CSV validation
+  const lowerName = (selectedFile.name || '').toLowerCase();
+  if (!lowerName.endsWith('.csv')) {
+    parseErrors.value = [
+      `Invalid file type "${selectedFile.name}". Strictly CSV files (.csv) are supported. If you have an Excel file (.xlsx/.xls), please save or export it as CSV first.`
+    ];
+    return;
+  }
+
+  file.value = selectedFile;
+  fileName.value = selectedFile.name;
+  fileSize.value = (selectedFile.size / 1024).toFixed(1) + ' KB';
   isParsing.value = true;
 
-  const isExcel =
-    selectedFile.name.endsWith('.xlsx') ||
-    selectedFile.name.endsWith('.xls') ||
-    selectedFile.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    selectedFile.type === 'application/vnd.ms-excel';
-
-  if (isExcel) {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const data = new Uint8Array(event.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        if (!sheetName) throw new Error('Excel workbook contains no sheets.');
-        const worksheet = workbook.Sheets[sheetName];
-        const csvContent = XLSX.utils.sheet_to_csv(worksheet);
-        rawCsvText.value = csvContent;
-        const rows = parseCSV(csvContent);
-        parsedRows.value = rows;
-      } catch (err) {
-        parseErrors.value = [err.message || 'Failed to parse Excel spreadsheet.'];
-      } finally {
-        isParsing.value = false;
-      }
-    };
-    reader.onerror = () => {
-      parseErrors.value = ['Error reading Excel file from disk.'];
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    try {
+      const text = event.target?.result || '';
+      rawCsvText.value = text;
+      const rows = parseCSV(text);
+      parsedRows.value = rows;
+    } catch (err) {
+      parseErrors.value = [err.message || 'Failed to parse CSV file.'];
+    } finally {
       isParsing.value = false;
-    };
-    reader.readAsArrayBuffer(selectedFile);
-  } else {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const text = event.target?.result || '';
-        rawCsvText.value = text;
-        const rows = parseCSV(text);
-        parsedRows.value = rows;
-      } catch (err) {
-        parseErrors.value = [err.message || 'Failed to parse CSV file.'];
-      } finally {
-        isParsing.value = false;
-      }
-    };
-    reader.onerror = () => {
-      parseErrors.value = ['Error reading file from disk.'];
-      isParsing.value = false;
-    };
-    reader.readAsText(selectedFile);
-  }
+    }
+  };
+  reader.onerror = () => {
+    parseErrors.value = ['Error reading CSV file from disk.'];
+    isParsing.value = false;
+  };
+  reader.readAsText(selectedFile);
 }
 
 // Computed stats of parsed CSV
@@ -577,7 +554,7 @@ function handleClose() {
         >
           <input
             type="file"
-            accept=".csv, .tsv, .txt, text/csv, application/vnd.ms-excel"
+            accept=".csv, text/csv"
             class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             @change="handleFileSelect"
           />
@@ -589,10 +566,10 @@ function handleClose() {
 
             <div>
               <p class="text-sm font-bold text-slate-800">
-                Click to browse or drag & drop your Sales CSV file
+                Click to browse or drag & drop your Sales CSV file (.csv)
               </p>
               <p class="text-xs text-slate-500 mt-1">
-                Accepts Sales Recapitulation Detail (.csv) with columns: Sales Date, Branch, Visit Purpose, Payment, Menu Category, Menu Category Detail (Brand), Menu, Qty, Price
+                Strictly CSV files (.csv) accepted. Supports ESB Sales Recapitulation Detail with columns: Sales Date In, Bill Number, Branch, Visit Purpose, Menu Category, Brand, Menu, Qty, Price, Total
               </p>
             </div>
           </div>
