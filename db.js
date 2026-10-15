@@ -193,6 +193,31 @@ function initTables(db) {
       file_content TEXT,
       parsed_data TEXT
     );
+
+    -- 11. Audit Sessions Lock Table
+    CREATE TABLE IF NOT EXISTS audit_sessions (
+      store_id TEXT PRIMARY KEY,
+      is_locked INTEGER DEFAULT 0,
+      locked_at TEXT,
+      locked_by TEXT,
+      unlocked_at TEXT,
+      unlocked_by TEXT
+    );
+
+    -- 12. Audit Scan Events Table
+    CREATE TABLE IF NOT EXISTS audit_scan_events (
+      id TEXT PRIMARY KEY,
+      store_id TEXT NOT NULL,
+      barcode TEXT NOT NULL,
+      auditor TEXT,
+      action TEXT,
+      created_at TEXT
+    );
+
+    -- Performance indexes
+    CREATE INDEX IF NOT EXISTS idx_store_stocks_lookup ON store_stocks (store_id, product_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_scans_lookup ON audit_scans (store_id, barcode);
+    CREATE INDEX IF NOT EXISTS idx_sales_lookup ON sales_transactions (branch, sales_date);
   `);
 
   // Seed & sync required users:
@@ -1164,6 +1189,71 @@ export function deleteStockFileRecord(fileId) {
   } catch (err) {
     try { db.exec('ROLLBACK;'); } catch (_) {}
     console.error('[DB] deleteStockFileRecord error:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+export function getSessionLockState(storeId) {
+  const db = getDb();
+  try {
+    const row = db.prepare('SELECT * FROM audit_sessions WHERE store_id = ?').get(storeId);
+    if (!row) {
+      return { storeId, isLocked: false };
+    }
+    return {
+      storeId: row.store_id,
+      isLocked: row.is_locked === 1,
+      lockedAt: row.locked_at,
+      lockedBy: row.locked_by,
+      unlockedAt: row.unlocked_at,
+      unlockedBy: row.unlocked_by,
+    };
+  } catch (err) {
+    console.warn('[DB getSessionLockState]:', err);
+    return { storeId, isLocked: false };
+  }
+}
+
+export function setSessionLockState(storeId, isLocked, user = 'Super Admin') {
+  const db = getDb();
+  try {
+    const now = new Date().toISOString();
+    if (isLocked) {
+      db.prepare(`
+        INSERT INTO audit_sessions (store_id, is_locked, locked_at, locked_by)
+        VALUES (?, 1, ?, ?)
+        ON CONFLICT(store_id) DO UPDATE SET
+          is_locked = 1,
+          locked_at = excluded.locked_at,
+          locked_by = excluded.locked_by
+      `).run(storeId, now, user);
+    } else {
+      db.prepare(`
+        INSERT INTO audit_sessions (store_id, is_locked, unlocked_at, unlocked_by)
+        VALUES (?, 0, ?, ?)
+        ON CONFLICT(store_id) DO UPDATE SET
+          is_locked = 0,
+          unlocked_at = excluded.unlocked_at,
+          unlocked_by = excluded.unlocked_by
+      `).run(storeId, now, user);
+    }
+    return { success: true, storeId, isLocked: Boolean(isLocked) };
+  } catch (err) {
+    console.error('[DB setSessionLockState]:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+export function logAuditScanEvent(storeId, barcode, auditor = 'Auditor', action = 'SCAN') {
+  const db = getDb();
+  try {
+    const id = 'evt-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6);
+    db.prepare(`
+      INSERT INTO audit_scan_events (id, store_id, barcode, auditor, action, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, storeId, barcode, auditor, action, new Date().toISOString());
+    return { success: true, id };
+  } catch (err) {
     return { success: false, error: err.message };
   }
 }
