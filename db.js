@@ -177,6 +177,22 @@ function initTables(db) {
       stores TEXT,
       file_content TEXT
     );
+
+    -- 10. Uploaded Stock Audit Files Table
+    CREATE TABLE IF NOT EXISTS stock_audit_files (
+      id TEXT PRIMARY KEY,
+      filename TEXT NOT NULL,
+      file_size TEXT,
+      uploaded_at TEXT NOT NULL,
+      uploaded_by TEXT,
+      downloaded_at_esb TEXT,
+      stock_date TEXT,
+      active_stores TEXT,
+      row_count INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      file_content TEXT,
+      parsed_data TEXT
+    );
   `);
 
   // Seed & sync required users:
@@ -217,15 +233,7 @@ function initTables(db) {
   // Purge any legacy mock barcodes from previous template versions
   db.exec(`
     DELETE FROM products WHERE id LIKE 'wp-10%';
-    DELETE FROM products WHERE id LIKE 'esb-%';
-    DELETE FROM store_stocks WHERE product_id LIKE 'esb-%';
     DELETE FROM products WHERE category IN ('PERLENGKAPAN OUTLET', 'ASSET', 'Asset', 'NON DEPRECIATED ASSET', 'LAIN LAIN') OR product_title LIKE '%ES BATU%' OR product_title LIKE '%GELAS CUP%';
-    DELETE FROM store_stocks WHERE product_id IN ('erp-276', 'erp-298', 'erp-254', 'erp-128', 'erp-129');
-    UPDATE products SET barcode = NULL WHERE barcode IN (
-      '8997026800122', '8997026800030', '8997026800078', '8997026800016',
-      '8993156000074', '8993156668267', '8993156668229', '8998888001011',
-      '8801048951112', '5000213007624'
-    );
   `);
 
   // Seed default WP config if not present
@@ -860,6 +868,302 @@ export function clearAllSalesTransactions() {
     return { success: true, message: 'Sales transactions and files cleared successfully.' };
   } catch (err) {
     try { db.exec('ROLLBACK;'); } catch (_) {}
+    return { success: false, error: err.message };
+  }
+}
+
+// ==========================================
+// Stock Audit CSV File Records & Live Stock Application
+// ==========================================
+
+export function getStockFilesList() {
+  const db = getDb();
+  try {
+    return db.prepare(`
+      SELECT id, filename, file_size, uploaded_at, uploaded_by, downloaded_at_esb, stock_date, active_stores, row_count, is_active
+      FROM stock_audit_files
+      ORDER BY uploaded_at DESC
+    `).all();
+  } catch (err) {
+    console.error('[DB] getStockFilesList error:', err.message);
+    return [];
+  }
+}
+
+export function getStockFileById(id) {
+  const db = getDb();
+  try {
+    return db.prepare(`SELECT * FROM stock_audit_files WHERE id = ?`).get(id);
+  } catch (err) {
+    console.error('[DB] getStockFileById error:', err.message);
+    return null;
+  }
+}
+
+export function getActiveStockFile() {
+  const db = getDb();
+  try {
+    return db.prepare(`SELECT * FROM stock_audit_files WHERE is_active = 1 ORDER BY uploaded_at DESC LIMIT 1`).get();
+  } catch (err) {
+    console.error('[DB] getActiveStockFile error:', err.message);
+    return null;
+  }
+}
+
+function resolveStoreIdForStock(storeName) {
+  const raw = String(storeName || '').trim().toLowerCase();
+  if (!raw) return 'birmas-sudirman';
+  if (raw.includes('sudirman')) return 'birmas-sudirman';
+  if (raw.includes('kuningan')) return 'birmas-kuningan';
+  if (raw.includes('kwitang')) return 'birmas-kwitang';
+  if (raw.includes('lebak') || raw.includes('bulus')) return 'birmas-lebak-bulus';
+  if (raw.includes('kelapa') || raw.includes('gading')) return 'birmas-kelapa-gading';
+  if (raw.includes('tebet')) return 'birmas-tebet';
+  if (raw.includes('nomadic') || raw.includes('bandung')) return 'birmas-nomadic';
+  if (raw.includes('nusa') || raw.includes('bali')) return 'birmas-nusadua';
+  
+  const slug = raw.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return slug ? `birmas-${slug}` : 'birmas-sudirman';
+}
+
+function deriveProductBrand(title) {
+  const t = String(title || '').trim();
+  if (/^kulturale/i.test(t)) return 'Kulturale';
+  if (/^guinness/i.test(t)) return 'Guinness';
+  if (/^bintang/i.test(t)) return 'Bintang';
+  if (/^heineken/i.test(t)) return 'Heineken';
+  if (/^smirnoff/i.test(t)) return 'Smirnoff';
+  if (/^corona/i.test(t)) return 'Corona';
+  if (/^soju|chamisul|jinro/i.test(t)) return 'Jinro';
+  if (/^carlsberg/i.test(t)) return 'Carlsberg';
+  if (/^san miguel/i.test(t)) return 'San Miguel';
+  if (/^prost/i.test(t)) return 'Prost';
+  if (/^singha/i.test(t)) return 'Singha';
+  if (/^budweiser/i.test(t)) return 'Budweiser';
+  if (/^sapporo/i.test(t)) return 'Sapporo';
+  if (/^asahi/i.test(t)) return 'Asahi';
+  if (/^anker/i.test(t)) return 'Anker';
+  if (/^albens/i.test(t)) return 'Albens';
+  if (/^kura kura/i.test(t)) return 'Kura Kura';
+  if (/^island brewing/i.test(t)) return 'Island Brewing';
+  if (/^black sand/i.test(t)) return 'Black Sand';
+  const firstWord = t.split(/[\s-]+/)[0];
+  if (firstWord && firstWord.length > 2) return firstWord;
+  return 'Birmas';
+}
+
+export function applyStockRowsToDatabase(db, rows = []) {
+  if (!rows || rows.length === 0) return;
+
+  const allStores = db.prepare('SELECT id, name FROM stores').all();
+  const storeMap = new Map(allStores.map(s => [s.id, s]));
+
+  const insertStoreStmt = db.prepare(`
+    INSERT INTO stores (id, name, location_code, esb_branch_code)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(id) DO NOTHING;
+  `);
+
+  const existingProducts = db.prepare('SELECT id, product_title, varian, barcode FROM products').all();
+  const productLookup = new Map();
+  for (const p of existingProducts) {
+    if (p.product_title) productLookup.set(p.product_title.toLowerCase().trim(), p);
+    if (p.varian) productLookup.set(p.varian.toLowerCase().trim(), p);
+  }
+
+  const upsertProductStmt = db.prepare(`
+    INSERT INTO products (
+      id, barcode, sku, brand, varian, product_title, category, sub_category, default_unit, package_type, volume, unit_volume, price, wp_status, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      category = coalesce(excluded.category, products.category),
+      sub_category = coalesce(excluded.sub_category, products.sub_category),
+      default_unit = coalesce(excluded.default_unit, products.default_unit),
+      last_updated = excluded.last_updated;
+  `);
+
+  const upsertStockStmt = db.prepare(`
+    INSERT INTO store_stocks (store_id, product_id, stock_qty, last_synced)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(store_id, product_id) DO UPDATE SET
+      stock_qty = excluded.stock_qty,
+      last_synced = excluded.last_synced;
+  `);
+
+  const now = new Date().toISOString();
+
+  for (const r of rows) {
+    const rawStoreName = r.storeName || r.store || '';
+    const storeId = resolveStoreIdForStock(rawStoreName);
+
+    if (!storeMap.has(storeId)) {
+      const displayName = rawStoreName.startsWith('Birmas') ? rawStoreName : `Birmas ${rawStoreName}`;
+      insertStoreStmt.run(storeId, displayName, storeId.replace('birmas-', 'BRM-').toUpperCase(), 'ESB');
+      storeMap.set(storeId, { id: storeId, name: displayName });
+    }
+
+    const prodTitle = String(r.productName || r.product || '').trim();
+    if (!prodTitle) continue;
+
+    const lowerTitle = prodTitle.toLowerCase();
+    let matchedProduct = productLookup.get(lowerTitle);
+    let productId;
+
+    if (matchedProduct) {
+      productId = matchedProduct.id;
+      upsertProductStmt.run(
+        productId,
+        matchedProduct.barcode || null,
+        null,
+        deriveProductBrand(prodTitle),
+        prodTitle,
+        prodTitle,
+        r.category || null,
+        r.category || deriveProductBrand(prodTitle),
+        r.unit || null,
+        'Kaleng',
+        330,
+        'ml',
+        0,
+        'publish',
+        now
+      );
+    } else {
+      const slug = lowerTitle.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      productId = `prod-${slug || Date.now()}`;
+      upsertProductStmt.run(
+        productId,
+        null,
+        `SKU-${slug.slice(0, 8).toUpperCase()}`,
+        deriveProductBrand(prodTitle),
+        prodTitle,
+        prodTitle,
+        r.category || 'Craft Beer',
+        r.category || deriveProductBrand(prodTitle),
+        r.unit || 'Can',
+        'Kaleng',
+        330,
+        'ml',
+        0,
+        'publish',
+        now
+      );
+      productLookup.set(lowerTitle, { id: productId, product_title: prodTitle });
+    }
+
+    const stockQty = Number(r.stockQty ?? r.qty ?? 0) || 0;
+    upsertStockStmt.run(storeId, productId, stockQty, now);
+  }
+}
+
+export function saveStockFileRecord(fileInfo, rows = []) {
+  const db = getDb();
+  const fileId = fileInfo.id || `stk-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+
+  try {
+    db.exec('BEGIN TRANSACTION;');
+
+    // Deactivate prior files
+    db.prepare('UPDATE stock_audit_files SET is_active = 0').run();
+
+    const insertStmt = db.prepare(`
+      INSERT INTO stock_audit_files (
+        id, filename, file_size, uploaded_at, uploaded_by, downloaded_at_esb, stock_date, active_stores, row_count, is_active, file_content, parsed_data
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `);
+
+    insertStmt.run(
+      fileId,
+      fileInfo.filename || 'stock_period_list.csv',
+      fileInfo.file_size || `${(rows.length * 0.15).toFixed(1)} KB`,
+      fileInfo.uploaded_at || new Date().toISOString(),
+      fileInfo.uploaded_by || 'Auditor',
+      fileInfo.downloaded_at_esb || '',
+      fileInfo.stock_date || '',
+      fileInfo.active_stores || '',
+      rows.length,
+      fileInfo.file_content || '',
+      JSON.stringify(rows)
+    );
+
+    applyStockRowsToDatabase(db, rows);
+
+    db.exec('COMMIT;');
+    console.log(`[DB] Saved stock file ${fileId} with ${rows.length} rows and applied to stores.`);
+    return { success: true, fileId, message: 'Stock CSV imported and applied successfully.' };
+  } catch (err) {
+    try { db.exec('ROLLBACK;'); } catch (_) {}
+    console.error('[DB] saveStockFileRecord error:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+export function revertStockFileRecord(fileId) {
+  const db = getDb();
+  try {
+    const file = db.prepare('SELECT * FROM stock_audit_files WHERE id = ?').get(fileId);
+    if (!file) {
+      return { success: false, error: 'File record not found' };
+    }
+
+    let rows = [];
+    try {
+      rows = JSON.parse(file.parsed_data || '[]');
+    } catch {}
+
+    db.exec('BEGIN TRANSACTION;');
+
+    // Mark all as inactive, and this one active
+    db.prepare('UPDATE stock_audit_files SET is_active = 0').run();
+    db.prepare('UPDATE stock_audit_files SET is_active = 1 WHERE id = ?').run(fileId);
+
+    // Apply rows
+    applyStockRowsToDatabase(db, rows);
+
+    db.exec('COMMIT;');
+    console.log(`[DB] Reverted stock data to file ${file.filename} (${fileId}).`);
+    return { success: true, message: `Reverted stock comparison data to "${file.filename}".`, file };
+  } catch (err) {
+    try { db.exec('ROLLBACK;'); } catch (_) {}
+    console.error('[DB] revertStockFileRecord error:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+export function deleteStockFileRecord(fileId) {
+  const db = getDb();
+  try {
+    const file = db.prepare('SELECT * FROM stock_audit_files WHERE id = ?').get(fileId);
+    if (!file) {
+      return { success: false, error: 'File record not found' };
+    }
+
+    const wasActive = file.is_active === 1;
+
+    db.exec('BEGIN TRANSACTION;');
+    db.prepare('DELETE FROM stock_audit_files WHERE id = ?').run(fileId);
+
+    let nextActiveFile = null;
+    if (wasActive) {
+      nextActiveFile = db.prepare('SELECT * FROM stock_audit_files ORDER BY uploaded_at DESC LIMIT 1').get();
+      if (nextActiveFile) {
+        db.prepare('UPDATE stock_audit_files SET is_active = 1 WHERE id = ?').run(nextActiveFile.id);
+        let nextRows = [];
+        try { nextRows = JSON.parse(nextActiveFile.parsed_data || '[]'); } catch {}
+        applyStockRowsToDatabase(db, nextRows);
+      }
+    }
+
+    db.exec('COMMIT;');
+    console.log(`[DB] Deleted stock file ${fileId}. Next active: ${nextActiveFile?.filename || 'None'}`);
+    return {
+      success: true,
+      message: `File "${file.filename}" deleted successfully from history.`,
+      nextActiveFile
+    };
+  } catch (err) {
+    try { db.exec('ROLLBACK;'); } catch (_) {}
+    console.error('[DB] deleteStockFileRecord error:', err.message);
     return { success: false, error: err.message };
   }
 }
