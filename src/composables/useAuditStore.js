@@ -120,15 +120,15 @@ export function useAuditStore() {
 
       let status = 'unscanned';
       if (count === 0 && wpExpected === 0) {
-        status = 'zero_stock';
+        status = 'zero_stock'; // Stok Kosong
       } else if (count === 0 && wpExpected > 0) {
-        status = 'unscanned';
+        status = 'unscanned'; // Belum Dipindai
       } else if (count === wpExpected) {
-        status = 'matched';
+        status = 'matched'; // Sesuai Persis
       } else if (count < wpExpected) {
-        status = 'missing'; // Shortage
+        status = count > 0 ? 'counting' : 'unscanned'; // Sedang dihitung atau belum
       } else {
-        status = 'surplus'; // Overcount
+        status = 'surplus'; // Kelebihan / Overcount
       }
 
       const lastLog = scanLogs.value.find((l) => l.barcode === prod.barcode);
@@ -146,6 +146,10 @@ export function useAuditStore() {
         scannedCount: count,
         discrepancy,
         status,
+        isMatched: count === wpExpected,
+        isSurplus: count > wpExpected,
+        isDeficit: count < wpExpected && wpExpected > 0,
+        isUnscanned: count === 0 && wpExpected > 0,
         lastScannedAt: lastLog ? lastLog.timestamp : null,
       };
     });
@@ -160,17 +164,31 @@ export function useAuditStore() {
     return auditItems.value.reduce((acc, item) => acc + item.scannedCount, 0);
   });
 
+  const hasAuditStarted = computed(() => {
+    return totalScanned.value > 0;
+  });
+
   // Items that belong to this store (have expected stock or were scanned)
   const storeItemsCount = computed(() => {
     return auditItems.value.filter((i) => i.wpExpectedQty > 0 || i.scannedCount > 0).length;
+  });
+
+  const scannedVariantsCount = computed(() => {
+    return auditItems.value.filter((i) => i.scannedCount > 0).length;
   });
 
   const matchedVariantsCount = computed(() => {
     return auditItems.value.filter((i) => i.status === 'matched').length;
   });
 
+  const countingVariantsCount = computed(() => {
+    return auditItems.value.filter((i) => i.status === 'counting').length;
+  });
+
   const missingVariantsCount = computed(() => {
-    return auditItems.value.filter((i) => i.status === 'missing').length;
+    // True shortages during reconciliation (only evaluated once audit counting is underway)
+    if (!hasAuditStarted.value) return 0;
+    return auditItems.value.filter((i) => i.wpExpectedQty > 0 && i.scannedCount < i.wpExpectedQty).length;
   });
 
   const surplusVariantsCount = computed(() => {
@@ -181,8 +199,27 @@ export function useAuditStore() {
     return auditItems.value.filter((i) => i.status === 'unscanned').length;
   });
 
+  const auditProgressPercentage = computed(() => {
+    const totalActive = storeItemsCount.value || 1;
+    return Math.min(100, Math.round((scannedVariantsCount.value / totalActive) * 100));
+  });
+
   const netDiscrepancyBottles = computed(() => {
+    if (!hasAuditStarted.value) return 0;
     return totalScanned.value - totalWpExpected.value;
+  });
+
+  const totalShortageBottles = computed(() => {
+    if (!hasAuditStarted.value) return 0;
+    return auditItems.value.reduce((acc, i) => {
+      return acc + (i.scannedCount < i.wpExpectedQty ? (i.wpExpectedQty - i.scannedCount) : 0);
+    }, 0);
+  });
+
+  const totalSurplusBottles = computed(() => {
+    return auditItems.value.reduce((acc, i) => {
+      return acc + (i.scannedCount > i.wpExpectedQty ? (i.scannedCount - i.wpExpectedQty) : 0);
+    }, 0);
   });
 
   async function selectStore(storeId) {
@@ -243,6 +280,14 @@ export function useAuditStore() {
     const safeCount = Math.max(0, count);
     scannedCounts.value[clean] = safeCount;
     await adjustAuditCount(clean, selectedStoreId.value, { count: safeCount });
+  }
+
+  async function addBatchAuditCount(barcode, delta) {
+    const clean = (barcode || '').trim();
+    const cur = scannedCounts.value[clean] ?? 0;
+    const target = Math.max(0, cur + delta);
+    scannedCounts.value[clean] = target;
+    await adjustAuditCount(clean, selectedStoreId.value, { delta });
   }
 
   async function resetCurrentAudit() {
@@ -463,17 +508,24 @@ export function useAuditStore() {
     lastSyncStatus,
     totalWpExpected,
     totalScanned,
+    hasAuditStarted,
     storeItemsCount,
+    scannedVariantsCount,
+    countingVariantsCount,
     matchedVariantsCount,
     missingVariantsCount,
     surplusVariantsCount,
     unscannedVariantsCount,
+    auditProgressPercentage,
     netDiscrepancyBottles,
+    totalShortageBottles,
+    totalSurplusBottles,
     isAutoCheckerActive,
     lastCheckedAt,
     selectStore,
     registerAuditScan,
     decrementAuditCount,
+    addBatchAuditCount,
     setAuditCount,
     resetCurrentAudit,
     addNewBarcode,
