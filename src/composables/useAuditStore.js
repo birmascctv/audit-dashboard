@@ -130,19 +130,40 @@ export function useAuditStore() {
     return wpProducts.value.map((prod) => {
       const wpExpected = (prod.stockByStore && prod.stockByStore[storeId]) ?? 0;
       const count = scannedCounts.value[prod.barcode] ?? 0;
-      const discrepancy = count - wpExpected;
 
       let status = 'unscanned';
-      if (count === 0 && wpExpected === 0) {
+      let discrepancy = 0;
+
+      if (wpExpected < 0) {
+        // Negative ESB stock means the ERP recorded that items are missing in the store (e.g. -2 means 2 cans missing)
+        if (count === 0) {
+          status = 'missing'; // Items are physically missing
+          discrepancy = wpExpected; // e.g. -2
+        } else if (count < Math.abs(wpExpected)) {
+          status = 'counting';
+          discrepancy = wpExpected + count;
+        } else if (count === Math.abs(wpExpected)) {
+          status = 'matched';
+          discrepancy = 0;
+        } else {
+          status = 'surplus';
+          discrepancy = count - Math.abs(wpExpected);
+        }
+      } else if (count === 0 && wpExpected === 0) {
         status = 'zero_stock'; // Stok Kosong
+        discrepancy = 0;
       } else if (count === 0 && wpExpected > 0) {
         status = 'unscanned'; // Belum Dipindai
+        discrepancy = -wpExpected;
       } else if (count === wpExpected) {
         status = 'matched'; // Sesuai Persis
+        discrepancy = 0;
       } else if (count < wpExpected) {
         status = count > 0 ? 'counting' : 'unscanned'; // Sedang dihitung atau belum
+        discrepancy = count - wpExpected;
       } else {
         status = 'surplus'; // Kelebihan / Overcount
+        discrepancy = count - wpExpected;
       }
 
       const lastLog = scanLogs.value.find((l) => l.barcode === prod.barcode);
@@ -160,10 +181,12 @@ export function useAuditStore() {
         scannedCount: count,
         discrepancy,
         status,
-        isMatched: count === wpExpected,
-        isSurplus: count > wpExpected,
-        isDeficit: count < wpExpected && wpExpected > 0,
-        isUnscanned: count === 0 && wpExpected > 0,
+        hasNegativeStock: wpExpected < 0,
+        negativeStockDeficit: wpExpected < 0 ? Math.abs(wpExpected) : 0,
+        isMatched: status === 'matched',
+        isSurplus: status === 'surplus',
+        isDeficit: status === 'missing' || (count < wpExpected && wpExpected > 0),
+        isUnscanned: status === 'unscanned',
         lastScannedAt: lastLog ? lastLog.timestamp : null,
       };
     });
