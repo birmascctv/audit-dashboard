@@ -6,6 +6,7 @@ import { useAuth } from '../composables/useAuth.js';
 import { playScanMatchSound, playScanSuccessSound, playScanErrorSound } from '../utils/audio.js';
 import { formatDateTime } from '../utils/storage.js';
 import AddBarcodeModal from '../components/AddBarcodeModal.vue';
+import UploadStockCsvModal from '../components/UploadStockCsvModal.vue';
 
 import {
   Barcode,
@@ -23,7 +24,10 @@ import {
   RotateCcw,
   Sparkles,
   Download,
+  UploadCloud,
+  FileSpreadsheet,
   ChevronDown,
+  ChevronRight,
   Layers,
   Database,
   ExternalLink,
@@ -73,6 +77,27 @@ const brandFilter = ref('ALL');
 const isCompleteModalOpen = ref(false);
 const isAddBarcodeModalOpen = ref(false);
 const isSessionModalOpen = ref(false);
+const isUploadStockCsvModalOpen = ref(false);
+const activeStockCsvFile = ref(null);
+
+async function loadActiveStockCsv() {
+  try {
+    const res = await fetch('/api/stock-csv/active');
+    const data = await res.json();
+    if (data.success && data.file) {
+      activeStockCsvFile.value = data.file;
+    } else {
+      activeStockCsvFile.value = null;
+    }
+  } catch {
+    activeStockCsvFile.value = null;
+  }
+}
+
+async function handleStockCsvUpdated() {
+  await loadActiveStockCsv();
+}
+
 const birmasSyncTab = ref('birmas'); // 'birmas' | 'curl'
 const isSyncingBirmas = ref(false);
 const rawCurlInput = ref('');
@@ -298,6 +323,7 @@ onMounted(() => {
   if (document.documentElement) document.documentElement.scrollTop = 0;
   if (document.body) document.body.scrollTop = 0;
   loadBirmasConfig();
+  loadActiveStockCsv();
 });
 </script>
 
@@ -324,7 +350,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Action Bar: Store Selector, Add Barcode, Complete Audit -->
+      <!-- Action Bar: Store Selector, Add Barcode, Upload CSV, Export CSV, Complete Audit -->
       <div class="flex flex-wrap items-center gap-2.5">
         <!-- Store Location Selector -->
         <div class="relative inline-block">
@@ -351,7 +377,18 @@ onMounted(() => {
           <span>Add Barcode</span>
         </button>
 
-        <!-- Export CSV Button (Suggested Enhancement) -->
+        <!-- Upload CSV Button (ESB Stock Period Import) -->
+        <button
+          @click="isUploadStockCsvModalOpen = true"
+          type="button"
+          class="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+          title="Upload ESB Stock CSV to update comparison table automatically"
+        >
+          <UploadCloud class="w-3.5 h-3.5 text-white" />
+          <span>Upload CSV</span>
+        </button>
+
+        <!-- Export CSV Button (Preserved) -->
         <button
           @click="exportAuditToCsv"
           type="button"
@@ -372,6 +409,41 @@ onMounted(() => {
           <span>Complete Audit</span>
         </button>
       </div>
+    </div>
+
+    <!-- Active Stock CSV Information Banner -->
+    <div
+      v-if="activeStockCsvFile"
+      class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-white border border-teal-200 rounded-2xl text-xs text-slate-700 shadow-xs"
+    >
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 shrink-0">
+          <FileSpreadsheet class="w-4 h-4 text-teal-700" />
+        </div>
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span class="font-extrabold text-slate-900">Active Stock CSV:</span>
+          <span class="font-mono font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
+            {{ activeStockCsvFile.filename }}
+          </span>
+          <span class="text-slate-500 font-medium">
+            Stock Date: <strong class="text-slate-900 font-mono">{{ activeStockCsvFile.stock_date || '-' }}</strong>
+          </span>
+          <span class="text-slate-500 font-medium">
+            ESB Download: <span class="text-slate-800 font-mono">{{ activeStockCsvFile.downloaded_at_esb || '-' }}</span>
+          </span>
+          <span class="text-slate-400 text-[11px]">
+            (Uploaded by {{ activeStockCsvFile.uploaded_by || 'Auditor' }})
+          </span>
+        </div>
+      </div>
+      <button
+        @click="isUploadStockCsvModalOpen = true"
+        type="button"
+        class="text-xs font-bold text-teal-700 hover:text-teal-900 hover:underline flex items-center gap-1 shrink-0 cursor-pointer self-end sm:self-center"
+      >
+        <span>Manage / Revert CSV</span>
+        <ChevronRight class="w-3.5 h-3.5" />
+      </button>
     </div>
 
     <!-- Pre-scan Status Explanation Banner -->
@@ -1238,5 +1310,12 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Upload Stock CSV Modal -->
+    <UploadStockCsvModal
+      :is-open="isUploadStockCsvModalOpen"
+      @close="isUploadStockCsvModalOpen = false"
+      @updated="handleStockCsvUpdated"
+    />
   </div>
 </template>
