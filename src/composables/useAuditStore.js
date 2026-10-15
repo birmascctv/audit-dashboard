@@ -538,5 +538,21 @@ export function useAuditStore() {
     createStore,
     removeStore,
     refreshAuditState: () => loadStoreScans(selectedStoreId.value),
+    refreshProducts: async () => {
+      try {
+        const prods = await fetchProducts();
+        if (prods && Array.isArray(prods)) {
+          wpProducts.value = prods;
+        }
+        const stds = await fetchStores();
+        if (stds && Array.isArray(stds) && stds.length > 0) {
+          stores.value = stds;
+        }
+        return prods;
+      } catch (err) {
+        console.warn('Failed to refresh products:', err);
+        return [];
+      }
+    },
   };
 }
