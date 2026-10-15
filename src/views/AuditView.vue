@@ -34,7 +34,11 @@ import {
   Package,
   Trash2,
   Zap,
-  Settings
+  Settings,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  ShieldAlert
 } from 'lucide-vue-next';
 
 const { currentUser } = useAuth();
@@ -67,11 +71,34 @@ const {
   finalizeAudit,
   isSyncing,
   lastSyncStatus,
+  isSessionLocked,
+  sessionLockInfo,
+  lockCurrentSession,
+  unlockCurrentSession,
 } = useAuditStore();
 
 const searchQuery = ref('');
 const statusFilter = ref('ALL');
 const brandFilter = ref('ALL');
+
+const isUnlockModalOpen = ref(false);
+const isUnlocking = ref(false);
+const unlockError = ref('');
+const isSuperAdmin = computed(() => currentUser.value?.role === 'superadmin');
+
+async function handleUnlockConfirm() {
+  if (!isSuperAdmin.value) return;
+  isUnlocking.value = true;
+  unlockError.value = '';
+  try {
+    await unlockCurrentSession(currentUser.value?.name || 'Super Admin', currentUser.value?.role || 'superadmin');
+    isUnlockModalOpen.value = false;
+  } catch (err) {
+    unlockError.value = err.message || 'Failed to unlock audit session';
+  } finally {
+    isUnlocking.value = false;
+  }
+}
 
 // Modals
 const isCompleteModalOpen = ref(false);
@@ -426,6 +453,49 @@ onMounted(() => {
       </button>
     </div>
 
+    <!-- Audit Session Lock Status Banner (Superadmin approval workflow) -->
+    <div
+      v-if="isSessionLocked"
+      class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-xs text-amber-950 shadow-sm"
+    >
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800 shrink-0">
+          <Lock class="w-5 h-5 text-amber-700" />
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-black text-amber-950 text-sm">Audit Session is Locked & Frozen</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 text-amber-900 border border-amber-300">
+              LOCKED
+            </span>
+          </div>
+          <p class="text-amber-900 text-xs mt-0.5">
+            Physical counts are sealed for {{ currentStore.name }}. All barcode scanning and manual tally edits are disabled.
+            <span v-if="sessionLockInfo?.lockedBy"> Sealed by <strong>{{ sessionLockInfo.lockedBy }}</strong>.</span>
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 self-end sm:self-center">
+        <button
+          v-if="isSuperAdmin"
+          @click="isUnlockModalOpen = true"
+          type="button"
+          class="px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer transition-all"
+        >
+          <Unlock class="w-4 h-4" />
+          <span>Unlock Session (Superadmin Approval)</span>
+        </button>
+        <span
+          v-else
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-amber-300 text-amber-900 text-xs font-bold shadow-2xs"
+        >
+          <ShieldAlert class="w-4 h-4 text-amber-600" />
+          <span>Superadmin Approval Required to Unlock</span>
+        </span>
+      </div>
+    </div>
+
 
 
     <!-- Counting Station (Light theme with tosca accents) -->
@@ -466,15 +536,17 @@ onMounted(() => {
         <!-- Main Barcode Input Field -->
         <div class="relative flex items-center">
           <div class="absolute left-4 flex items-center pointer-events-none text-teal-600">
-            <Barcode class="w-6 h-6 animate-pulse" />
+            <Barcode class="w-6 h-6" :class="isSessionLocked ? 'opacity-40' : 'animate-pulse'" />
           </div>
           <input
             id="scanner-main-input"
             type="text"
             autocomplete="off"
             spellcheck="false"
-            placeholder="Scan barcode with USB/Wireless scanner (aim and scan bottle)..."
-            class="w-full pl-13 pr-28 py-3.5 bg-slate-50 text-slate-900 placeholder-slate-400 text-base font-mono rounded-xl border-2 border-slate-300 focus:border-teal-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-teal-100 transition-all shadow-inner"
+            :disabled="isSessionLocked"
+            :placeholder="isSessionLocked ? 'Audit Session is locked. Recounting requires Superadmin approval.' : 'Scan barcode with USB/Wireless scanner (aim and scan bottle)...'"
+            class="w-full pl-13 pr-28 py-3.5 text-slate-900 placeholder-slate-400 text-base font-mono rounded-xl border-2 transition-all shadow-inner"
+            :class="isSessionLocked ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60' : 'bg-slate-50 border-slate-300 focus:border-teal-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-teal-100'"
             @keydown.enter.prevent="processBarcode($event.target.value); $event.target.value = ''"
           />
           <span class="absolute right-3 px-2.5 py-1 rounded bg-white border border-slate-300 text-[11px] font-mono text-teal-700 font-semibold shadow-sm">
@@ -663,7 +735,7 @@ onMounted(() => {
           <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">ESB STOCK</span>
         </div>
         <div class="my-2">
-          <span class="text-3xl font-extrabold text-slate-900 font-mono">{{ totalWpExpected }}</span>
+          <span class="text-3xl font-extrabold text-slate-900 font-mono">{{ typeof totalWpExpected === 'number' ? (totalWpExpected % 1 === 0 ? totalWpExpected.toLocaleString('id-ID') : totalWpExpected.toLocaleString('id-ID', { maximumFractionDigits: 1 })) : totalWpExpected }}</span>
           <span class="text-xs text-slate-500 ml-1.5">units</span>
         </div>
         <p class="text-[11px] text-slate-500">
@@ -677,7 +749,7 @@ onMounted(() => {
           <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Physical Count (Scanned)</span>
         </div>
         <div class="my-2 flex items-baseline gap-2">
-          <span class="text-3xl font-extrabold text-teal-700 font-mono">{{ totalScanned }}</span>
+          <span class="text-3xl font-extrabold text-teal-700 font-mono">{{ Number(totalScanned).toLocaleString('id-ID') }}</span>
           <span class="text-xs text-slate-500">units counted</span>
         </div>
         <p class="text-[11px] text-slate-500">
@@ -941,7 +1013,7 @@ onMounted(() => {
                 <div v-else class="flex items-center justify-center gap-1.5">
                   <button
                     @click="decrementAuditCount(item.barcode)"
-                    :disabled="item.scannedCount <= 0"
+                    :disabled="item.scannedCount <= 0 || isSessionLocked"
                     class="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 flex items-center justify-center transition-colors"
                     title="Undo 1 scan"
                   >
@@ -949,9 +1021,10 @@ onMounted(() => {
                   </button>
 
                   <span
-                    @click="startEdit(item)"
-                    class="w-12 text-center font-mono font-extrabold text-lg cursor-pointer hover:underline"
-                    :class="
+                    @click="!isSessionLocked && startEdit(item)"
+                    class="w-12 text-center font-mono font-extrabold text-lg"
+                    :class="[
+                      isSessionLocked ? 'cursor-not-allowed opacity-80' : 'cursor-pointer hover:underline',
                       item.status === 'matched'
                         ? 'text-emerald-600'
                         : item.status === 'missing' && item.scannedCount > 0
@@ -959,15 +1032,16 @@ onMounted(() => {
                         : item.status === 'surplus'
                         ? 'text-amber-600'
                         : 'text-slate-400'
-                    "
-                    title="Click to manually edit count"
+                    ]"
+                    :title="isSessionLocked ? 'Session is locked' : 'Click to manually edit count'"
                   >
                     {{ item.scannedCount }}
                   </span>
 
                   <button
                     @click="registerAuditScan(item.barcode)"
-                    class="w-6 h-6 rounded bg-teal-100 hover:bg-teal-200 text-teal-800 border border-teal-300 flex items-center justify-center transition-colors shadow-sm"
+                    :disabled="isSessionLocked"
+                    class="w-6 h-6 rounded bg-teal-100 hover:bg-teal-200 disabled:opacity-30 disabled:cursor-not-allowed text-teal-800 border border-teal-300 flex items-center justify-center transition-colors shadow-sm"
                     title="Scan/Count +1 bottle"
                   >
                     <Plus class="w-3 h-3" />
@@ -975,21 +1049,38 @@ onMounted(() => {
                 </div>
               </td>
 
-              <!-- Discrepancy Column -->
+              <!-- Discrepancy Column (Negative stock friendly) -->
               <td class="py-3.5 px-4 text-center font-mono text-xs">
                 <span
                   v-if="item.status === 'matched'"
                   class="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200"
                 >
                   <CheckCircle2 class="w-3.5 h-3.5" />
-                  0 (Match)
+                  <span v-if="item.wpExpectedQty < 0">0 (All {{ item.scannedCount }} Found)</span>
+                  <span v-else>0 (Match)</span>
                 </span>
                 <span
                   v-else-if="item.status === 'missing'"
                   class="inline-flex items-center gap-1 font-bold text-rose-700 bg-rose-50 px-2.5 py-0.5 rounded-full border border-rose-200"
                 >
                   <AlertTriangle class="w-3.5 h-3.5" />
-                  {{ item.discrepancy }} (Shortage)
+                  <span v-if="item.wpExpectedQty < 0 && item.scannedCount === 0">
+                    {{ item.discrepancy }} (Missing in Store)
+                  </span>
+                  <span v-else>
+                    {{ item.discrepancy }} (Shortage)
+                  </span>
+                </span>
+                <span
+                  v-else-if="item.status === 'counting'"
+                  class="inline-flex items-center gap-1 font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200"
+                >
+                  <span v-if="item.wpExpectedQty < 0">
+                    {{ item.discrepancy }} ({{ item.scannedCount }} Found, {{ Math.abs(item.discrepancy) }} Missing)
+                  </span>
+                  <span v-else>
+                    {{ item.discrepancy }} (Counting)
+                  </span>
                 </span>
                 <span
                   v-else-if="item.status === 'surplus'"
@@ -1015,6 +1106,8 @@ onMounted(() => {
                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                       : item.status === 'missing'
                       ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                      : item.status === 'counting'
+                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
                       : item.status === 'surplus'
                       ? 'bg-amber-50 text-amber-700 border border-amber-200'
                       : item.status === 'zero_stock'
@@ -1024,9 +1117,11 @@ onMounted(() => {
                 >
                   {{
                     item.status === 'matched'
-                      ? 'Matched'
+                      ? (item.wpExpectedQty < 0 ? 'All Found' : 'Matched')
                       : item.status === 'missing'
-                      ? 'Shortage'
+                      ? (item.wpExpectedQty < 0 ? 'Missing in Store' : 'Shortage')
+                      : item.status === 'counting'
+                      ? (item.wpExpectedQty < 0 ? 'Partially Found' : 'Counting')
                       : item.status === 'surplus'
                       ? 'Surplus'
                       : item.status === 'zero_stock'
@@ -1292,5 +1387,60 @@ onMounted(() => {
       @close="isUploadStockCsvModalOpen = false"
       @updated="handleStockCsvUpdated"
     />
+
+    <!-- Superadmin Unlock Confirmation Modal -->
+    <div
+      v-if="isUnlockModalOpen"
+      class="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150"
+    >
+      <div class="bg-white rounded-3xl p-6 border border-slate-200 shadow-2xl max-w-md w-full space-y-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800 shrink-0">
+            <Unlock class="w-5 h-5 text-amber-700" />
+          </div>
+          <div>
+            <h3 class="text-sm font-black text-slate-900">
+              Unlock Audit Session?
+            </h3>
+            <p class="text-xs text-slate-500">
+              Superadmin Authorization Required
+            </p>
+          </div>
+        </div>
+
+        <div class="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-950 space-y-1.5">
+          <p class="font-bold flex items-center gap-1.5 text-amber-900">
+            <ShieldCheck class="w-4 h-4 text-amber-700" />
+            <span>Store: {{ currentStore.name }}</span>
+          </p>
+          <p class="text-[11px] text-amber-900">
+            Unlocking this session will unfreeze physical counts and allow the store team and auditors to resume scanning and recounting items.
+          </p>
+        </div>
+
+        <div v-if="unlockError" class="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-bold">
+          {{ unlockError }}
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2">
+          <button
+            @click="isUnlockModalOpen = false"
+            type="button"
+            class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            @click="handleUnlockConfirm"
+            :disabled="isUnlocking"
+            type="button"
+            class="px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-amber-700/20 cursor-pointer disabled:opacity-50"
+          >
+            <Unlock class="w-3.5 h-3.5" />
+            <span>{{ isUnlocking ? 'Unlocking...' : 'Approve & Unlock' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
