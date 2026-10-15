@@ -62,12 +62,22 @@ async function initializeFromBackend() {
 
     if (loadedStores && loadedStores.length > 0) {
       stores.value = loadedStores;
+    } else {
+      try {
+        const localStores = JSON.parse(localStorage.getItem('birmas_stores') || '[]');
+        if (localStores.length > 0) stores.value = localStores;
+      } catch (_) {}
     }
     if (loadedConfig) {
       wpConfig.value = { ...wpConfig.value, ...loadedConfig };
     }
     if (loadedProducts && loadedProducts.length > 0) {
       wpProducts.value = loadedProducts;
+    } else {
+      try {
+        const localProds = JSON.parse(localStorage.getItem('birmas_products') || '[]');
+        if (localProds.length > 0) wpProducts.value = localProds;
+      } catch (_) {}
     }
     if (loadedHistory) {
       auditHistory.value = loadedHistory;
@@ -77,6 +87,10 @@ async function initializeFromBackend() {
     isInitialized.value = true;
   } catch (err) {
     console.warn('Backend init fallback:', err);
+    try {
+      const localProds = JSON.parse(localStorage.getItem('birmas_products') || '[]');
+      if (localProds.length > 0) wpProducts.value = localProds;
+    } catch (_) {}
   }
 }
 
@@ -493,6 +507,115 @@ export function useAuditStore() {
     return res;
   }
 
+  function applyStockCsvRows(rows = [], metadata = {}, filename = '') {
+    if (!rows || rows.length === 0) return { updatedCount: 0 };
+
+    const clean = (s) => (s || '').toString().toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+
+    // 1. Gather all store names and match or create stores
+    const updatedStores = [...stores.value];
+    const storeMap = new Map();
+
+    for (const s of updatedStores) {
+      if (s.name) storeMap.set(clean(s.name), s);
+      if (s.id) storeMap.set(clean(s.id), s);
+      if (s.esbBranchCode) storeMap.set(clean(s.esbBranchCode), s);
+    }
+
+    // 2. Discover stores from CSV rows
+    for (const r of rows) {
+      const sName = (r.storeName || '').trim();
+      if (!sName) continue;
+      const sKey = clean(sName);
+      if (!storeMap.has(sKey)) {
+        const newStoreId = 'store-' + (sKey || Date.now());
+        const newStore = {
+          id: newStoreId,
+          name: sName,
+          city: 'Jakarta',
+          esbBranchCode: sName,
+        };
+        updatedStores.push(newStore);
+        storeMap.set(sKey, newStore);
+      }
+    }
+    stores.value = updatedStores;
+
+    // 3. Update products and their stockByStore
+    const currentProducts = [...wpProducts.value];
+    let updatedCount = 0;
+
+    for (const r of rows) {
+      const sName = (r.storeName || '').trim();
+      const pName = (r.productName || '').trim();
+      if (!sName || !pName) continue;
+
+      const targetStore = storeMap.get(clean(sName)) || updatedStores.find(s => s.name.toLowerCase() === sName.toLowerCase());
+      const storeId = targetStore ? targetStore.id : selectedStoreId.value;
+
+      // Find matching product
+      let matchedProd = currentProducts.find((p) => {
+        if (p.productTitle && clean(p.productTitle) === clean(pName)) return true;
+        if (p.varian && clean(p.varian) === clean(pName)) return true;
+        if (p.barcode && r.barcode && clean(p.barcode) === clean(r.barcode)) return true;
+        return false;
+      });
+
+      if (!matchedProd) {
+        matchedProd = currentProducts.find((p) => {
+          const pt = clean(p.productTitle || '');
+          const pn = clean(pName);
+          return (pt.length > 4 && pn.length > 4 && (pt.includes(pn) || pn.includes(pt)));
+        });
+      }
+
+      const qty = typeof r.stockQty === 'number' ? r.stockQty : parseFloat(String(r.stockQty).replace(/[^0-9.-]/g, '')) || 0;
+
+      if (matchedProd) {
+        matchedProd.stockByStore = matchedProd.stockByStore || {};
+        matchedProd.stockByStore[storeId] = qty;
+        if (r.category && !matchedProd.category) matchedProd.category = r.category;
+        if (r.unit && !matchedProd.defaultUnit) matchedProd.defaultUnit = r.unit;
+        updatedCount++;
+      } else {
+        const newProd = {
+          id: 'stock-prod-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6),
+          barcode: r.barcode || ('STK' + Math.floor(1000000000 + Math.random() * 9000000000)),
+          productTitle: pName,
+          varian: pName,
+          brand: 'Birmas',
+          subCategory: 'Birmas',
+          category: r.category || 'Craft Beer',
+          defaultUnit: r.unit || 'Can',
+          stockByStore: { [storeId]: qty },
+        };
+        currentProducts.push(newProd);
+        updatedCount++;
+      }
+    }
+
+    wpProducts.value = currentProducts;
+
+    // Cache locally
+    try {
+      localStorage.setItem('birmas_products', JSON.stringify(wpProducts.value));
+      localStorage.setItem('birmas_stores', JSON.stringify(stores.value));
+      if (filename) {
+        const activeInfo = {
+          filename,
+          stock_date: metadata.stockDate || metadata.cell5B || new Date().toLocaleDateString('id-ID'),
+          downloaded_at_esb: metadata.downloadedAtEsb || metadata.cell4B || new Date().toLocaleString('id-ID'),
+          active_stores: metadata.activeStores || metadata.cell6B || '',
+          row_count: rows.length,
+          updated_at: new Date().toISOString(),
+        };
+        localStorage.setItem('birmas_active_stock_csv', JSON.stringify(activeInfo));
+      }
+    } catch (_) {}
+
+    return { updatedCount, totalProducts: wpProducts.value.length };
+  }
+
   return {
     stores: visibleStores,
     rawStores: stores,
@@ -537,6 +660,7 @@ export function useAuditStore() {
     clearHistory,
     createStore,
     removeStore,
+    applyStockCsvRows,
     refreshAuditState: () => loadStoreScans(selectedStoreId.value),
     refreshProducts: async () => {
       try {
