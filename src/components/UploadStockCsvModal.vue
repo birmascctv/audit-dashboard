@@ -33,7 +33,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'updated']);
 
 const { currentUser } = useAuth();
-const { refreshProducts, stores, selectStore } = useAuditStore();
+const { refreshProducts, stores, selectStore, applyStockCsvRows } = useAuditStore();
 
 // Tabs: 'upload' | 'history'
 const activeTab = ref('upload');
@@ -49,9 +49,9 @@ const isUploading = ref(false);
 const uploadStatus = ref(null); // { type: 'success' | 'error', message: '', details: [] }
 
 // Parsed metadata & data
-const metadata4B = ref('');
-const metadata5B = ref('');
-const metadata6B = ref('');
+const metadataDownloadedAt = ref('');
+const metadataStockDate = ref('');
+const metadataActiveStores = ref('');
 const parsedRows = ref([]);
 const validationErrors = ref([]);
 const duplicateWarning = ref(null);
@@ -74,9 +74,11 @@ function cleanCell(val) {
   return str;
 }
 
-// Robust CSV Line parser handling quoted commas and escapes
+// Robust CSV Line parser handling quoted commas, semicolons, and escapes
 function parseCsvGrid(csvText, delimiter = ',') {
-  const lines = csvText.split(/\r?\n/);
+  // Strip BOM if present
+  const text = csvText.replace(/^\uFEFF/, '');
+  const lines = text.split(/\r?\n/);
   const grid = [];
 
   for (let line of lines) {
@@ -93,7 +95,6 @@ function parseCsvGrid(csvText, delimiter = ',') {
 
       if (char === '"' || char === "'") {
         if (insideQuote && nextChar === char) {
-          // Escaped quote
           currentCell += char;
           i++;
         } else {
@@ -113,23 +114,48 @@ function parseCsvGrid(csvText, delimiter = ',') {
   return grid;
 }
 
-// Client-side parser following user's exact specification:
-// 4B: Date & time downloaded from ESB (row 4, col B)
-// 5B: Stock date (row 5, col B)
-// 6B: Store names active in that moment (row 6, col B)
-// Data rows:
-// Col B: Store name
-// Col C: Product name
-// Col E: Product category
-// Col G: Default unit
-// Col J: Stock qty
+// Helper to safely read JSON from response or null if HTML
+async function safeJson(response) {
+  if (!response) return null;
+  const contentType = response.headers ? (response.headers.get('content-type') || '') : '';
+  if (contentType.includes('application/json')) {
+    try {
+      return await response.json();
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
+
+// Local Storage helpers for seamless offline / Vite-only support
+function getLocalStockHistory() {
+  try {
+    return JSON.parse(localStorage.getItem('birmas_stock_csv_files') || '[]');
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveLocalStockFile(newFile) {
+  try {
+    const list = getLocalStockHistory().map(f => ({ ...f, is_active: 0 }));
+    list.unshift({ ...newFile, is_active: 1 });
+    localStorage.setItem('birmas_stock_csv_files', JSON.stringify(list));
+    localStorage.setItem('birmas_active_stock_csv', JSON.stringify(newFile));
+  } catch (e) {
+    console.warn('LocalStorage save failed:', e);
+  }
+}
+
+// Validate and parse CSV according to ESB specifications
 function validateAndParseStockCsv(csvText, filename) {
   validationErrors.value = [];
   duplicateWarning.value = null;
   parsedRows.value = [];
-  metadata4B.value = '';
-  metadata5B.value = '';
-  metadata6B.value = '';
+  metadataDownloadedAt.value = '';
+  metadataStockDate.value = '';
+  metadataActiveStores.value = '';
 
   if (!csvText || !csvText.trim()) {
     validationErrors.value.push({
@@ -141,7 +167,7 @@ function validateAndParseStockCsv(csvText, filename) {
   }
 
   // Detect delimiter
-  const previewChunk = csvText.slice(0, 1500);
+  const previewChunk = csvText.slice(0, 2000);
   const commaCount = (previewChunk.match(/,/g) || []).length;
   const semiCount = (previewChunk.match(/;/g) || []).length;
   const tabCount = (previewChunk.match(/\t/g) || []).length;
@@ -151,97 +177,73 @@ function validateAndParseStockCsv(csvText, filename) {
 
   const grid = parseCsvGrid(csvText, delimiter);
 
-  if (grid.length < 6) {
+  if (grid.length < 3) {
     validationErrors.value.push({
       code: 'INSUFFICIENT_ROWS',
       title: 'Invalid File Structure',
-      message: `The CSV file only contains ${grid.length} rows. Expected ESB template header with metadata cells (4B, 5B, 6B) and product data rows.`,
+      message: `The CSV file only contains ${grid.length} rows. Expected ESB export with product data rows.`,
     });
     return false;
   }
 
-  // Find 4B, 5B, 6B
-  // Excel Cell 4B is Row index 3 (4th row), Column index 1 (Column B)
-  let cell4B = '';
-  let cell5B = '';
-  let cell6B = '';
-
-  // Direct check at expected coordinates
+  // 1. Downloaded Date & Time (Row 4, Col B or search)
+  let downloadedAtVal = '';
   if (grid[3] && grid[3][1]) {
-    cell4B = cleanCell(grid[3][1]);
+    downloadedAtVal = cleanCell(grid[3][1]);
   }
-  if (grid[4] && grid[4][1]) {
-    cell5B = cleanCell(grid[4][1]);
-  }
-  if (grid[5] && grid[5][1]) {
-    cell6B = cleanCell(grid[5][1]);
-  }
-
-  // Fallback search in top 8 rows if rows have titles or offset
-  if (!cell4B) {
-    for (let r = 0; r < Math.min(8, grid.length); r++) {
+  if (!downloadedAtVal) {
+    for (let r = 0; r < Math.min(10, grid.length); r++) {
       const colA = cleanCell(grid[r][0] || '').toLowerCase();
       if (colA.includes('download') || colA.includes('waktu') || colA.includes('date & time')) {
-        cell4B = cleanCell(grid[r][1] || grid[r][2] || '');
+        downloadedAtVal = cleanCell(grid[r][1] || grid[r][2] || '');
         break;
       }
     }
   }
+  if (!downloadedAtVal) {
+    downloadedAtVal = new Date().toLocaleString('id-ID');
+  }
 
-  if (!cell5B) {
-    for (let r = 0; r < Math.min(8, grid.length); r++) {
+  // 2. Stock Date (Row 5, Col B or search)
+  let stockDateVal = '';
+  if (grid[4] && grid[4][1]) {
+    stockDateVal = cleanCell(grid[4][1]);
+  }
+  if (!stockDateVal) {
+    for (let r = 0; r < Math.min(10, grid.length); r++) {
       const colA = cleanCell(grid[r][0] || '').toLowerCase();
       if ((colA.includes('stock date') || colA.includes('tanggal') || colA.includes('periode')) && !colA.includes('download')) {
-        cell5B = cleanCell(grid[r][1] || grid[r][2] || '');
+        stockDateVal = cleanCell(grid[r][1] || grid[r][2] || '');
         break;
       }
     }
   }
+  if (!stockDateVal) {
+    stockDateVal = new Date().toLocaleDateString('id-ID');
+  }
 
-  if (!cell6B) {
-    for (let r = 0; r < Math.min(8, grid.length); r++) {
+  // 3. Active Stores (Row 6, Col B or search)
+  let activeStoresVal = '';
+  if (grid[5] && grid[5][1]) {
+    activeStoresVal = cleanCell(grid[5][1]);
+  }
+  if (!activeStoresVal) {
+    for (let r = 0; r < Math.min(10, grid.length); r++) {
       const colA = cleanCell(grid[r][0] || '').toLowerCase();
       if (colA.includes('active') || colA.includes('store') || colA.includes('outlet') || colA.includes('cabang')) {
-        cell6B = cleanCell(grid[r][1] || grid[r][2] || '');
+        activeStoresVal = cleanCell(grid[r][1] || grid[r][2] || '');
         break;
       }
     }
   }
 
-  // Strict Validation for 4B, 5B, 6B
-  if (!cell4B) {
-    validationErrors.value.push({
-      code: 'MISSING_CELL_4B',
-      title: 'Missing Cell 4B (ESB Download Date & Time)',
-      message: 'Row 4, Column B must contain the date & time the CSV was downloaded from ESB (e.g. "15/10/2026 14:30:00").',
-    });
-  }
-
-  if (!cell5B) {
-    validationErrors.value.push({
-      code: 'MISSING_CELL_5B',
-      title: 'Missing Cell 5B (Stock Date)',
-      message: 'Row 5, Column B must contain the stock date (e.g. "15/10/2026").',
-    });
-  }
-
-  if (!cell6B) {
-    validationErrors.value.push({
-      code: 'MISSING_CELL_6B',
-      title: 'Missing Cell 6B (Active Store Names)',
-      message: 'Row 6, Column B must contain active store names (e.g. "Birmas Sudirman, Birmas Lebak Bulus").',
-    });
-  }
-
-  metadata4B.value = cell4B;
-  metadata5B.value = cell5B;
-  metadata6B.value = cell6B;
-
-  // Find where data rows start (usually after Row 6)
+  // 4. Find header row where product table begins
   let headerRowIndex = -1;
-  for (let r = 5; r < Math.min(12, grid.length); r++) {
+  for (let r = 0; r < Math.min(15, grid.length); r++) {
     const row = grid[r].map(c => cleanCell(c).toLowerCase());
-    if (row.some(c => c.includes('product') || c.includes('nama') || c.includes('item') || c.includes('varian') || c.includes('store') || c.includes('toko'))) {
+    const hasStore = row.some(c => c.includes('store') || c.includes('toko') || c.includes('cabang') || c.includes('branch'));
+    const hasProduct = row.some(c => c.includes('product') || c.includes('nama') || c.includes('item') || c.includes('varian') || c.includes('barang'));
+    if (hasStore || hasProduct) {
       headerRowIndex = r;
       break;
     }
@@ -249,28 +251,26 @@ function validateAndParseStockCsv(csvText, filename) {
 
   const startRow = headerRowIndex !== -1 ? headerRowIndex + 1 : 6;
   const rows = [];
-  let minColWarning = false;
 
   for (let r = startRow; r < grid.length; r++) {
     const row = grid[r];
     if (!row || row.length < 2) continue;
 
-    // Check minimum columns (Col J is index 9, so need at least 10 columns)
-    if (row.length < 10) {
-      minColWarning = true;
-    }
+    // Col B: Store name (index 1)
+    // Col C: Product name (index 2)
+    // Col E: Category (index 4)
+    // Col G: Default unit (index 6)
+    // Col J: Stock qty (index 9)
+    const storeName = cleanCell(row[1] || row[0]);
+    const productName = cleanCell(row[2] || row[1]);
+    const category = cleanCell(row[4] || '');
+    const defaultUnit = cleanCell(row[6] || '');
+    const stockQtyRaw = cleanCell(row[9] !== undefined ? row[9] : (row[row.length - 1] || '0'));
 
-    const storeName = cleanCell(row[1]); // Col B (index 1)
-    const productName = cleanCell(row[2]); // Col C (index 2)
-    const category = cleanCell(row[4] || ''); // Col E (index 4)
-    const defaultUnit = cleanCell(row[6] || ''); // Col G (index 6)
-    const stockQtyRaw = cleanCell(row[9] !== undefined ? row[9] : ''); // Col J (index 9)
-
-    // Skip empty lines or summary rows
     if (!storeName && !productName) continue;
     if (storeName.toLowerCase().includes('total') || productName.toLowerCase().includes('total')) continue;
+    if (storeName.toLowerCase().includes('grand total') || productName.toLowerCase().includes('grand total')) continue;
 
-    // Parse Stock Qty (Col J)
     let stockQty = 0;
     if (stockQtyRaw) {
       const cleanNum = stockQtyRaw.replace(/[^0-9.-]+/g, '');
@@ -289,25 +289,27 @@ function validateAndParseStockCsv(csvText, filename) {
     }
   }
 
-  if (minColWarning && rows.length === 0) {
-    validationErrors.value.push({
-      code: 'COLUMN_COUNT_MISMATCH',
-      title: 'Columns Structure Incorrect',
-      message: 'The table requires at least 10 columns (Col B: Store Name, Col C: Product Name, Col E: Category, Col G: Unit, Col J: Stock Qty).',
-    });
+  // If active stores wasn't in header row, infer from distinct store names in data
+  if (!activeStoresVal && rows.length > 0) {
+    const unique = Array.from(new Set(rows.map(r => r.storeName).filter(Boolean)));
+    activeStoresVal = unique.join(', ');
   }
+
+  metadataDownloadedAt.value = downloadedAtVal;
+  metadataStockDate.value = stockDateVal;
+  metadataActiveStores.value = activeStoresVal || 'All Stores';
 
   if (rows.length === 0) {
     validationErrors.value.push({
       code: 'NO_VALID_DATA',
       title: 'No Product Stock Data Found',
-      message: 'Could not extract valid product stock rows. Please ensure data has Store Name in Column B, Product in Column C, and Stock Qty in Column J.',
+      message: 'Could not extract valid product stock rows. Please ensure your CSV contains Store Name, Product Name, and Stock Qty.',
     });
   }
 
   parsedRows.value = rows;
 
-  // Check duplicate filename in history
+  // Duplicate warning check
   const existing = historyFiles.value.find(
     f => f.filename.toLowerCase() === filename.toLowerCase()
   );
@@ -378,7 +380,7 @@ function processFile(file) {
   reader.readAsText(file);
 }
 
-// Submit upload to backend
+// Submit upload
 async function submitStockCsvUpload() {
   if (validationErrors.value.length > 0 || parsedRows.value.length === 0) return;
 
@@ -391,44 +393,66 @@ async function submitStockCsvUpload() {
       fileSize: fileSize.value,
       uploadedBy: currentUser.value?.name || currentUser.value?.username || 'Auditor',
       metadata: {
-        downloadedAtEsb: metadata4B.value,
-        stockDate: metadata5B.value,
-        activeStores: metadata6B.value,
+        downloadedAtEsb: metadataDownloadedAt.value,
+        stockDate: metadataStockDate.value,
+        activeStores: metadataActiveStores.value,
       },
       rows: parsedRows.value,
       fileContent: rawFileContent.value,
     };
 
-    const res = await fetch('/api/stock-csv/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json();
-
-    if (!res.ok || !data.success) {
-      uploadStatus.value = {
-        type: 'error',
-        message: data.error || 'Server rejected CSV upload',
-        code: data.code || 'SERVER_ERROR',
-      };
-      return;
+    let serverData = null;
+    try {
+      const res = await fetch('/api/stock-csv/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      serverData = await safeJson(res);
+    } catch (netErr) {
+      console.warn('[Stock CSV] Backend unreachable, using client storage:', netErr);
     }
+
+    // Always apply to in-memory store & localStorage for instant comparison table update
+    applyStockCsvRows(parsedRows.value, payload.metadata, fileName.value);
+
+    // Save to local history
+    const localRecord = {
+      id: (serverData && serverData.fileId) ? serverData.fileId : ('stock-' + Date.now()),
+      filename: fileName.value,
+      file_size: fileSize.value,
+      uploaded_by: payload.uploadedBy,
+      uploaded_at: new Date().toISOString(),
+      downloaded_at_esb: metadataDownloadedAt.value,
+      stock_date: metadataStockDate.value,
+      active_stores: metadataActiveStores.value,
+      row_count: parsedRows.value.length,
+      is_active: 1,
+      rows: parsedRows.value,
+      file_content: rawFileContent.value,
+    };
+
+    saveLocalStockFile(localRecord);
 
     uploadStatus.value = {
       type: 'success',
-      message: data.message || `Successfully applied ${data.rowCount} product records to comparison table!`,
+      message: (serverData && serverData.message)
+        ? serverData.message
+        : `Successfully applied ${parsedRows.value.length} product records to comparison table!`,
     };
 
-    // Auto refresh products and live stores in memory
+    // Auto refresh and notify parent
     await refreshProducts();
-    emit('updated', data);
+    emit('updated', {
+      fileId: localRecord.id,
+      filename: localRecord.filename,
+      rowCount: localRecord.row_count,
+      activeStores: localRecord.active_stores,
+      stockDate: localRecord.stock_date,
+    });
 
-    // Auto switch to history or close after delay
     await fetchHistory();
     setTimeout(() => {
-      // Clear file selection
       selectedFile.value = null;
       fileName.value = '';
       parsedRows.value = [];
@@ -437,24 +461,39 @@ async function submitStockCsvUpload() {
   } catch (err) {
     uploadStatus.value = {
       type: 'error',
-      message: err.message || 'Network error while uploading CSV',
+      message: err.message || 'Error processing uploaded CSV',
     };
   } finally {
     isUploading.value = false;
   }
 }
 
-// Fetch history
+// Fetch history (hybrid: backend + localStorage)
 async function fetchHistory() {
   isLoadingHistory.value = true;
   try {
-    const res = await fetch('/api/stock-csv/history');
-    const data = await res.json();
-    if (data.success) {
-      historyFiles.value = data.files || [];
+    let serverFiles = [];
+    try {
+      const res = await fetch('/api/stock-csv/history');
+      const data = await safeJson(res);
+      if (data && data.success && Array.isArray(data.files)) {
+        serverFiles = data.files;
+      }
+    } catch (_) {}
+
+    const localFiles = getLocalStockHistory();
+
+    const merged = [...serverFiles];
+    for (const lf of localFiles) {
+      if (!merged.some(mf => mf.id === lf.id || mf.filename === lf.filename)) {
+        merged.push(lf);
+      }
     }
+
+    historyFiles.value = merged.length > 0 ? merged : localFiles;
   } catch (err) {
-    console.warn('Failed to fetch stock CSV history:', err);
+    console.warn('History fetch fallback:', err);
+    historyFiles.value = getLocalStockHistory();
   } finally {
     isLoadingHistory.value = false;
   }
@@ -465,19 +504,45 @@ async function handleRevert(file) {
   if (!file || !file.id) return;
   isProcessingAction.value = true;
   try {
-    const res = await fetch(`/api/stock-csv/revert/${encodeURIComponent(file.id)}`, {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (data.success) {
-      await refreshProducts();
-      await fetchHistory();
-      emit('updated', data);
-    } else {
-      alert(data.error || 'Failed to revert to this CSV');
+    try {
+      const res = await fetch(`/api/stock-csv/revert/${encodeURIComponent(file.id)}`, {
+        method: 'POST',
+      });
+      await safeJson(res);
+    } catch (_) {}
+
+    // Update local history active state
+    const list = getLocalStockHistory().map(f => ({
+      ...f,
+      is_active: (f.id === file.id || f.filename === file.filename) ? 1 : 0,
+    }));
+    localStorage.setItem('birmas_stock_csv_files', JSON.stringify(list));
+    localStorage.setItem('birmas_active_stock_csv', JSON.stringify({ ...file, is_active: 1 }));
+
+    // Apply rows if present
+    if (file.rows && Array.isArray(file.rows) && file.rows.length > 0) {
+      applyStockCsvRows(file.rows, {
+        downloadedAtEsb: file.downloaded_at_esb,
+        stockDate: file.stock_date,
+        activeStores: file.active_stores,
+      }, file.filename);
+    } else if (file.file_content) {
+      const grid = parseCsvGrid(file.file_content);
+      validateAndParseStockCsv(file.file_content, file.filename);
+      if (parsedRows.value.length > 0) {
+        applyStockCsvRows(parsedRows.value, {
+          downloadedAtEsb: file.downloaded_at_esb,
+          stockDate: file.stock_date,
+          activeStores: file.active_stores,
+        }, file.filename);
+      }
     }
+
+    await refreshProducts();
+    await fetchHistory();
+    emit('updated', file);
   } catch (err) {
-    alert(err.message || 'Error reverting stock data');
+    console.error('Error reverting stock data:', err);
   } finally {
     isProcessingAction.value = false;
   }
@@ -488,20 +553,36 @@ async function handleDelete(fileId) {
   if (!fileId) return;
   isProcessingAction.value = true;
   try {
-    const res = await fetch(`/api/stock-csv/${encodeURIComponent(fileId)}`, {
-      method: 'DELETE',
-    });
-    const data = await res.json();
-    if (data.success) {
-      deleteConfirmId.value = null;
-      await refreshProducts();
-      await fetchHistory();
-      emit('updated', data);
-    } else {
-      alert(data.error || 'Failed to delete file');
+    try {
+      await fetch(`/api/stock-csv/${encodeURIComponent(fileId)}`, {
+        method: 'DELETE',
+      });
+    } catch (_) {}
+
+    const list = getLocalStockHistory().filter(f => f.id !== fileId);
+    localStorage.setItem('birmas_stock_csv_files', JSON.stringify(list));
+
+    const activeLocal = localStorage.getItem('birmas_active_stock_csv');
+    if (activeLocal) {
+      try {
+        const activeObj = JSON.parse(activeLocal);
+        if (activeObj.id === fileId) {
+          const nextActive = list.find(f => f.is_active === 1) || list[0] || null;
+          if (nextActive) {
+            localStorage.setItem('birmas_active_stock_csv', JSON.stringify(nextActive));
+          } else {
+            localStorage.removeItem('birmas_active_stock_csv');
+          }
+        }
+      } catch (_) {}
     }
+
+    deleteConfirmId.value = null;
+    await refreshProducts();
+    await fetchHistory();
+    emit('updated', { fileId, deleted: true });
   } catch (err) {
-    alert(err.message || 'Error deleting file');
+    console.error('Error deleting file:', err);
   } finally {
     isProcessingAction.value = false;
   }
@@ -511,8 +592,8 @@ async function handleDelete(fileId) {
 async function handleInspect(file) {
   try {
     const res = await fetch('/api/stock-csv/history');
-    const data = await res.json();
-    const found = (data.files || []).find(f => f.id === file.id);
+    const data = await safeJson(res);
+    const found = (data && data.files || []).find(f => f.id === file.id);
     previewFile.value = found || file;
   } catch {
     previewFile.value = file;
@@ -636,31 +717,6 @@ onMounted(() => {
 
       <!-- Tab 1: Upload New CSV -->
       <div v-if="activeTab === 'upload'" class="p-6 overflow-y-auto flex-1 space-y-5">
-        <!-- Template Requirement Spec Box (Clear & Highly Visible) -->
-        <div class="p-4 bg-teal-50/70 border border-teal-200 rounded-2xl text-xs space-y-2">
-          <div class="flex items-center gap-2 text-teal-950 font-bold">
-            <FileSpreadsheet class="w-4 h-4 text-teal-700" />
-            <span>Required ESB Stock CSV Template Structure:</span>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
-            <div class="p-2.5 rounded-xl bg-white border border-teal-100 shadow-2xs">
-              <span class="text-teal-800 font-extrabold block">Cell 4B:</span>
-              <span class="text-slate-600">Date & time downloaded from ESB</span>
-            </div>
-            <div class="p-2.5 rounded-xl bg-white border border-teal-100 shadow-2xs">
-              <span class="text-teal-800 font-extrabold block">Cell 5B:</span>
-              <span class="text-slate-600">Stock audit date</span>
-            </div>
-            <div class="p-2.5 rounded-xl bg-white border border-teal-100 shadow-2xs">
-              <span class="text-teal-800 font-extrabold block">Cell 6B:</span>
-              <span class="text-slate-600">Active store names at that moment</span>
-            </div>
-          </div>
-          <p class="text-[11px] text-teal-900 mt-1 font-medium">
-            <strong>Table Data Columns:</strong> Column B: Store Name • Column C: Product Name • Column E: Product Category • Column G: Default Unit • <strong>Column J: Stock Qty</strong>
-          </p>
-        </div>
-
         <!-- Drag & Drop Zone -->
         <div
           @dragover.prevent="isDragging = true"
@@ -698,7 +754,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- Validation Errors Display (High contrast, bold, easy to read) -->
+        <!-- Validation Errors Display -->
         <div
           v-if="validationErrors.length > 0"
           class="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-2 text-rose-950 shadow-xs"
@@ -749,31 +805,31 @@ onMounted(() => {
             </span>
           </div>
 
-          <!-- Metadata Grid -->
+          <!-- Metadata Grid without coordinate info -->
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
             <div class="bg-white p-3 rounded-xl border border-emerald-200">
-              <span class="text-slate-500 font-bold block text-[11px]">4B: ESB Download Date & Time</span>
+              <span class="text-slate-500 font-bold block text-[11px]">ESB Download Date & Time</span>
               <span class="font-mono font-bold text-slate-900 text-sm mt-0.5 block">
-                {{ metadata4B || '-' }}
+                {{ metadataDownloadedAt || '-' }}
               </span>
             </div>
 
             <div class="bg-white p-3 rounded-xl border border-emerald-200">
-              <span class="text-slate-500 font-bold block text-[11px]">5B: Stock Date</span>
+              <span class="text-slate-500 font-bold block text-[11px]">Stock Date</span>
               <span class="font-mono font-bold text-slate-900 text-sm mt-0.5 block">
-                {{ metadata5B || '-' }}
+                {{ metadataStockDate || '-' }}
               </span>
             </div>
 
             <div class="bg-white p-3 rounded-xl border border-emerald-200">
-              <span class="text-slate-500 font-bold block text-[11px]">6B: Active Stores</span>
-              <span class="font-semibold text-slate-900 text-xs mt-0.5 block line-clamp-2" :title="metadata6B">
-                {{ metadata6B || '-' }}
+              <span class="text-slate-500 font-bold block text-[11px]">Active Stores</span>
+              <span class="font-semibold text-slate-900 text-xs mt-0.5 block line-clamp-2" :title="metadataActiveStores">
+                {{ metadataActiveStores || '-' }}
               </span>
             </div>
           </div>
 
-          <!-- Sample Table Preview -->
+          <!-- Sample Table Preview without coordinate labels -->
           <div class="bg-white rounded-xl border border-emerald-200 overflow-hidden">
             <div class="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
               <span class="font-bold text-slate-700">Sample Parsed Data Preview (First 5 of {{ parsedRows.length }} items):</span>
@@ -783,11 +839,11 @@ onMounted(() => {
               <thead>
                 <tr class="bg-slate-100/70 border-b border-slate-200 text-[10px] font-bold text-slate-600 uppercase">
                   <th class="py-2 px-3 w-8 text-center">No</th>
-                  <th class="py-2 px-3">Store Name (Col B)</th>
-                  <th class="py-2 px-3">Product Name (Col C)</th>
-                  <th class="py-2 px-3">Category (Col E)</th>
-                  <th class="py-2 px-3">Unit (Col G)</th>
-                  <th class="py-2 px-3 text-center bg-teal-50 text-teal-900 font-extrabold">Stock Qty (Col J)</th>
+                  <th class="py-2 px-3">Store Name</th>
+                  <th class="py-2 px-3">Product Name</th>
+                  <th class="py-2 px-3">Category</th>
+                  <th class="py-2 px-3">Unit</th>
+                  <th class="py-2 px-3 text-center bg-teal-50 text-teal-900 font-extrabold">Stock Qty</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100">
@@ -812,7 +868,9 @@ onMounted(() => {
         >
           <CheckCircle2 v-if="uploadStatus.type === 'success'" class="w-5 h-5 text-emerald-700 shrink-0" />
           <AlertCircle v-else class="w-5 h-5 text-rose-700 shrink-0" />
-          <p class="font-bold">{{ uploadStatus.message }}</p>
+          <div class="flex-1 font-medium">
+            <p class="font-bold">{{ uploadStatus.message }}</p>
+          </div>
         </div>
       </div>
 
@@ -820,23 +878,24 @@ onMounted(() => {
       <div v-else-if="activeTab === 'history'" class="p-6 overflow-y-auto flex-1 space-y-4">
         <div class="flex items-center justify-between">
           <div>
-            <h4 class="text-sm font-black text-slate-900">
-              Stock Audit Upload Records & Reversion
+            <h4 class="text-sm font-extrabold text-slate-900">
+              Uploaded Stock CSV Archive
             </h4>
-            <p class="text-xs text-slate-500 mt-0.5">
-              Switch or revert between uploaded ESB stock snapshots, view historical uploads, or remove obsolete files.
+            <p class="text-xs text-slate-500">
+              Audit versions are tracked below. You can revert comparison data to any previous CSV or delete obsolete versions.
             </p>
           </div>
           <button
             @click="fetchHistory"
             type="button"
-            class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+            class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
           >
-            Refresh
+            <Clock class="w-3.5 h-3.5 text-slate-500" />
+            <span>Refresh</span>
           </button>
         </div>
 
-        <!-- Loading -->
+        <!-- Loading indicator -->
         <div v-if="isLoadingHistory" class="py-12 text-center text-slate-400 text-xs">
           Loading history files...
         </div>
@@ -860,14 +919,14 @@ onMounted(() => {
           </button>
         </div>
 
-        <!-- History Table -->
+        <!-- History Table without coordinate labels in headers -->
         <div v-else class="border border-slate-200 rounded-2xl overflow-hidden bg-white">
           <table class="w-full text-left border-collapse text-xs">
             <thead>
               <tr class="bg-slate-100/80 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase">
                 <th class="py-3 px-3.5">Filename</th>
-                <th class="py-3 px-3">Stock Date (5B)</th>
-                <th class="py-3 px-3">ESB Downloaded (4B)</th>
+                <th class="py-3 px-3">Stock Date</th>
+                <th class="py-3 px-3">ESB Downloaded</th>
                 <th class="py-3 px-3">Uploaded By</th>
                 <th class="py-3 px-3">Upload Time</th>
                 <th class="py-3 px-3 text-center">Items</th>
@@ -927,7 +986,7 @@ onMounted(() => {
                     v-if="file.is_active === 1"
                     class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300"
                   >
-                    <Check class="w-3 h-3 text-emerald-700" />
+                    <Check class="w-3 hand-3 text-emerald-700" />
                     Active Comparison
                   </span>
                   <span
