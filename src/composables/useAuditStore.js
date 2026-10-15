@@ -94,6 +94,86 @@ async function initializeFromBackend() {
   }
 }
 
+const isSessionLocked = ref(false);
+const sessionLockInfo = ref(null);
+
+async function loadSessionLockState(storeId) {
+  if (!storeId) return;
+  try {
+    const res = await fetch(`/api/audit/session/${encodeURIComponent(storeId)}/lock`);
+    const data = await res.json();
+    if (data.success) {
+      isSessionLocked.value = Boolean(data.isLocked);
+      sessionLockInfo.value = {
+        lockedAt: data.lockedAt,
+        lockedBy: data.lockedBy,
+        unlockedAt: data.unlockedAt,
+        unlockedBy: data.unlockedBy,
+      };
+      return;
+    }
+  } catch (_) {}
+
+  try {
+    const local = JSON.parse(localStorage.getItem(`birmas_session_lock_${storeId}`) || 'null');
+    if (local) {
+      isSessionLocked.value = Boolean(local.isLocked);
+      sessionLockInfo.value = local;
+    } else {
+      isSessionLocked.value = false;
+      sessionLockInfo.value = null;
+    }
+  } catch (_) {
+    isSessionLocked.value = false;
+  }
+}
+
+async function lockCurrentSession(user = 'Auditor') {
+  const storeId = selectedStoreId.value;
+  try {
+    await fetch(`/api/audit/session/${encodeURIComponent(storeId)}/lock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user }),
+    });
+  } catch (_) {}
+
+  isSessionLocked.value = true;
+  sessionLockInfo.value = {
+    isLocked: true,
+    lockedAt: new Date().toISOString(),
+    lockedBy: user,
+  };
+  try {
+    localStorage.setItem(`birmas_session_lock_${storeId}`, JSON.stringify(sessionLockInfo.value));
+  } catch (_) {}
+}
+
+async function unlockCurrentSession(user = 'Super Admin', role = 'superadmin') {
+  const storeId = selectedStoreId.value;
+  if (role !== 'superadmin') {
+    throw new Error('Only Superadmin can approve unlocking this audit session.');
+  }
+
+  try {
+    await fetch(`/api/audit/session/${encodeURIComponent(storeId)}/unlock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user, role }),
+    });
+  } catch (_) {}
+
+  isSessionLocked.value = false;
+  sessionLockInfo.value = {
+    isLocked: false,
+    unlockedAt: new Date().toISOString(),
+    unlockedBy: user,
+  };
+  try {
+    localStorage.setItem(`birmas_session_lock_${storeId}`, JSON.stringify(sessionLockInfo.value));
+  } catch (_) {}
+}
+
 async function loadStoreScans(storeId) {
   try {
     const res = await fetchAuditState(storeId);
@@ -102,6 +182,7 @@ async function loadStoreScans(storeId) {
   } catch (err) {
     console.warn('Failed to load store scans:', err);
   }
+  await loadSessionLockState(storeId);
 }
 
 export function useAuditStore() {
@@ -266,6 +347,9 @@ export function useAuditStore() {
 
   // Register physical scan
   async function registerAuditScan(barcode, auditorName = 'Auditor') {
+    if (isSessionLocked.value) {
+      return { success: false, message: 'Audit session is locked. Unlocking requires Superadmin approval.' };
+    }
     const clean = (barcode || '').trim();
 
     const res = await sendAuditScan(clean, selectedStoreId.value, auditorName);
@@ -304,6 +388,7 @@ export function useAuditStore() {
   }
 
   async function decrementAuditCount(barcode) {
+    if (isSessionLocked.value) return;
     const clean = (barcode || '').trim();
     const cur = scannedCounts.value[clean] ?? 0;
     if (cur > 0) {
@@ -313,6 +398,7 @@ export function useAuditStore() {
   }
 
   async function setAuditCount(barcode, count) {
+    if (isSessionLocked.value) return;
     const clean = (barcode || '').trim();
     const safeCount = Math.max(0, count);
     scannedCounts.value[clean] = safeCount;
@@ -495,6 +581,7 @@ export function useAuditStore() {
 
     if (res.success) {
       auditHistory.value.unshift(completedRecord);
+      await lockCurrentSession(auditorName);
       scannedCounts.value = {};
       scanLogs.value = [];
 
@@ -684,6 +771,11 @@ export function useAuditStore() {
     createStore,
     removeStore,
     applyStockCsvRows,
+    isSessionLocked,
+    sessionLockInfo,
+    loadSessionLockState,
+    lockCurrentSession,
+    unlockCurrentSession,
     refreshAuditState: () => loadStoreScans(selectedStoreId.value),
     refreshProducts: async () => {
       try {
