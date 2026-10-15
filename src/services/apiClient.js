@@ -1,10 +1,26 @@
 const API_BASE = '/api';
 
+export async function safeFetchJson(url, options = {}) {
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      console.warn(`[API] Endpoint ${url} returned non-JSON (${contentType}). Backend may be offline.`);
+      return { ok: false, status: res.status, data: null, error: 'Non-JSON response' };
+    }
+    const data = await res.json();
+    return { ok: res.ok, status: res.status, data, error: res.ok ? null : (data.error || data.message || 'Request failed') };
+  } catch (err) {
+    console.warn(`[API] Network error fetching ${url}:`, err);
+    return { ok: false, status: 0, data: null, error: err.message };
+  }
+}
+
 export async function fetchStores() {
   try {
-    const res = await fetch(`${API_BASE}/stores`);
-    if (!res.ok) throw new Error('Failed to fetch stores');
-    return await res.json();
+    const { ok, data } = await safeFetchJson(`${API_BASE}/stores`);
+    if (ok && Array.isArray(data) && data.length > 0) return data;
+    throw new Error('Fallback needed');
   } catch (err) {
     console.warn('Fallback to local stores:', err);
     return [
@@ -38,9 +54,9 @@ export async function apiDeleteStore(storeId) {
 
 export async function fetchProducts() {
   try {
-    const res = await fetch(`${API_BASE}/products`);
-    if (!res.ok) throw new Error('Failed to fetch products');
-    return await res.json();
+    const { ok, data } = await safeFetchJson(`${API_BASE}/products`);
+    if (ok && Array.isArray(data)) return data;
+    throw new Error('Fallback to local');
   } catch (err) {
     console.warn('Fallback to cached products:', err);
     return [];
@@ -48,35 +64,33 @@ export async function fetchProducts() {
 }
 
 export async function apiMatchBarcode(payload) {
-  const res = await fetch(`${API_BASE}/products/match-barcode`, {
+  const { ok, data, error } = await safeFetchJson(`${API_BASE}/products/match-barcode`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    const errorJson = await res.json().catch(() => ({}));
-    throw new Error(errorJson.error || 'Failed to match barcode');
+  if (!ok) {
+    throw new Error(error || 'Failed to match barcode');
   }
-  return await res.json();
+  return data;
 }
 
 export async function fetchAuditState(storeId) {
-  const res = await fetch(`${API_BASE}/audit/state?storeId=${encodeURIComponent(storeId)}`);
-  if (!res.ok) throw new Error('Failed to fetch audit state');
-  return await res.json();
+  const { ok, data } = await safeFetchJson(`${API_BASE}/audit/state?storeId=${encodeURIComponent(storeId)}`);
+  if (!ok || !data) return { scannedCounts: {}, scanLogs: [] };
+  return data;
 }
 
 export async function apiSendScan(barcode, storeId, auditorName) {
-  const res = await fetch(`${API_BASE}/audit/scan`, {
+  const { ok, data, error } = await safeFetchJson(`${API_BASE}/audit/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ barcode, storeId, auditorName }),
   });
-  const data = await res.json();
-  if (!res.ok) {
+  if (!ok || !data) {
     return {
       success: false,
-      message: data.message || data.error || 'Unknown scan error',
+      message: error || 'Scan error (offline or server error)',
     };
   }
   return data;
