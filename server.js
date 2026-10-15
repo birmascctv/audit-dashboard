@@ -1344,6 +1344,40 @@ async function startServer() {
     }
   });
 
+  // Audit Session Lock & Approval Endpoints (Superadmin approval required to unlock)
+  app.get('/api/audit/session/:storeId/lock', (req, res) => {
+    try {
+      const state = db.getSessionLockState(req.params.storeId);
+      res.json({ success: true, ...state });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/audit/session/:storeId/lock', (req, res) => {
+    try {
+      const user = req.body?.user || 'Auditor';
+      const result = db.setSessionLockState(req.params.storeId, true, user);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/audit/session/:storeId/unlock', (req, res) => {
+    try {
+      const role = req.body?.role || '';
+      const user = req.body?.user || 'Super Admin';
+      if (role !== 'superadmin') {
+        return res.status(403).json({ success: false, error: 'Only Superadmin can approve unlocking an audit session.' });
+      }
+      const result = db.setSessionLockState(req.params.storeId, false, user);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Store Audit API Endpoints
   app.get('/api/categories', (req, res) => {
     try {
