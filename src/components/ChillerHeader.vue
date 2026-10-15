@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from '../composables/useAuth.js';
+import { ref, onMounted, onUnmounted } from 'vue';
 import {
   Barcode,
   Volume2,
@@ -12,7 +13,9 @@ import {
   TrendingUp,
   Store,
   UploadCloud,
-  Layers
+  Layers,
+  Wifi,
+  WifiOff
 } from 'lucide-vue-next';
 
 defineProps({
@@ -20,6 +23,22 @@ defineProps({
     type: Boolean,
     default: true,
   },
+});
+
+const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+function updateOnlineStatus() {
+  isOnline.value = navigator.onLine;
+}
+
+onMounted(() => {
+  window.addEventListener('online', updateOnlineStatus);
+  window.addEventListener('offline', updateOnlineStatus);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('online', updateOnlineStatus);
+  window.removeEventListener('offline', updateOnlineStatus);
 });
 
 const emit = defineEmits(['toggleSound', 'openGuide']);
@@ -180,8 +199,19 @@ function handleLogout() {
           </nav>
         </div>
 
-        <!-- Right Side: User Profile & Logout -->
+        <!-- Right Side: Connectivity & User Profile & Logout -->
         <div class="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <!-- PWA Network State Indicator -->
+          <div
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all"
+            :class="isOnline ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-amber-100 text-amber-900 border-amber-300 animate-pulse'"
+            :title="isOnline ? 'Connected to Network (PWA Online Sync)' : 'Offline Mode: Local Storage & Scans are saved securely on device'"
+          >
+            <Wifi v-if="isOnline" class="w-3.5 h-3.5 text-emerald-600" />
+            <WifiOff v-else class="w-3.5 h-3.5 text-amber-700" />
+            <span>{{ isOnline ? 'PWA Online' : 'PWA Offline' }}</span>
+          </div>
+
           <!-- Current User Profile & Role Badge -->
           <div v-if="currentUser" class="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl shadow-xs">
             <div class="w-6 h-6 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center font-black text-[11px]">
