@@ -56,6 +56,25 @@ const parsedRows = ref([]);
 const validationErrors = ref([]);
 const duplicateWarning = ref(null);
 const rawFileContent = ref('');
+const autoRoundDecimals = ref(false);
+
+const decimalRows = computed(() => {
+  return parsedRows.value.filter(r => r.stockQty % 1 !== 0);
+});
+
+function toggleAutoRoundDecimals() {
+  autoRoundDecimals.value = !autoRoundDecimals.value;
+  if (autoRoundDecimals.value) {
+    parsedRows.value = parsedRows.value.map(r => ({
+      ...r,
+      stockQty: Math.round(r.stockQty),
+    }));
+  } else {
+    if (rawFileContent.value) {
+      validateAndParseStockCsv(rawFileContent.value, fileName.value);
+    }
+  }
+}
 
 // History state
 const historyFiles = ref([]);
@@ -785,6 +804,64 @@ onMounted(() => {
               This file was previously uploaded by <strong>{{ duplicateWarning.uploadedBy }}</strong> on {{ formatDateStr(duplicateWarning.uploadedAt) }}.
               Uploading again will supersede previous stock values and create a new active version in the history.
             </p>
+          </div>
+        </div>
+
+        <!-- Decimal Stock Warning & Pinpoint Table -->
+        <div
+          v-if="validationErrors.length === 0 && decimalRows.length > 0"
+          class="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-3 text-amber-950 text-xs shadow-xs"
+        >
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <AlertTriangle class="w-5 h-5 text-amber-700 shrink-0" />
+              <div>
+                <p class="font-extrabold text-amber-950 text-sm">
+                  ⚠️ Decimal Stock Detected in {{ decimalRows.length }} {{ decimalRows.length === 1 ? 'Row' : 'Rows' }}
+                </p>
+                <p class="text-amber-900 text-xs mt-0.5">
+                  Products have fractional stock quantities (e.g. 0.5 units). This usually happens when items are tracked in kegs/liters in ESB ERP, or when a comma in a product name caused a column shift.
+                </p>
+              </div>
+            </div>
+            <button
+              @click="toggleAutoRoundDecimals"
+              type="button"
+              class="px-3.5 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5"
+              :class="autoRoundDecimals ? 'bg-amber-700 text-white shadow-xs' : 'bg-white border border-amber-400 text-amber-900 hover:bg-amber-100'"
+            >
+              <span>{{ autoRoundDecimals ? '✓ Decimals Rounded to Whole Units' : '⚡ Auto-Round All to Whole Units' }}</span>
+            </button>
+          </div>
+
+          <!-- Pinpointed Rows Table -->
+          <div class="bg-white rounded-xl border border-amber-200 overflow-hidden mt-2">
+            <div class="px-3 py-1.5 bg-amber-100/60 border-b border-amber-200 flex items-center justify-between text-[11px] font-bold text-amber-950">
+              <span>Pinpointed Rows with Decimals in Column J (Showing all {{ decimalRows.length }} rows):</span>
+              <span class="font-mono text-amber-800">{{ decimalRows.length }} items</span>
+            </div>
+            <div class="max-h-36 overflow-y-auto">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-600 uppercase">
+                    <th class="py-1 px-2.5 w-14 text-center">Row #</th>
+                    <th class="py-1 px-2.5">Store</th>
+                    <th class="py-1 px-2.5">Product Name</th>
+                    <th class="py-1 px-2.5">Unit</th>
+                    <th class="py-1 px-2.5 text-center bg-amber-50 text-amber-900 font-extrabold">Parsed Qty</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 font-mono text-[11px]">
+                  <tr v-for="(dr, dIdx) in decimalRows" :key="dIdx" class="hover:bg-amber-50/40">
+                    <td class="py-1 px-2.5 text-center text-slate-500 font-bold">Line {{ dr.rowNum }}</td>
+                    <td class="py-1 px-2.5 font-sans font-semibold text-slate-800">{{ dr.storeName }}</td>
+                    <td class="py-1 px-2.5 font-sans text-slate-900 font-medium">{{ dr.productName }}</td>
+                    <td class="py-1 px-2.5 text-slate-600 font-sans">{{ dr.unit }}</td>
+                    <td class="py-1 px-2.5 text-center font-bold text-amber-900 bg-amber-50/60">{{ dr.stockQty }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
