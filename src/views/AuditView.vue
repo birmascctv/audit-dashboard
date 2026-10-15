@@ -426,23 +426,7 @@ onMounted(() => {
       </button>
     </div>
 
-    <!-- Pre-scan Status Explanation Banner -->
-    <div
-      v-if="totalScanned === 0"
-      class="flex items-center gap-3 p-4 bg-teal-50/70 border border-teal-200 rounded-2xl text-xs text-teal-900 shadow-2xs"
-    >
-      <div class="w-8 h-8 rounded-xl bg-teal-100 border border-teal-300 flex items-center justify-center text-teal-700 shrink-0">
-        <Sparkles class="w-4 h-4" />
-      </div>
-      <div>
-        <p class="font-bold text-teal-950">
-          Sesi Audit Siap — Belum ada botol yang dipindai (0 cans counted)
-        </p>
-        <p class="text-teal-800 text-[11px] mt-0.5">
-          Seluruh {{ totalWpExpected }} botol di sistem berstatus menunggu pemindaian fisik. Perbedaan stok (discrepancy) akan otomatis terverifikasi begitu barcode dipindai di stasiun hitung di bawah.
-        </p>
-      </div>
-    </div>
+
 
     <!-- Counting Station (Light theme with tosca accents) -->
     <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
@@ -921,8 +905,19 @@ onMounted(() => {
               </td>
 
               <!-- Qty (ESB Expected) -->
-              <td class="py-3.5 px-4 text-center font-mono font-bold text-slate-800 bg-slate-50/40 text-base">
-                {{ item.wpExpectedQty }}
+              <td class="py-3.5 px-4 text-center font-mono font-bold bg-slate-50/40 text-base">
+                <div class="flex flex-col items-center justify-center">
+                  <span :class="item.wpExpectedQty < 0 ? 'text-rose-600 font-extrabold' : 'text-slate-800'">
+                    {{ item.wpExpectedQty }}
+                  </span>
+                  <span
+                    v-if="item.wpExpectedQty < 0"
+                    class="text-[9px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 mt-0.5 tracking-tight whitespace-nowrap"
+                    title="Minus in ESB indicates items already missing at the store"
+                  >
+                    Missing in Store
+                  </span>
+                </div>
               </td>
 
               <!-- Scanned Count (Physical tally) -->
