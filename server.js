@@ -1214,6 +1214,136 @@ async function startServer() {
     }
   });
 
+  // ==========================================
+  // Stock Audit CSV Upload & Management Endpoints
+  // ==========================================
+
+  app.get('/api/stock-csv/history', (req, res) => {
+    try {
+      const files = db.getStockFilesList();
+      res.json({ success: true, files });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/stock-csv/active', (req, res) => {
+    try {
+      const file = db.getActiveStockFile();
+      res.json({ success: true, file: file || null });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/stock-csv/upload', (req, res) => {
+    try {
+      const {
+        filename,
+        fileSize,
+        uploadedBy,
+        metadata = {},
+        rows = [],
+        fileContent = '',
+      } = req.body;
+
+      if (!filename) {
+        return res.status(400).json({
+          success: false,
+          code: 'FILE_NAME_REQUIRED',
+          error: 'Filename is required.',
+        });
+      }
+
+      if (!filename.toLowerCase().endsWith('.csv')) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_FILE_TYPE',
+          error: 'File must be a CSV file (.csv).',
+        });
+      }
+
+      if (!rows || rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          code: 'NO_DATA_ROWS',
+          error: 'No valid product stock records found in the uploaded CSV table.',
+        });
+      }
+
+      const inferredStores = Array.from(new Set(rows.map(r => r.storeName).filter(Boolean))).join(', ');
+      const downloadedAt = metadata.downloadedAtEsb || metadata.cell4B || new Date().toLocaleString('id-ID');
+      const stockDate = metadata.stockDate || metadata.cell5B || new Date().toLocaleDateString('id-ID');
+      const activeStores = metadata.activeStores || metadata.cell6B || inferredStores || 'All Active Stores';
+
+      const fileInfo = {
+        filename,
+        file_size: fileSize || '0 KB',
+        uploaded_by: uploadedBy || 'Auditor',
+        downloaded_at_esb: downloadedAt,
+        stock_date: stockDate,
+        active_stores: activeStores,
+        file_content: fileContent,
+      };
+
+      const result = db.saveStockFileRecord(fileInfo, rows);
+      if (!result.success) {
+        return res.status(500).json(result);
+      }
+
+      res.json({
+        success: true,
+        message: `Successfully uploaded ${filename} and applied ${rows.length} product stock records to comparison table.`,
+        fileId: result.fileId,
+        activeStores: fileInfo.active_stores,
+        stockDate: fileInfo.stock_date,
+        downloadedAtEsb: fileInfo.downloaded_at_esb,
+        rowCount: rows.length,
+      });
+    } catch (err) {
+      console.error('[Upload Stock CSV Error]:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/stock-csv/revert/:id', (req, res) => {
+    try {
+      const result = db.revertStockFileRecord(req.params.id);
+      if (!result.success) {
+        return res.status(404).json(result);
+      }
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete('/api/stock-csv/:id', (req, res) => {
+    try {
+      const result = db.deleteStockFileRecord(req.params.id);
+      if (!result.success) {
+        return res.status(404).json(result);
+      }
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/stock-csv/template', (req, res) => {
+    try {
+      const templatePath = path.join(process.cwd(), 'public', 'templates', 'stock_period_list_sample.csv');
+      if (fs.existsSync(templatePath)) {
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="stock_period_list_template.csv"');
+        return fs.createReadStream(templatePath).pipe(res);
+      }
+      res.status(404).send('Template not found');
+    } catch (err) {
+      res.status(500).send(err.message);
+    }
+  });
+
   // Store Audit API Endpoints
   app.get('/api/categories', (req, res) => {
     try {
@@ -1736,6 +1866,11 @@ async function startServer() {
       autoSyncEnabled: true,
       autoSyncIntervalSeconds: 30,
     });
+  });
+
+  // Handle any unmatched API routes with JSON 404, never letting it fall through to HTML
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ success: false, error: `API route not found: ${req.method} ${req.originalUrl}` });
   });
 
   // Vite Dev Middlewares or Production Static Serving
