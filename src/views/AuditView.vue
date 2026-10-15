@@ -83,13 +83,25 @@ const activeStockCsvFile = ref(null);
 async function loadActiveStockCsv() {
   try {
     const res = await fetch('/api/stock-csv/active');
-    const data = await res.json();
-    if (data.success && data.file) {
-      activeStockCsvFile.value = data.file;
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      if (data.success && data.file) {
+        activeStockCsvFile.value = data.file;
+        return;
+      }
+    }
+  } catch (_) {}
+
+  // Fallback to localStorage
+  try {
+    const local = localStorage.getItem('birmas_active_stock_csv');
+    if (local) {
+      activeStockCsvFile.value = JSON.parse(local);
     } else {
       activeStockCsvFile.value = null;
     }
-  } catch {
+  } catch (_) {
     activeStockCsvFile.value = null;
   }
 }
@@ -293,30 +305,7 @@ function openAddBarcodeWithPrefill(barcode) {
 }
 
 
-function exportAuditToCsv() {
-  const headers = ['No', 'Kode Barcode', 'Brand', 'Product Name', 'Unit', 'ESB Stock', 'Physical Count', 'Discrepancy', 'Status'];
-  const rows = filteredItems.value.map((item, index) => [
-    index + 1,
-    '"' + (item.barcode || '') + '"',
-    '"' + (item.subCategory || item.brand || '').replace(/"/g, '""') + '"',
-    '"' + (item.productTitle || item.varian || '').replace(/"/g, '""') + '"',
-    '"' + (item.defaultUnit || '') + '"',
-    item.wpExpectedQty ?? 0,
-    item.scannedCount ?? 0,
-    item.discrepancy ?? 0,
-    '"' + (item.status || '') + '"'
-  ]);
-  const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  const storeName = (currentStore.value?.name || 'Store').replace(/\s+/g, '_');
-  link.setAttribute('download', `Stock_Audit_${storeName}_${new Date().toISOString().slice(0, 10)}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-}
+
 
 onMounted(() => {
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
@@ -388,16 +377,7 @@ onMounted(() => {
           <span>Upload CSV</span>
         </button>
 
-        <!-- Export CSV Button (Preserved) -->
-        <button
-          @click="exportAuditToCsv"
-          type="button"
-          class="px-3.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-          title="Download stock audit and discrepancies to CSV"
-        >
-          <Download class="w-3.5 h-3.5 text-slate-600" />
-          <span>Export CSV</span>
-        </button>
+
 
         <!-- Finalize Audit Button -->
         <button
