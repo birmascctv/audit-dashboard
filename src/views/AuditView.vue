@@ -673,7 +673,7 @@ onMounted(() => {
                     </div>
                   </td>
                   <td class="py-2 px-3 text-center font-mono font-bold text-slate-600">
-                    {{ item.wpExpectedQty }}
+                    {{ Math.round(Number(item.wpExpectedQty) || 0) }}
                   </td>
                   <td class="py-2 px-3 text-center bg-teal-50/50">
                     <div class="flex items-center justify-center gap-1.5">
@@ -735,7 +735,7 @@ onMounted(() => {
           <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">ESB STOCK</span>
         </div>
         <div class="my-2">
-          <span class="text-3xl font-extrabold text-slate-900 font-mono">{{ typeof totalWpExpected === 'number' ? (totalWpExpected % 1 === 0 ? totalWpExpected.toLocaleString('id-ID') : totalWpExpected.toLocaleString('id-ID', { maximumFractionDigits: 1 })) : totalWpExpected }}</span>
+          <span class="text-3xl font-extrabold text-slate-900 font-mono">{{ Math.round(Number(totalWpExpected) || 0).toLocaleString('id-ID') }}</span>
           <span class="text-xs text-slate-500 ml-1.5">units</span>
         </div>
         <p class="text-[11px] text-slate-500">
@@ -980,7 +980,7 @@ onMounted(() => {
               <td class="py-3.5 px-4 text-center font-mono font-bold bg-slate-50/40 text-base">
                 <div class="flex flex-col items-center justify-center">
                   <span :class="item.wpExpectedQty < 0 ? 'text-rose-600 font-extrabold' : 'text-slate-800'">
-                    {{ item.wpExpectedQty }}
+                    {{ Math.round(Number(item.wpExpectedQty) || 0) }}
                   </span>
                   <span
                     v-if="item.wpExpectedQty < 0"
@@ -1184,7 +1184,7 @@ onMounted(() => {
         <div class="bg-slate-50 rounded-2xl p-4 border border-slate-200 grid grid-cols-3 gap-2 text-center">
           <div>
             <span class="text-[10px] text-slate-500 uppercase font-bold block">Expected</span>
-            <span class="text-lg font-mono font-bold text-slate-800">{{ totalWpExpected }}</span>
+            <span class="text-lg font-mono font-bold text-slate-800">{{ Math.round(Number(totalWpExpected) || 0) }}</span>
           </div>
           <div>
             <span class="text-[10px] text-slate-500 uppercase font-bold block">Scanned</span>
