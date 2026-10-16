@@ -304,11 +304,11 @@ export async function runBirmasServerSync(options = {}) {
   }
   isBirmasServerSyncing = true;
   try {
-    const baseUrl = options.baseUrl || options.birmasServerUrl || db.getConfig('wp_url') || process.env.BIRMAS_BACKEND_URL || 'https://admin.birmas.id';
-    const token = options.token || options.apiToken || options.birmasServerToken || db.getConfig('birmas_server_token') || process.env.BIRMAS_API_TOKEN || '';
-    const endpointPath = options.endpointPath || options.birmasServerEndpoint || db.getConfig('birmas_server_endpoint') || process.env.BIRMAS_ENDPOINT_PATH || '/wp-json/api/v1/product_stocks';
+    const baseUrl = options.baseUrl || options.birmasServerUrl || process.env.BIRMAS_BACKEND_URL || db.getConfig('wp_url') || 'https://admin.birmas.id';
+    const token = options.token || options.apiToken || options.birmasServerToken || process.env.BIRMAS_API_TOKEN || db.getConfig('birmas_server_token') || '';
+    const endpointPath = options.endpointPath || options.birmasServerEndpoint || process.env.BIRMAS_ENDPOINT_PATH || db.getConfig('birmas_server_endpoint') || '/wp-json/api/v1/product_stocks';
 
-    console.log(`[Birmas Server Sync] Connecting to Birmas central server (${baseUrl}${endpointPath}) ...`);
+    console.log(`[Birmas Server Sync] Connecting to Birmas server (${baseUrl}${endpointPath}) ...`);
 
     const existingProducts = db.getAllProducts();
     const barcodeMap = new Map();
@@ -2110,7 +2110,8 @@ async function startServer() {
       executePeriodicSync();
     }, 3000);
 
-    const SYNC_INTERVAL_MS = 15 * 60 * 1000; // Automatically every 15 minutes
+    const intervalMins = parseInt(process.env.BIRMAS_SYNC_INTERVAL_MINUTES || '15', 10) || 15;
+    const SYNC_INTERVAL_MS = intervalMins * 60 * 1000;
     setInterval(() => {
       executePeriodicSync();
     }, SYNC_INTERVAL_MS);
