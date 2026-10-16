@@ -304,8 +304,11 @@ export async function runBirmasServerSync(options = {}) {
   }
   isBirmasServerSyncing = true;
   try {
-    const baseUrl = options.baseUrl || db.getConfig('wp_url') || 'https://admin.birmas.id';
-    console.log(`[Birmas Server Sync] Connecting to Birmas central server (${baseUrl})...`);
+    const baseUrl = options.baseUrl || options.birmasServerUrl || db.getConfig('wp_url') || process.env.BIRMAS_BACKEND_URL || 'https://admin.birmas.id';
+    const token = options.token || options.apiToken || options.birmasServerToken || db.getConfig('birmas_server_token') || process.env.BIRMAS_API_TOKEN || '';
+    const endpointPath = options.endpointPath || options.birmasServerEndpoint || db.getConfig('birmas_server_endpoint') || process.env.BIRMAS_ENDPOINT_PATH || '/wp-json/api/v1/product_stocks';
+
+    console.log(`[Birmas Server Sync] Connecting to Birmas central server (${baseUrl}${endpointPath}) ...`);
 
     const existingProducts = db.getAllProducts();
     const barcodeMap = new Map();
@@ -316,34 +319,50 @@ export async function runBirmasServerSync(options = {}) {
       }
     }
 
-    const storeKeywordMap = [
-      { kw: 'sudirman', storeId: 'birmas-sudirman' },
-      { kw: 'kuningan', storeId: 'birmas-kuningan' },
-      { kw: 'kwitang', storeId: 'birmas-kwitang' },
-      { kw: 'lebak bulus', storeId: 'birmas-lebak-bulus' },
-      { kw: 'lbulus', storeId: 'birmas-lebak-bulus' },
-    ];
-
     let totalSyncedProducts = 0;
     let page = 1;
     let hasMore = true;
 
-    while (hasMore && page <= 10) {
-      const url = `${baseUrl.replace(/\/+$/, '')}/wp-json/api/v1/product_stocks?per_page=100&page=${page}`;
+    while (hasMore && page <= 20) {
+      const cleanEndpoint = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
+      const sep = cleanEndpoint.includes('?') ? '&' : '?';
+      const url = `${baseUrl.replace(/\/+$/, '')}${cleanEndpoint}${sep}per_page=100&page=${page}`;
+
       let items = [];
 
       try {
+        const headers = {
+          'user-agent': 'BirmasStockAudit/2.0',
+          'accept': 'application/json',
+        };
+        if (token && token.trim()) {
+          headers['authorization'] = `Bearer ${token.trim()}`;
+        }
+
         const res = await fetch(url, {
-          headers: { 'user-agent': 'BirmasStockAudit/2.0' },
-          signal: AbortSignal.timeout(10000),
+          headers,
+          signal: AbortSignal.timeout(15000),
         });
 
         if (!res.ok) {
-          console.log(`[Birmas Server Sync] End of catalog reached at page ${page} (status ${res.status}).`);
+          console.log(`[Birmas Server Sync] Response status ${res.status} from page ${page}.`);
           break;
         }
 
-        items = await res.json();
+        const rawJson = await res.json();
+        if (Array.isArray(rawJson)) {
+          items = rawJson;
+        } else if (rawJson && Array.isArray(rawJson.data)) {
+          items = rawJson.data;
+        } else if (rawJson && Array.isArray(rawJson.products)) {
+          items = rawJson.products;
+        } else if (rawJson && Array.isArray(rawJson.stocks)) {
+          items = rawJson.stocks;
+        } else if (rawJson && Array.isArray(rawJson.items)) {
+          items = rawJson.items;
+        } else {
+          items = [];
+        }
       } catch (fetchErr) {
         console.warn(`[Birmas Server Sync] Page ${page} notice: ${fetchErr.message}. Utilizing existing database stock.`);
         break;
@@ -355,18 +374,17 @@ export async function runBirmasServerSync(options = {}) {
       }
 
       for (const item of items) {
-        const storeId = extractMatchedStoreId(item);
+        const storeId = extractMatchedStoreId(item) || db.resolveStoreIdForStock(item.store || item.store_name || item.storeName || item.branch || item.storeId || '');
         if (!storeId) continue;
 
         const pv = item.product_variant?.[0];
         const p = pv?.product?.[0];
-        if (!p && !item.esb_menu_id) continue;
 
-        const prodName = (p?.post_title || '').trim();
+        const prodName = (p?.post_title || item.product_name || item.productName || item.product_title || item.name || item.varian || '').trim();
         if (!prodName) continue;
 
         // Skip non-retail merchandise
-        const categoryName = (p?.product_category?.post_title || 'BEVERAGE').toUpperCase();
+        const categoryName = (p?.product_category?.post_title || item.category || 'BEVERAGE').toUpperCase();
         if (
           prodName.toLowerCase().includes('cleaner') ||
           prodName.toLowerCase().includes('router') ||
@@ -376,25 +394,24 @@ export async function runBirmasServerSync(options = {}) {
           continue;
         }
 
-        const esbId = item.esb_menu_id || item.id;
+        const esbId = item.esb_menu_id || item.id || prodName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
         const prodId = `erp-${esbId}`;
-        const existingBarcode = barcodeMap.get(prodId) || barcodeMap.get(prodName.toLowerCase().trim()) || null;
+        const existingBarcode = barcodeMap.get(prodId) || barcodeMap.get(prodName.toLowerCase().trim()) || item.barcode || null;
 
-        // Brand from product name or subcategory
-        const brand = prodName.split(' ')[0].toUpperCase();
-        let varian = prodName;
+        const brand = item.brand || db.deriveProductBrand(prodName);
+        let varian = item.varian || prodName;
         if (varian.toLowerCase().startsWith(brand.toLowerCase())) {
           varian = varian.slice(brand.length).trim();
         }
 
-        const price = parseFloat(pv?.regular_price) || 0;
-        const unit = pv?.variant || 'BOTOL';
-        const stockQty = parseFloat(item.stock) || 0;
+        const price = parseFloat(pv?.regular_price ?? item.price ?? 0) || 0;
+        const unit = pv?.variant || item.unit || item.defaultUnit || 'BOTOL';
+        const stockQty = Math.round(Number(item.stock ?? item.stock_qty ?? item.stockQty ?? item.qty ?? 0) || 0);
 
         db.saveProduct({
           id: prodId,
           barcode: existingBarcode,
-          sku: `SKU-${esbId}`,
+          sku: item.sku || `SKU-${esbId}`,
           brand: brand,
           varian: varian || prodName,
           productTitle: prodName,
@@ -402,8 +419,8 @@ export async function runBirmasServerSync(options = {}) {
           subCategory: brand,
           defaultUnit: unit,
           packageType: unit.toLowerCase().includes('can') || unit.toLowerCase().includes('kaleng') ? 'Kaleng' : 'Botol',
-          volume: parseInt(pv?.volume) || (prodName.includes('620') ? 620 : 330),
-          unitVolume: pv?.unit_volume || 'ml',
+          volume: parseInt(pv?.volume || item.volume) || (prodName.includes('620') ? 620 : 330),
+          unitVolume: pv?.unit_volume || item.unitVolume || 'ml',
           price: price,
           wpStatus: 'publish',
           lastUpdated: new Date().toISOString(),
@@ -413,9 +430,14 @@ export async function runBirmasServerSync(options = {}) {
         totalSyncedProducts++;
       }
 
+      if (items.length < 50) {
+        hasMore = false;
+        break;
+      }
+
       page++;
       // Brief breathing space between requests
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 300));
     }
 
     if (totalSyncedProducts > 0) {
@@ -1054,21 +1076,104 @@ async function startServer() {
   });
 
   app.get('/api/birmas/config', (req, res) => {
+    const token = db.getConfig('birmas_server_token') || '';
     res.json({
       birmasServerUrl: db.getConfig('wp_url') || 'https://admin.birmas.id',
+      birmasServerEndpoint: db.getConfig('birmas_server_endpoint') || '/wp-json/api/v1/product_stocks',
+      hasToken: !!token,
+      birmasServerToken: token,
       lastSyncedAt: db.getConfig('last_birmas_server_synced_at') || null,
     });
   });
 
   app.post('/api/birmas/config', (req, res) => {
-    if (req.body.birmasServerUrl) {
+    if (req.body.birmasServerUrl !== undefined) {
       db.setConfig('wp_url', req.body.birmasServerUrl.trim());
+    }
+    if (req.body.birmasServerToken !== undefined) {
+      db.setConfig('birmas_server_token', req.body.birmasServerToken.trim());
+    }
+    if (req.body.birmasServerEndpoint !== undefined) {
+      db.setConfig('birmas_server_endpoint', req.body.birmasServerEndpoint.trim());
     }
     res.json({
       success: true,
       birmasServerUrl: db.getConfig('wp_url'),
+      birmasServerEndpoint: db.getConfig('birmas_server_endpoint'),
+      hasToken: !!db.getConfig('birmas_server_token'),
       lastSyncedAt: db.getConfig('last_birmas_server_synced_at'),
     });
+  });
+
+  // 13d. Direct Push API: Send stock payload directly from Birmas Backend to this Audit Server
+  app.post(['/api/stock/push', '/api/sync/push'], (req, res) => {
+    try {
+      const payload = req.body;
+      const items = Array.isArray(payload) ? payload : (payload.items || payload.data || payload.products || []);
+      if (!items || items.length === 0) {
+        return res.status(400).json({ success: false, error: 'Expected JSON array of product stock items' });
+      }
+
+      // Check optional token if configured
+      const configuredToken = db.getConfig('birmas_server_token');
+      if (configuredToken) {
+        const auth = req.headers['authorization'] || '';
+        const token = auth.replace(/^Bearer\s+/i, '').trim();
+        if (token && token !== configuredToken.trim()) {
+          return res.status(401).json({ success: false, error: 'Unauthorized: Invalid Bearer Token' });
+        }
+      }
+
+      const allStores = db.getAllStores();
+      let importedCount = 0;
+
+      for (const item of items) {
+        const rawStore = item.store || item.storeName || item.store_name || item.branch || item.storeId || allStores[0]?.id;
+        const storeId = db.resolveStoreIdForStock(rawStore);
+        const prodName = String(item.productName || item.product_name || item.productTitle || item.name || item.varian || '').trim();
+        if (!prodName) continue;
+
+        const barcode = (item.barcode && String(item.barcode).trim()) || null;
+        const stockQty = Math.round(Number(item.stockQty ?? item.stock_qty ?? item.stock ?? item.qty ?? 0) || 0);
+        const category = item.category || 'Craft Beer';
+        const unit = item.unit || item.defaultUnit || 'Can';
+
+        const slug = prodName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        const productId = item.id || `prod-${slug}`;
+
+        db.saveProduct({
+          id: productId,
+          barcode: barcode,
+          sku: item.sku || `SKU-${slug.slice(0, 8).toUpperCase()}`,
+          brand: item.brand || db.deriveProductBrand(prodName),
+          varian: prodName,
+          productTitle: prodName,
+          category: category,
+          subCategory: item.brand || db.deriveProductBrand(prodName),
+          defaultUnit: unit,
+          packageType: unit.toLowerCase().includes('botol') ? 'Botol' : 'Kaleng',
+          volume: item.volume || 330,
+          unitVolume: item.unitVolume || 'ml',
+          price: item.price || 0,
+          wpStatus: 'publish',
+          lastUpdated: new Date().toISOString(),
+        });
+
+        db.setProductStock(storeId, productId, stockQty);
+        importedCount++;
+      }
+
+      db.setConfig('last_birmas_server_synced_at', new Date().toISOString());
+
+      res.json({
+        success: true,
+        message: `Successfully received and imported ${importedCount} items into audit database!`,
+        importedCount,
+        stores: allStores.map(s => s.name),
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   // 14. Instant Webhook from ESB / WordPress
