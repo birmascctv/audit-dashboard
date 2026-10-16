@@ -154,26 +154,125 @@ const lastServerSyncTime = ref(null);
 const showPushApiDocs = ref(false);
 const pushCopied = ref(false);
 
+const birmasServerUrl = ref('https://core-api.esb.co.id/extv1/visit-purpose');
+const birmasEndpointMode = ref('none'); // 'none' | 'wp' | 'visit_purpose' | 'menu' | 'custom'
+const customEndpointPath = ref('');
+const birmasTokenInput = ref('');
+const isSavingBirmasConfig = ref(false);
+const visitPurposesList = ref([]);
+const isSyncingESBStock = ref(false);
+const esbStockStatusMsg = ref('');
+const showEndpointOptions = ref(true);
+
+const computedTargetUrl = computed(() => {
+  const base = (birmasServerUrl.value || '').trim();
+  if (!base) return '';
+  if (birmasEndpointMode.value === 'none') {
+    return base; // Direct URL: NO endpoint appended!
+  } else if (birmasEndpointMode.value === 'wp') {
+    return `${base.replace(/\/+$/, '')}/wp-json/api/v1/product_stocks`;
+  } else if (birmasEndpointMode.value === 'visit_purpose') {
+    return `${base.replace(/\/+$/, '')}/extv1/visit-purpose`;
+  } else if (birmasEndpointMode.value === 'menu') {
+    return `${base.replace(/\/+$/, '')}/extv1/menu`;
+  } else if (birmasEndpointMode.value === 'custom') {
+    const ep = customEndpointPath.value.trim();
+    if (!ep) return base;
+    const clean = ep.startsWith('/') ? ep : `/${ep}`;
+    return `${base.replace(/\/+$/, '')}${clean}`;
+  }
+  return base;
+});
+
 async function loadBirmasConfig() {
   try {
     const res = await fetch('/api/birmas/config');
     const data = await res.json();
+    if (data.birmasServerUrl) birmasServerUrl.value = data.birmasServerUrl;
+    if (data.noEndpoint || !data.birmasServerEndpoint || data.birmasServerEndpoint === 'none') {
+      birmasEndpointMode.value = 'none';
+    } else if (data.birmasServerEndpoint.includes('wp-json')) {
+      birmasEndpointMode.value = 'wp';
+    } else if (data.birmasServerEndpoint.includes('visit-purpose')) {
+      birmasEndpointMode.value = 'visit_purpose';
+    } else if (data.birmasServerEndpoint.includes('menu')) {
+      birmasEndpointMode.value = 'menu';
+    } else {
+      birmasEndpointMode.value = 'custom';
+      customEndpointPath.value = data.birmasServerEndpoint;
+    }
+    if (data.visitPurposes && Array.isArray(data.visitPurposes)) {
+      visitPurposesList.value = data.visitPurposes;
+    }
     if (data.lastSyncedAt) lastServerSyncTime.value = data.lastSyncedAt;
   } catch {}
+}
+
+async function saveBirmasConfig() {
+  isSavingBirmasConfig.value = true;
+  try {
+    let endpoint = '';
+    if (birmasEndpointMode.value === 'none') endpoint = 'none';
+    else if (birmasEndpointMode.value === 'wp') endpoint = '/wp-json/api/v1/product_stocks';
+    else if (birmasEndpointMode.value === 'visit_purpose') endpoint = '/extv1/visit-purpose';
+    else if (birmasEndpointMode.value === 'menu') endpoint = '/extv1/menu';
+    else if (birmasEndpointMode.value === 'custom') endpoint = customEndpointPath.value.trim();
+
+    const body = {
+      birmasServerUrl: birmasServerUrl.value,
+      birmasServerEndpoint: endpoint,
+      noEndpoint: birmasEndpointMode.value === 'none',
+    };
+    if (birmasTokenInput.value) {
+      body.birmasServerToken = birmasTokenInput.value.trim();
+    }
+    await fetch('/api/birmas/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    console.error('Failed to save Birmas config:', err);
+  } finally {
+    isSavingBirmasConfig.value = false;
+  }
 }
 
 async function handleBirmasServerSync() {
   isSyncingBirmas.value = true;
   sessionStatusMsg.value = '';
   try {
-    const res = await syncFromBirmasServer();
+    await saveBirmasConfig();
+
+    let endpoint = '';
+    if (birmasEndpointMode.value === 'none') endpoint = 'none';
+    else if (birmasEndpointMode.value === 'wp') endpoint = '/wp-json/api/v1/product_stocks';
+    else if (birmasEndpointMode.value === 'visit_purpose') endpoint = '/extv1/visit-purpose';
+    else if (birmasEndpointMode.value === 'menu') endpoint = '/extv1/menu';
+    else if (birmasEndpointMode.value === 'custom') endpoint = customEndpointPath.value.trim();
+
+    const payload = {
+      baseUrl: birmasServerUrl.value,
+      endpointPath: endpoint,
+      noEndpoint: birmasEndpointMode.value === 'none',
+    };
+    if (birmasTokenInput.value) {
+      payload.token = birmasTokenInput.value.trim();
+    }
+
+    const res = await syncFromBirmasServer(payload);
     if (res.success) {
       lastServerSyncTime.value = new Date().toISOString();
-      sessionStatusMsg.value = `Successfully synchronized! (${res.totalSyncedProducts || 0} products updated from Birmas server)`;
-      setTimeout(() => {
-        isSessionModalOpen.value = false;
-        sessionStatusMsg.value = '';
-      }, 1800);
+      if (res.isVisitPurposeData) {
+        if (res.visitPurposes) visitPurposesList.value = res.visitPurposes;
+        sessionStatusMsg.value = res.message;
+      } else {
+        sessionStatusMsg.value = `Successfully synchronized! (${res.totalSyncedProducts || 0} products updated from Birmas server)`;
+        setTimeout(() => {
+          isSessionModalOpen.value = false;
+          sessionStatusMsg.value = '';
+        }, 2200);
+      }
     } else {
       sessionStatusMsg.value = res.error || res.message || 'Quiet sync failed to reach Birmas server';
     }
@@ -181,6 +280,27 @@ async function handleBirmasServerSync() {
     sessionStatusMsg.value = err.message;
   } finally {
     isSyncingBirmas.value = false;
+  }
+}
+
+async function handleSyncESBStocks() {
+  isSyncingESBStock.value = true;
+  esbStockStatusMsg.value = '';
+  try {
+    const res = await syncFromESBDirect();
+    if (res.success) {
+      esbStockStatusMsg.value = `ESB Live Catalog Synced! (${res.totalProducts || 0} products & ${res.totalStockEntries || 0} branch stocks updated)`;
+      setTimeout(() => {
+        isSessionModalOpen.value = false;
+        esbStockStatusMsg.value = '';
+      }, 2000);
+    } else {
+      esbStockStatusMsg.value = res.message || res.error || 'Failed to sync ESB stocks';
+    }
+  } catch (err) {
+    esbStockStatusMsg.value = err.message;
+  } finally {
+    isSyncingESBStock.value = false;
   }
 }
 
@@ -1305,41 +1425,213 @@ onMounted(() => {
           </button>
         </div>
 
-        <!-- TAB 1: Birmas Server Sync -->
+        <!-- TAB 1: Birmas Server & ESB API Sync -->
         <div v-if="birmasSyncTab === 'birmas'" class="space-y-4">
-          <div class="p-4 rounded-2xl bg-teal-50 border border-teal-200 text-xs text-teal-950 space-y-2.5">
-            <div class="flex items-start gap-2.5">
-              <CheckCircle2 class="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
-              <div>
-                <span class="font-bold block text-sm text-teal-900">Automated Background Sync Active</span>
-                <span class="text-teal-700 text-xs block mt-0.5 leading-relaxed">
-                  The audit server pulls and refreshes inventory automatically in the background using server-configured credentials (WireGuard / Birmas backend). All processes run quietly on the server.
+          <!-- Connection Config Form -->
+          <div class="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3.5 text-xs">
+            <div>
+              <label class="block font-bold text-slate-800 mb-1 flex items-center justify-between">
+                <span>Target Server / Backend API URL</span>
+                <span class="text-[10px] text-teal-700 font-semibold bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200">
+                  Direct URL Supported
+                </span>
+              </label>
+              <input
+                v-model="birmasServerUrl"
+                type="text"
+                placeholder="https://core-api.esb.co.id/extv1/visit-purpose"
+                class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs text-slate-900 focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              />
+              <p class="text-[11px] text-slate-500 mt-1">
+                Enter your Birmas backend or ESB endpoint. You can use full direct endpoint URLs like <code class="bg-slate-200/70 px-1 py-0.2 rounded font-mono text-[10.5px]">https://core-api.esb.co.id/extv1/visit-purpose</code>.
+              </p>
+            </div>
+
+            <!-- Endpoint Suffix Control -->
+            <div class="pt-2 border-t border-slate-200">
+              <label class="block font-bold text-slate-800 mb-1.5 flex items-center justify-between">
+                <span>Append Endpoint Path?</span>
+                <span v-if="birmasEndpointMode === 'none'" class="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                  ✓ No Endpoint Added (Direct Mode)
+                </span>
+              </label>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <!-- Option 1: No Endpoint (Direct URL) -->
+                <button
+                  @click="birmasEndpointMode = 'none'"
+                  type="button"
+                  class="p-2.5 rounded-xl border text-left cursor-pointer transition-all flex items-start gap-2"
+                  :class="birmasEndpointMode === 'none' ? 'bg-teal-50 border-teal-400 text-teal-950 font-semibold shadow-xs' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'"
+                >
+                  <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5"
+                    :class="birmasEndpointMode === 'none' ? 'border-teal-600 bg-teal-600 text-white' : 'border-slate-400'">
+                    <span v-if="birmasEndpointMode === 'none'" class="text-[9px] font-black">✓</span>
+                  </div>
+                  <div>
+                    <span class="block text-xs font-bold">No Endpoint (Direct URL)</span>
+                    <span class="block text-[10px] text-slate-500 mt-0.5">Use exact URL as specified without appending any route</span>
+                  </div>
+                </button>
+
+                <!-- Option 2: ESB Visit Purposes -->
+                <button
+                  @click="birmasEndpointMode = 'visit_purpose'"
+                  type="button"
+                  class="p-2.5 rounded-xl border text-left cursor-pointer transition-all flex items-start gap-2"
+                  :class="birmasEndpointMode === 'visit_purpose' ? 'bg-teal-50 border-teal-400 text-teal-950 font-semibold shadow-xs' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'"
+                >
+                  <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5"
+                    :class="birmasEndpointMode === 'visit_purpose' ? 'border-teal-600 bg-teal-600 text-white' : 'border-slate-400'">
+                    <span v-if="birmasEndpointMode === 'visit_purpose'" class="text-[9px] font-black">✓</span>
+                  </div>
+                  <div>
+                    <span class="block text-xs font-bold">ESB Visit Purposes</span>
+                    <span class="block text-[10px] font-mono text-slate-500 mt-0.5">/extv1/visit-purpose</span>
+                  </div>
+                </button>
+
+                <!-- Option 3: Birmas WordPress Stocks API -->
+                <button
+                  @click="birmasEndpointMode = 'wp'"
+                  type="button"
+                  class="p-2.5 rounded-xl border text-left cursor-pointer transition-all flex items-start gap-2"
+                  :class="birmasEndpointMode === 'wp' ? 'bg-teal-50 border-teal-400 text-teal-950 font-semibold shadow-xs' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'"
+                >
+                  <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5"
+                    :class="birmasEndpointMode === 'wp' ? 'border-teal-600 bg-teal-600 text-white' : 'border-slate-400'">
+                    <span v-if="birmasEndpointMode === 'wp'" class="text-[9px] font-black">✓</span>
+                  </div>
+                  <div>
+                    <span class="block text-xs font-bold">Birmas Stocks API</span>
+                    <span class="block text-[10px] font-mono text-slate-500 mt-0.5">/wp-json/api/v1/product_stocks</span>
+                  </div>
+                </button>
+
+                <!-- Option 4: Custom Endpoint -->
+                <button
+                  @click="birmasEndpointMode = 'custom'"
+                  type="button"
+                  class="p-2.5 rounded-xl border text-left cursor-pointer transition-all flex items-start gap-2"
+                  :class="birmasEndpointMode === 'custom' ? 'bg-teal-50 border-teal-400 text-teal-950 font-semibold shadow-xs' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'"
+                >
+                  <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5"
+                    :class="birmasEndpointMode === 'custom' ? 'border-teal-600 bg-teal-600 text-white' : 'border-slate-400'">
+                    <span v-if="birmasEndpointMode === 'custom'" class="text-[9px] font-black">✓</span>
+                  </div>
+                  <div>
+                    <span class="block text-xs font-bold">Custom Endpoint</span>
+                    <span class="block text-[10px] text-slate-500 mt-0.5">Enter custom route below</span>
+                  </div>
+                </button>
+              </div>
+
+              <!-- Custom input if custom selected -->
+              <div v-if="birmasEndpointMode === 'custom'" class="mt-2.5">
+                <input
+                  v-model="customEndpointPath"
+                  type="text"
+                  placeholder="/extv1/menu"
+                  class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl font-mono text-xs text-slate-900 focus:outline-none focus:border-teal-500"
+                />
+              </div>
+
+              <!-- Live URL Preview -->
+              <div class="mt-2.5 p-2.5 rounded-xl bg-slate-900 text-teal-300 font-mono text-[11px] flex items-center justify-between gap-2 overflow-x-auto">
+                <div class="flex items-center gap-2 truncate">
+                  <span class="text-slate-400 text-[10px] uppercase font-bold shrink-0">Query Target:</span>
+                  <span class="truncate font-semibold">{{ computedTargetUrl }}</span>
+                </div>
+                <span v-if="birmasEndpointMode === 'none'" class="text-[9px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800 px-1.5 py-0.5 rounded shrink-0">
+                  Exact URL
                 </span>
               </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-2 pt-2 border-t border-teal-200/60 text-[11px]">
-              <div class="bg-white/90 p-2.5 rounded-xl border border-teal-100 shadow-2xs">
-                <span class="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Sync Mode</span>
-                <span class="font-bold text-teal-900">Automated Server Daemon</span>
-              </div>
-              <div class="bg-white/90 p-2.5 rounded-xl border border-teal-100 shadow-2xs">
-                <span class="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Last Server Sync</span>
-                <span class="font-bold text-slate-800">{{ lastServerSyncTime ? formatDateTime(lastServerSyncTime).full : 'Active' }}</span>
-              </div>
+            <!-- Optional Bearer Token -->
+            <div class="pt-2 border-t border-slate-200">
+              <label class="block font-bold text-slate-800 mb-1">
+                Authorization Token / Bearer Key (Optional)
+              </label>
+              <input
+                v-model="birmasTokenInput"
+                type="password"
+                placeholder="Leave blank to use server environment BIRMAS_API_TOKEN"
+                class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl font-mono text-xs text-slate-900 focus:outline-none focus:border-teal-500"
+              />
             </div>
           </div>
 
-          <!-- Pull Button -->
-          <button
-            @click="handleBirmasServerSync"
-            :disabled="isSyncing || isSyncingBirmas"
-            type="button"
-            class="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-teal-600/20 disabled:opacity-50 cursor-pointer transition-all"
-          >
-            <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': isSyncing || isSyncingBirmas }" />
-            <span>{{ isSyncing || isSyncingBirmas ? 'Syncing with Birmas Server...' : 'Trigger Immediate Sync Now' }}</span>
-          </button>
+          <!-- Visit Purposes Viewer (If ESB Visit Purposes have been loaded) -->
+          <div v-if="visitPurposesList.length > 0" class="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs space-y-2.5">
+            <div class="flex items-start gap-2">
+              <Sparkles class="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <span class="font-bold text-amber-950 block text-xs">ESB Visit Purposes Loaded ({{ visitPurposesList.length }} order channels)</span>
+                <p class="text-[11px] text-amber-800 leading-relaxed mt-0.5">
+                  Visit purposes define order channels (e.g. Dine In, Take Away, Delivery) for sales transactions, not product stocks.
+                </p>
+              </div>
+            </div>
+
+            <!-- Badges for visit purposes -->
+            <div class="flex flex-wrap gap-1.5 pt-1">
+              <span
+                v-for="vp in visitPurposesList"
+                :key="vp.id"
+                class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white text-slate-800 border border-amber-300 shadow-2xs"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                <span>{{ vp.name }}</span>
+                <span class="text-[9px] text-slate-400 font-mono">#{{ vp.id }}</span>
+              </span>
+            </div>
+
+            <!-- Action to fetch real product stocks -->
+            <div class="pt-2 border-t border-amber-200/80 flex items-center justify-between gap-2">
+              <span class="text-[11px] text-amber-900 font-medium">Want product stocks from ESB Cloud?</span>
+              <button
+                @click="handleSyncESBStocks"
+                :disabled="isSyncingESBStock"
+                type="button"
+                class="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': isSyncingESBStock }" />
+                <span>{{ isSyncingESBStock ? 'Syncing ESB Catalog...' : 'Sync ESB Product Stocks' }}</span>
+              </button>
+            </div>
+            <p v-if="esbStockStatusMsg" class="text-[11px] font-bold text-emerald-800 bg-emerald-100/70 p-2 rounded-lg">
+              {{ esbStockStatusMsg }}
+            </p>
+          </div>
+
+          <!-- Status Message -->
+          <div v-if="sessionStatusMsg" class="p-3 rounded-xl bg-teal-50 border border-teal-200 text-xs text-teal-900 font-medium leading-relaxed">
+            {{ sessionStatusMsg }}
+          </div>
+
+          <!-- Pull / Trigger Button -->
+          <div class="flex items-center gap-2">
+            <button
+              @click="handleBirmasServerSync"
+              :disabled="isSyncing || isSyncingBirmas"
+              type="button"
+              class="flex-1 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-teal-600/20 disabled:opacity-50 cursor-pointer transition-all"
+            >
+              <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': isSyncing || isSyncingBirmas }" />
+              <span>{{ isSyncing || isSyncingBirmas ? 'Connecting & Syncing...' : 'Query URL & Refresh Stock Now' }}</span>
+            </button>
+            <button
+              @click="handleSyncESBStocks"
+              :disabled="isSyncingESBStock"
+              type="button"
+              class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all disabled:opacity-50"
+              title="Direct POS Live Catalog sync using ESB branch & menu APIs"
+            >
+              <Zap class="w-3.5 h-3.5 text-amber-600" />
+              <span>Sync ESB POS</span>
+            </button>
+          </div>
 
           <!-- Push API Accordion -->
           <div class="border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/60">
