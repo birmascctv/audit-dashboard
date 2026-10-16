@@ -38,7 +38,11 @@ import {
   Lock,
   Unlock,
   ShieldCheck,
-  ShieldAlert
+  ShieldAlert,
+  Key,
+  Eye,
+  EyeOff,
+  Copy
 } from 'lucide-vue-next';
 
 const { currentUser } = useAuth();
@@ -147,14 +151,19 @@ const isFinalizing = ref(false);
 const auditNotes = ref('');
 const pushToWordPressOnFinalize = ref(true);
 const birmasServerUrlInput = ref('https://admin.birmas.id');
+const birmasTokenInput = ref('');
+const birmasEndpointInput = ref('/wp-json/api/v1/product_stocks');
+const showBirmasToken = ref(false);
+const showPushApiDocs = ref(false);
+const pushCopied = ref(false);
 
 async function loadBirmasConfig() {
   try {
     const res = await fetch('/api/birmas/config');
     const data = await res.json();
-    if (data.birmasServerUrl) {
-      birmasServerUrlInput.value = data.birmasServerUrl;
-    }
+    if (data.birmasServerUrl) birmasServerUrlInput.value = data.birmasServerUrl;
+    if (data.birmasServerToken) birmasTokenInput.value = data.birmasServerToken;
+    if (data.birmasServerEndpoint) birmasEndpointInput.value = data.birmasServerEndpoint;
   } catch {}
 }
 
@@ -162,16 +171,19 @@ async function handleBirmasServerSync() {
   isSyncingBirmas.value = true;
   sessionStatusMsg.value = '';
   try {
-    if (birmasServerUrlInput.value.trim()) {
-      await fetch('/api/birmas/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ birmasServerUrl: birmasServerUrlInput.value.trim() }),
-      });
-    }
-    const res = await syncFromBirmasServer();
+    const configPayload = {
+      birmasServerUrl: birmasServerUrlInput.value.trim(),
+      birmasServerToken: birmasTokenInput.value.trim(),
+      birmasServerEndpoint: birmasEndpointInput.value.trim() || '/wp-json/api/v1/product_stocks',
+    };
+    await fetch('/api/birmas/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(configPayload),
+    });
+    const res = await syncFromBirmasServer(configPayload);
     if (res.success) {
-      sessionStatusMsg.value = `Successfully pulled fresh stock from Birmas Central Server! (${res.totalSyncedProducts || 0} items updated)`;
+      sessionStatusMsg.value = `Successfully pulled fresh stock from Birmas Server! (${res.totalSyncedProducts || 0} items updated across all stores)`;
       setTimeout(() => {
         isSessionModalOpen.value = false;
         sessionStatusMsg.value = '';
@@ -184,6 +196,29 @@ async function handleBirmasServerSync() {
   } finally {
     isSyncingBirmas.value = false;
   }
+}
+
+function copyPushCurlCommand() {
+  const origin = window.location.origin;
+  const token = birmasTokenInput.value.trim() || 'YOUR_TOKEN_HERE';
+  const cmd = `curl -X POST "${origin}/api/stock/push" \\
+  -H "Authorization: Bearer ${token}" \\
+  -H "Content-Type: application/json" \\
+  -d '[
+    {
+      "store": "Birmas Sudirman",
+      "productName": "Canard Brut Lager 330ml",
+      "barcode": "8997026800122",
+      "stockQty": 24,
+      "category": "Craft Beer",
+      "unit": "Can"
+    }
+  ]'`;
+  navigator.clipboard.writeText(cmd);
+  pushCopied.value = true;
+  setTimeout(() => {
+    pushCopied.value = false;
+  }, 2000);
 }
 
 async function saveSessionFromCurl() {
@@ -1290,35 +1325,72 @@ onMounted(() => {
           <div class="p-3.5 rounded-xl bg-teal-50 border border-teal-200 text-xs text-teal-900 flex items-start gap-2.5">
             <CheckCircle2 class="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
             <div>
-              <span class="font-bold block">Source: Birmas Central Server</span>
-              <span class="text-teal-700 text-[11px] block mt-0.5">Connected to https://admin.birmas.id (Direct ESB API integration, no cookies needed)</span>
+              <span class="font-bold block">Birmas Backend Live Connector</span>
+              <span class="text-teal-700 text-[11px] block mt-0.5">
+                Pulls products and stocks directly using your Backend URL & Bearer Token.
+              </span>
             </div>
           </div>
 
-          <div class="space-y-1.5">
-            <label class="text-xs font-bold text-slate-700 block">
-              Birmas Server URL or IP Address:
+          <!-- Backend URL -->
+          <div class="space-y-1">
+            <label class="text-xs font-bold text-slate-700 flex items-center justify-between">
+              <span>Birmas Backend URL:</span>
+              <span class="text-[10px] text-slate-400 font-normal">Domain or IP</span>
             </label>
-            <div class="flex items-center gap-2">
+            <input
+              v-model="birmasServerUrlInput"
+              type="text"
+              placeholder="https://admin.birmas.id or http://103.xxx.xxx.xxx:8000"
+              class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-teal-500"
+            />
+          </div>
+
+          <!-- Bearer Token -->
+          <div class="space-y-1">
+            <label class="text-xs font-bold text-slate-700 flex items-center justify-between">
+              <span class="flex items-center gap-1.5">
+                <Key class="w-3.5 h-3.5 text-teal-600" />
+                <span>API Bearer Token / Secret Key:</span>
+              </span>
+              <span class="text-[10px] text-slate-400 font-normal">Optional / If backend requires auth</span>
+            </label>
+            <div class="relative">
               <input
-                v-model="birmasServerUrlInput"
-                type="text"
-                placeholder="https://admin.birmas.id or http://103.xxx.xxx.xxx"
-                class="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-teal-500"
+                v-model="birmasTokenInput"
+                :type="showBirmasToken ? 'text' : 'password'"
+                placeholder="Enter Bearer Token (e.g. birmas_tok_...)"
+                class="w-full pl-3 pr-10 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-teal-500"
               />
+              <button
+                @click="showBirmasToken = !showBirmasToken"
+                type="button"
+                class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                title="Toggle token visibility"
+              >
+                <component :is="showBirmasToken ? EyeOff : Eye" class="w-3.5 h-3.5" />
+              </button>
             </div>
             <p class="text-[11px] text-slate-400">
-              Supports domain name (e.g. <code class="text-teal-700">https://admin.birmas.id</code>) or direct server IP (e.g. <code class="text-teal-700">http://103.x.x.x:8000</code>).
+              Passed automatically in the <code class="text-teal-700 font-mono">Authorization: Bearer [token]</code> header.
             </p>
           </div>
 
-          <div class="text-xs text-slate-600 space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-            <p class="font-bold text-slate-800">Why pull from Birmas Server?</p>
-            <p class="text-[11px] leading-relaxed text-slate-600">
-              The Birmas server is configured with direct, authorized access to the official ESB API. Pulling data from the Birmas server refreshes stock for all 4 stores automatically without expiring session cookies or manual cURL exports.
-            </p>
+          <!-- API Endpoint Path -->
+          <div class="space-y-1">
+            <label class="text-xs font-bold text-slate-700 flex items-center justify-between">
+              <span>Endpoint Path:</span>
+              <span class="text-[10px] text-slate-400 font-normal">API route</span>
+            </label>
+            <input
+              v-model="birmasEndpointInput"
+              type="text"
+              placeholder="/wp-json/api/v1/product_stocks or /api/stocks"
+              class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-teal-500"
+            />
           </div>
 
+          <!-- Pull Button -->
           <button
             @click="handleBirmasServerSync"
             :disabled="isSyncing || isSyncingBirmas"
@@ -1328,6 +1400,54 @@ onMounted(() => {
             <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': isSyncing || isSyncingBirmas }" />
             <span>{{ isSyncing || isSyncingBirmas ? 'Pulling Data from Birmas Server...' : 'Pull Fresh Stock from Birmas Server Now' }}</span>
           </button>
+
+          <!-- Push API Accordion -->
+          <div class="border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/60">
+            <button
+              @click="showPushApiDocs = !showPushApiDocs"
+              type="button"
+              class="w-full px-4 py-2.5 flex items-center justify-between text-xs font-bold text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <div class="flex items-center gap-2">
+                <Zap class="w-3.5 h-3.5 text-amber-600" />
+                <span>Want to PUSH data directly from your server to Audit?</span>
+              </div>
+              <component :is="showPushApiDocs ? ChevronDown : ChevronRight" class="w-3.5 h-3.5 text-slate-400" />
+            </button>
+
+            <div v-if="showPushApiDocs" class="p-4 pt-1 space-y-3 text-xs border-t border-slate-200 bg-white">
+              <p class="text-slate-600 text-[11px] leading-relaxed">
+                You can also configure your Birmas server backend, cron job, or webhook to <strong>send (POST)</strong> stock data directly to this audit server at <code class="text-teal-800 font-mono font-bold">/api/stock/push</code>:
+              </p>
+
+              <div class="relative bg-slate-900 rounded-xl p-3 font-mono text-[11px] text-teal-300 overflow-x-auto">
+                <button
+                  @click="copyPushCurlCommand"
+                  type="button"
+                  class="absolute right-2 top-2 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white text-[10px] font-sans font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <component :is="pushCopied ? Check : Copy" class="w-3 h-3 text-teal-400" />
+                  <span>{{ pushCopied ? 'Copied!' : 'Copy cURL' }}</span>
+                </button>
+                <pre class="pr-16 text-[10.5px] leading-relaxed">curl -X POST "{{ typeof window !== 'undefined' ? window.location.origin : '' }}/api/stock/push" \
+  -H "Authorization: Bearer {{ birmasTokenInput || 'YOUR_TOKEN' }}" \
+  -H "Content-Type: application/json" \
+  -d '[
+    {
+      "store": "Birmas Sudirman",
+      "productName": "Canard Brut Lager 330ml",
+      "barcode": "8997026800122",
+      "stockQty": 24,
+      "category": "Craft Beer",
+      "unit": "Can"
+    }
+  ]'</pre>
+              </div>
+              <p class="text-[11px] text-slate-500">
+                Any payload received is immediately applied into SQLite and shown on this Stock Audit table!
+              </p>
+            </div>
+          </div>
         </div>
 
         <!-- TAB 2: Direct ESB ERP Session cURL -->
