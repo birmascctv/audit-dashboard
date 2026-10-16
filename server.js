@@ -1078,10 +1078,9 @@ async function startServer() {
   app.get('/api/birmas/config', (req, res) => {
     const token = db.getConfig('birmas_server_token') || '';
     res.json({
-      birmasServerUrl: db.getConfig('wp_url') || 'https://admin.birmas.id',
-      birmasServerEndpoint: db.getConfig('birmas_server_endpoint') || '/wp-json/api/v1/product_stocks',
-      hasToken: !!token,
-      birmasServerToken: token,
+      birmasServerUrl: db.getConfig('wp_url') || process.env.BIRMAS_BACKEND_URL || 'https://admin.birmas.id',
+      birmasServerEndpoint: db.getConfig('birmas_server_endpoint') || process.env.BIRMAS_ENDPOINT_PATH || '/wp-json/api/v1/product_stocks',
+      hasToken: !!(token || process.env.BIRMAS_API_TOKEN),
       lastSyncedAt: db.getConfig('last_birmas_server_synced_at') || null,
     });
   });
