@@ -150,10 +150,7 @@ const pendingUnknownBarcode = ref('');
 const isFinalizing = ref(false);
 const auditNotes = ref('');
 const pushToWordPressOnFinalize = ref(true);
-const birmasServerUrlInput = ref('https://admin.birmas.id');
-const birmasTokenInput = ref('');
-const birmasEndpointInput = ref('/wp-json/api/v1/product_stocks');
-const showBirmasToken = ref(false);
+const lastServerSyncTime = ref(null);
 const showPushApiDocs = ref(false);
 const pushCopied = ref(false);
 
@@ -161,9 +158,7 @@ async function loadBirmasConfig() {
   try {
     const res = await fetch('/api/birmas/config');
     const data = await res.json();
-    if (data.birmasServerUrl) birmasServerUrlInput.value = data.birmasServerUrl;
-    if (data.birmasServerToken) birmasTokenInput.value = data.birmasServerToken;
-    if (data.birmasServerEndpoint) birmasEndpointInput.value = data.birmasServerEndpoint;
+    if (data.lastSyncedAt) lastServerSyncTime.value = data.lastSyncedAt;
   } catch {}
 }
 
@@ -171,25 +166,16 @@ async function handleBirmasServerSync() {
   isSyncingBirmas.value = true;
   sessionStatusMsg.value = '';
   try {
-    const configPayload = {
-      birmasServerUrl: birmasServerUrlInput.value.trim(),
-      birmasServerToken: birmasTokenInput.value.trim(),
-      birmasServerEndpoint: birmasEndpointInput.value.trim() || '/wp-json/api/v1/product_stocks',
-    };
-    await fetch('/api/birmas/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(configPayload),
-    });
-    const res = await syncFromBirmasServer(configPayload);
+    const res = await syncFromBirmasServer();
     if (res.success) {
-      sessionStatusMsg.value = `Successfully pulled fresh stock from Birmas Server! (${res.totalSyncedProducts || 0} items updated across all stores)`;
+      lastServerSyncTime.value = new Date().toISOString();
+      sessionStatusMsg.value = `Successfully synchronized! (${res.totalSyncedProducts || 0} products updated from Birmas server)`;
       setTimeout(() => {
         isSessionModalOpen.value = false;
         sessionStatusMsg.value = '';
       }, 1800);
     } else {
-      sessionStatusMsg.value = res.error || res.message || 'Failed to pull from Birmas server';
+      sessionStatusMsg.value = res.error || res.message || 'Quiet sync failed to reach Birmas server';
     }
   } catch (err) {
     sessionStatusMsg.value = err.message;
@@ -200,9 +186,8 @@ async function handleBirmasServerSync() {
 
 function copyPushCurlCommand() {
   const origin = window.location.origin;
-  const token = birmasTokenInput.value.trim() || 'YOUR_TOKEN_HERE';
   const cmd = `curl -X POST "${origin}/api/stock/push" \\
-  -H "Authorization: Bearer ${token}" \\
+  -H "Authorization: Bearer <CONFIGURED_SERVER_TOKEN>" \\
   -H "Content-Type: application/json" \\
   -d '[
     {
@@ -1322,72 +1307,27 @@ onMounted(() => {
 
         <!-- TAB 1: Birmas Server Sync -->
         <div v-if="birmasSyncTab === 'birmas'" class="space-y-4">
-          <div class="p-3.5 rounded-xl bg-teal-50 border border-teal-200 text-xs text-teal-900 flex items-start gap-2.5">
-            <CheckCircle2 class="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
-            <div>
-              <span class="font-bold block">Birmas Backend Live Connector</span>
-              <span class="text-teal-700 text-[11px] block mt-0.5">
-                Pulls products and stocks directly using your Backend URL & Bearer Token.
-              </span>
+          <div class="p-4 rounded-2xl bg-teal-50 border border-teal-200 text-xs text-teal-950 space-y-2.5">
+            <div class="flex items-start gap-2.5">
+              <CheckCircle2 class="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+              <div>
+                <span class="font-bold block text-sm text-teal-900">Automated Background Sync Active</span>
+                <span class="text-teal-700 text-xs block mt-0.5 leading-relaxed">
+                  The audit server pulls and refreshes inventory automatically in the background using server-configured credentials (WireGuard / Birmas backend). All processes run quietly on the server.
+                </span>
+              </div>
             </div>
-          </div>
 
-          <!-- Backend URL -->
-          <div class="space-y-1">
-            <label class="text-xs font-bold text-slate-700 flex items-center justify-between">
-              <span>Birmas Backend URL:</span>
-              <span class="text-[10px] text-slate-400 font-normal">Domain or IP</span>
-            </label>
-            <input
-              v-model="birmasServerUrlInput"
-              type="text"
-              placeholder="https://admin.birmas.id or http://103.xxx.xxx.xxx:8000"
-              class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-teal-500"
-            />
-          </div>
-
-          <!-- Bearer Token -->
-          <div class="space-y-1">
-            <label class="text-xs font-bold text-slate-700 flex items-center justify-between">
-              <span class="flex items-center gap-1.5">
-                <Key class="w-3.5 h-3.5 text-teal-600" />
-                <span>API Bearer Token / Secret Key:</span>
-              </span>
-              <span class="text-[10px] text-slate-400 font-normal">Optional / If backend requires auth</span>
-            </label>
-            <div class="relative">
-              <input
-                v-model="birmasTokenInput"
-                :type="showBirmasToken ? 'text' : 'password'"
-                placeholder="Enter Bearer Token (e.g. birmas_tok_...)"
-                class="w-full pl-3 pr-10 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-teal-500"
-              />
-              <button
-                @click="showBirmasToken = !showBirmasToken"
-                type="button"
-                class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
-                title="Toggle token visibility"
-              >
-                <component :is="showBirmasToken ? EyeOff : Eye" class="w-3.5 h-3.5" />
-              </button>
+            <div class="grid grid-cols-2 gap-2 pt-2 border-t border-teal-200/60 text-[11px]">
+              <div class="bg-white/90 p-2.5 rounded-xl border border-teal-100 shadow-2xs">
+                <span class="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Sync Mode</span>
+                <span class="font-bold text-teal-900">Automated Server Daemon</span>
+              </div>
+              <div class="bg-white/90 p-2.5 rounded-xl border border-teal-100 shadow-2xs">
+                <span class="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Last Server Sync</span>
+                <span class="font-bold text-slate-800">{{ lastServerSyncTime ? formatDateTime(lastServerSyncTime).full : 'Active' }}</span>
+              </div>
             </div>
-            <p class="text-[11px] text-slate-400">
-              Passed automatically in the <code class="text-teal-700 font-mono">Authorization: Bearer [token]</code> header.
-            </p>
-          </div>
-
-          <!-- API Endpoint Path -->
-          <div class="space-y-1">
-            <label class="text-xs font-bold text-slate-700 flex items-center justify-between">
-              <span>Endpoint Path:</span>
-              <span class="text-[10px] text-slate-400 font-normal">API route</span>
-            </label>
-            <input
-              v-model="birmasEndpointInput"
-              type="text"
-              placeholder="/wp-json/api/v1/product_stocks or /api/stocks"
-              class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:border-teal-500"
-            />
           </div>
 
           <!-- Pull Button -->
@@ -1395,10 +1335,10 @@ onMounted(() => {
             @click="handleBirmasServerSync"
             :disabled="isSyncing || isSyncingBirmas"
             type="button"
-            class="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-teal-600/20 disabled:opacity-50 cursor-pointer"
+            class="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-teal-600/20 disabled:opacity-50 cursor-pointer transition-all"
           >
             <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': isSyncing || isSyncingBirmas }" />
-            <span>{{ isSyncing || isSyncingBirmas ? 'Pulling Data from Birmas Server...' : 'Pull Fresh Stock from Birmas Server Now' }}</span>
+            <span>{{ isSyncing || isSyncingBirmas ? 'Syncing with Birmas Server...' : 'Trigger Immediate Sync Now' }}</span>
           </button>
 
           <!-- Push API Accordion -->
@@ -1430,7 +1370,7 @@ onMounted(() => {
                   <span>{{ pushCopied ? 'Copied!' : 'Copy cURL' }}</span>
                 </button>
                 <pre class="pr-16 text-[10.5px] leading-relaxed">curl -X POST "{{ typeof window !== 'undefined' ? window.location.origin : '' }}/api/stock/push" \
-  -H "Authorization: Bearer {{ birmasTokenInput || 'YOUR_TOKEN' }}" \
+  -H "Authorization: Bearer &lt;CONFIGURED_SERVER_TOKEN&gt;" \
   -H "Content-Type: application/json" \
   -d '[
     {
