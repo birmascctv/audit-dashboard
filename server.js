@@ -66,10 +66,8 @@ process.on('unhandledRejection', (reason) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Port configuration: support process.env.PORT or CLI argument, default 3000
-const portArgIndex = process.argv.indexOf('--port');
-const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : null;
-const PORT = cliPort || (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
+// In AI Studio runtime environment, the app must bind strictly to port 3000
+const PORT = 3000;
 
 export const BIRMAS_STORE_KEYWORD_MAP = [
   { storeId: 'birmas-sudirman', name: 'Birmas Sudirman', keywords: ['sudirman', 'outs', 'sdr', 'outlet sudirman', 'brms'] },
@@ -725,9 +723,10 @@ async function startServer() {
 
     const cleanBarcode = payload.barcode.trim();
     const all = db.getAllProducts();
+    const targetTitle = (payload.productTitle || payload.varian || '').toLowerCase().trim();
     const existing = (payload.productId || payload.wpId)
       ? all.find(p => p.id === (payload.productId || payload.wpId))
-      : null;
+      : (targetTitle ? all.find(p => (p.productTitle && p.productTitle.toLowerCase().trim() === targetTitle) || (p.varian && p.varian.toLowerCase().trim() === targetTitle)) : null);
 
     const productItem = {
       id: existing ? existing.id : (payload.wpId || `prod-${Date.now()}`),
@@ -736,7 +735,7 @@ async function startServer() {
       brand: existing?.brand || payload.brand || 'Birmas',
       varian: existing?.varian || payload.varian || cleanBarcode,
       productTitle: existing?.productTitle || payload.productTitle || `${existing?.brand || payload.brand || 'Birmas'} ${existing?.varian || payload.varian || cleanBarcode}`,
-      packageType: existing?.packageType || payload.packageType || 'Botol',
+      packageType: existing?.packageType || payload.packageType || 'Kaleng',
       volume: existing?.volume || payload.volume || 330,
       unitVolume: existing?.unitVolume || payload.unitVolume || 'ml',
       price: existing?.price !== undefined ? existing.price : (payload.price || 0),
@@ -747,9 +746,21 @@ async function startServer() {
 
     db.saveProduct(productItem);
 
+    // Ensure all products matching this title or variant in SQLite get this barcode updated for all stores
+    if (targetTitle) {
+      try {
+        const sqliteDb = db.getDb();
+        sqliteDb.prepare(`
+          UPDATE products
+          SET barcode = ?
+          WHERE LOWER(TRIM(product_title)) = ? OR LOWER(TRIM(varian)) = ?
+        `).run(cleanBarcode, targetTitle, targetTitle);
+      } catch (_) {}
+    }
+
     res.json({
       success: true,
-      message: `Barcode ${cleanBarcode} linked successfully to ${productItem.productTitle || productItem.varian}`,
+      message: `Barcode ${cleanBarcode} linked successfully to ${productItem.productTitle || productItem.varian} across all stores`,
       product: productItem,
     });
   });
