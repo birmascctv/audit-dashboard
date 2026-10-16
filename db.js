@@ -1257,3 +1257,31 @@ export function logAuditScanEvent(storeId, barcode, auditor = 'Auditor', action 
     return { success: false, error: err.message };
   }
 }
+
+export function getVisitPurposes() {
+  try {
+    const raw = getConfig('esb_visit_purposes', '');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+    return [
+      { id: 1, name: 'DINE IN', companyCode: 'BRM' },
+      { id: 2, name: 'TAKE AWAY', companyCode: 'BRM' },
+      { id: 3, name: 'DELIVERY', companyCode: 'BRM' },
+      { id: 4, name: 'GOFOOD', companyCode: 'BRM' },
+      { id: 5, name: 'GRABFOOD', companyCode: 'BRM' },
+      { id: 6, name: 'SHOPEEFOOD', companyCode: 'BRM' },
+      { id: 7, name: 'WHATSAPP ORDER', companyCode: 'BRM' },
+    ];
+  } catch {
+    return [];
+  }
+}
+
+export function setVisitPurposes(purposes) {
+  const list = Array.isArray(purposes) ? purposes : [];
+  setConfig('esb_visit_purposes', JSON.stringify(list));
+  setConfig('last_visit_purposes_synced_at', new Date().toISOString());
+  return list;
+}
