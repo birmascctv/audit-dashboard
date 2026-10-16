@@ -1,2157 +1,839 @@
-import 'dotenv/config';
-import express from 'express';
-import path from 'path';
-import fs from 'fs';
-import { exec } from 'child_process';
-import { fileURLToPath } from 'url';
-import multer from 'multer';
-import { createServer as createViteServer } from 'vite';
-import * as db from './db.js';
-import * as storeAuditService from './storeAuditService.js';
+import { ref, computed } from 'vue';
+import {
+  DEFAULT_STORES,
+  DEFAULT_WP_PRODUCTS,
+  fetchStores,
+  fetchWordPressConfig,
+  saveWordPressConfig,
+  fetchProducts,
+  saveNewBarcode,
+  syncWordPressData,
+  syncDirectESB,
+  syncDirectESBERP,
+  fetchAuditState,
+  sendAuditScan,
+  adjustAuditCount,
+  resetAuditSession,
+  finalizeAuditSession,
+  fetchAuditHistory,
+  clearAuditHistory,
+  addStore as apiAddStore,
+  deleteStore as apiDeleteStore,
+} from '../services/wordpressApi.js';
 
-export function parseSafeMoney(val) {
-  if (val === undefined || val === null || val === '') return 0;
-  if (typeof val === 'number') return isNaN(val) ? 0 : val;
-  let str = String(val).trim().replace(/^(Rp|IDR)\.?\s*/i, '').trim();
-  if (!str) return 0;
-
-  if (str.includes(',') && str.includes('.')) {
-    const lastComma = str.lastIndexOf(',');
-    const lastDot = str.lastIndexOf('.');
-    if (lastDot > lastComma) {
-      // US format: 1,250,000.00
-      str = str.replace(/,/g, '');
-    } else {
-      // EU/Indonesian format: 1.250.000,00
-      str = str.replace(/\./g, '').replace(',', '.');
-    }
-  } else if (str.includes(',')) {
-    const parts = str.split(',');
-    if (parts.length > 2) {
-      str = str.replace(/,/g, '');
-    } else if (parts.length === 2) {
-      if (parts[1].length === 3) {
-        str = str.replace(/,/g, '');
-      } else if (parts[1].length === 2 && parts[1] === '00') {
-        str = parts[0];
-      } else {
-        str = str.replace(',', '.');
-      }
-    }
-  } else if (str.includes('.')) {
-    const parts = str.split('.');
-    if (parts.length > 2) {
-      str = str.replace(/\./g, '');
-    } else if (parts.length === 2) {
-      if (parts[1].length === 3) {
-        str = str.replace(/\./g, '');
-      } else if (parts[1].length === 2 && parts[1] === '00') {
-        str = parts[0];
-      }
-    }
-  }
-
-  const num = parseFloat(str);
-  return isNaN(num) ? 0 : num;
-}
-
-// Prevent unhandled errors from terminating Node
-process.on('uncaughtException', (err) => {
-  console.error('[Process Uncaught Exception]:', err.message);
-});
-process.on('unhandledRejection', (reason) => {
-  console.warn('[Process Unhandled Rejection]:', reason);
+// Global Singleton State
+const stores = ref(DEFAULT_STORES);
+const selectedStoreId = ref('birmas-kuningan');
+const wpConfig = ref({
+  wpUrl: 'https://demo-store.local',
+  apiType: 'woocommerce',
+  customEndpointPath: '/wp-json/birmas/v1/chiller-stocks',
+  consumerKey: '',
+  consumerSecret: '',
+  isConnected: true,
+  lastSyncedAt: new Date().toISOString(),
+  selectedStoreId: 'birmas-kuningan',
+  autoSyncIntervalSeconds: 30,
 });
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const wpProducts = ref(DEFAULT_WP_PRODUCTS);
+const scannedCounts = ref({});
+const scanLogs = ref([]);
+const auditHistory = ref([]);
+const isSyncing = ref(false);
+const isInitialized = ref(false);
+const lastCheckedAt = ref(new Date().toLocaleTimeString());
+const isAutoCheckerActive = ref(true);
 
-// In AI Studio runtime environment, the app must bind strictly to port 3000
-const PORT = 3000;
+const lastSyncStatus = ref({
+  success: true,
+  message: 'Connected to Birmas Store Backend Storage',
+});
 
-export const BIRMAS_STORE_KEYWORD_MAP = [
-  { storeId: 'birmas-sudirman', name: 'Birmas Sudirman', keywords: ['sudirman', 'outs', 'sdr', 'outlet sudirman', 'brms'] },
-  { storeId: 'birmas-kuningan', name: 'Birmas Kuningan', keywords: ['kuningan', 'brmk', 'kng', 'kunngan', 'outlet kuningan'] },
-  { storeId: 'birmas-kwitang', name: 'Birmas Kwitang', keywords: ['kwitang', 'brmkw', 'kwt', 'outlet kwitang'] },
-  { storeId: 'birmas-lebak-bulus', name: 'Birmas Lebak Bulus', keywords: ['lebak bulus', 'lebak', 'bulus', 'brmlb', 'lbb', 'lbulus', 'outlet lebak bulus'] },
-  { storeId: 'birmas-kelapa-gading', name: 'Birmas Kelapa Gading', keywords: ['kelapa gading', 'gading', 'brmkg', 'kgading', 'outlet kelapa gading'] },
-  { storeId: 'birmas-tebet', name: 'Birmas Tebet', keywords: ['tebet', 'brmt', 'tbt', 'outlet tebet'] },
-  { storeId: 'birmas-nomadic', name: 'Birmas Nomadic (Bandung)', keywords: ['nomadic', 'bandung', 'lr00'] },
-  { storeId: 'birmas-nusadua', name: 'Birmas Nusa Dua (Bali)', keywords: ['nusa dua', 'bali', 'nusadua', 'bbnd'] },
-];
-
-export function extractMatchedStoreId(item) {
-  if (!item) return null;
-  if (typeof item === 'string') {
-    const s = String(item).toLowerCase();
-    const found = BIRMAS_STORE_KEYWORD_MAP.find(m => m.storeId === s || m.keywords.some(kw => s.includes(kw)));
-    return found ? found.storeId : null;
-  }
-  if (item.store_id) {
-    const s = String(item.store_id).toLowerCase();
-    const found = BIRMAS_STORE_KEYWORD_MAP.find(m => m.storeId === s || m.keywords.some(kw => s.includes(kw)));
-    if (found) return found.storeId;
-  }
-  const locRaw = item.location || item.branch || item.store || item.outlet || item.location_name || item.branch_name || item.branchCode || '';
-  let locStr = '';
-  if (Array.isArray(locRaw)) {
-    locStr = locRaw.map(l => typeof l === 'object' ? (l.post_title || l.name || l.title || '') : String(l)).join(' ');
-  } else if (typeof locRaw === 'object' && locRaw !== null) {
-    locStr = locRaw.post_title || locRaw.name || locRaw.title || '';
-  } else {
-    locStr = String(locRaw);
-  }
-  const clean = locStr.toLowerCase();
-  const matched = BIRMAS_STORE_KEYWORD_MAP.find(m => clean.includes(m.storeId) || m.keywords.some(kw => clean.includes(kw)));
-  return matched ? matched.storeId : null;
-}
-
-let isEsbSyncing = false;
-
-// Direct ESB Live Sync: Connects straight to ESB POS Cloud to fetch real store stock per branch
-export async function runDirectESBSync() {
-  if (isEsbSyncing) {
-    console.log('[Direct ESB Sync] Sync already in progress, skipping.');
-    return { success: false, message: 'Already syncing' };
-  }
-  isEsbSyncing = true;
+// Load state from backend
+async function initializeFromBackend() {
   try {
-    const token = process.env.ESB_BEARER_TOKEN || 'enAYShLVFFtWqFPmcd5nwkuJFmeVC5cG3pgwgShNpmmpRLzEPeRabbvG8zdm';
-    const baseUrl = (process.env.ESB_BASE_URL || 'https://stg7.esb.co.id/api-fnb-backend-int/web').replace(/\/$/, '');
-    const defaultVp = process.env.ESB_VISIT_PURPOSE_ID || '2';
+    const [loadedStores, loadedConfig, loadedProducts, loadedHistory] = await Promise.all([
+      fetchStores().catch(() => DEFAULT_STORES),
+      fetchWordPressConfig().catch(() => wpConfig.value),
+      fetchProducts().catch(() => DEFAULT_WP_PRODUCTS),
+      fetchAuditHistory().catch(() => []),
+    ]);
 
-    console.log(`[Direct ESB Sync] Connecting to ${baseUrl} ...`);
-    const headers = {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/json',
-      'User-Agent': 'Mozilla/5.0 BirmasAudit/2.0',
-    };
-
-    // 1. Fetch live branches from ESB
-    let branches = [];
-    try {
-      const res = await fetch(`${baseUrl}/extv1/branch`, { headers, signal: AbortSignal.timeout(15000) });
-      if (res.ok) {
-        branches = await res.json();
-      }
-    } catch (err) {
-      console.warn('[Direct ESB Sync] Failed to fetch branches from ESB, using active branch list:', err.message);
-    }
-
-    if (!Array.isArray(branches) || branches.length === 0) {
-      branches = [
-        { branchCode: 'OUTS', branchName: 'Outlet Sudirman' },
-        { branchCode: 'BRMT', branchName: 'Tebet' },
-        { branchCode: 'BRMK', branchName: 'Kuningan' },
-        { branchCode: 'BRMKG', branchName: 'Kelapa Gading' },
-        { branchCode: 'BRMLB', branchName: 'Lebak Bulus' },
-        { branchCode: 'BRMKW', branchName: 'Kwitang' },
-        { branchCode: 'BBND', branchName: 'Bali Nusa Dua' },
-      ];
-    }
-
-    console.log(`[Direct ESB Sync] Syncing ${branches.length} Birmas branches in SQLite...`);
-    const branchMap = new Map();
-    for (const b of branches) {
-      const storeId = extractMatchedStoreId(b.branchCode) || extractMatchedStoreId(b.branchName) || 'birmas-kuningan';
-      branchMap.set(b.branchCode, storeId);
-    }
-
-    // Preserve existing mapped barcodes in SQLite
-    const existingProducts = db.getAllProducts();
-    const barcodeMap = new Map();
-    for (const p of existingProducts) {
-      if (p.barcode) {
-        barcodeMap.set(p.id, p.barcode);
-        if (p.brand && p.varian) {
-          const key = `${p.brand.toLowerCase()}-${p.varian.toLowerCase()}`;
-          barcodeMap.set(key, p.barcode);
-        }
-      }
-    }
-
-    const productCatalog = new Map();
-    let totalStockEntries = 0;
-
-    // Helper to normalize ESB item titles and extract volume
-    function normalizeMenu(rawName) {
-      let name = (rawName || '').trim();
-      name = name.replace(/^(\(\s*\d+\+\s*\)|\[\s*\d+\+\s*\])\s*/i, '');
-      name = name.replace(/^\[[A-Za-z0-9_-]+\]\s*/, '');
-
-      let volume = 330;
-      const volMatch = name.match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)/i);
-      if (volMatch) {
-        const val = parseFloat(volMatch[1]);
-        const unit = volMatch[2].toLowerCase();
-        volume = unit === 'l' ? val * 1000 : unit === 'cl' ? val * 10 : val;
-      }
-
-      let packageType = 'Botol';
-      if (name.toLowerCase().includes('can') || name.toLowerCase().includes('kaleng')) {
-        packageType = 'Kaleng';
-      }
-
-      const knownBrands = ['Bintang', 'Anker', 'Iceland', 'Albens', 'Orang Tua', 'Kulturale', 'Guinness', 'Prost', 'Siren', 'Vibe', 'Palapa', 'Red Bull', 'Kawa Kawa', 'Intisari', 'Atlas', 'Pu Tao Chee Chiew', 'Royal Brewhouse'];
-      let brand = '';
-      for (const b of knownBrands) {
-        if (new RegExp(`\\b${b}\\b`, 'i').test(name)) {
-          brand = b;
-          break;
-        }
-      }
-      if (!brand) {
-        brand = name.split(/\s+/)[0] || 'Birmas';
-        brand = brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
-      }
-
-      let varian = name;
-      if (varian.toLowerCase().startsWith(brand.toLowerCase())) {
-        varian = varian.slice(brand.length).trim();
-      }
-      if (!varian) varian = 'Standard';
-
-      return { displayName: name, brand, varian, volume, packageType };
-    }
-
-    // 2. Fetch menu & stock per branch
-    for (const b of branches) {
-      try {
-        let menuUrl = `${baseUrl}/extv1/menu?branchCode=${encodeURIComponent(b.branchCode)}&visitPurposeID=${defaultVp}`;
-        let res = await fetch(menuUrl, { headers, signal: AbortSignal.timeout(20000) });
-        if (!res.ok) {
-          menuUrl = `${baseUrl}/extv1/menu?branchCode=${encodeURIComponent(b.branchCode)}&visitPurposeID=2`;
-          res = await fetch(menuUrl, { headers, signal: AbortSignal.timeout(20000) });
-        }
-        if (!res.ok) continue;
-
-        const categories = await res.json();
-        if (!Array.isArray(categories)) continue;
-        const storeId = branchMap.get(b.branchCode);
-
-        for (const cat of categories) {
-          for (const detail of (cat.menuCategoryDetails || [])) {
-            for (const m of (detail.menus || [])) {
-              const menuId = m.menuID;
-              const rawName = (m.menuName || m.menuShortName || '').trim();
-              if (!rawName) continue;
-
-              const norm = normalizeMenu(rawName);
-              const prodId = `esb-${menuId}`;
-              const key = `${norm.brand.toLowerCase()}-${norm.varian.toLowerCase()}`;
-              const barcode = barcodeMap.get(prodId) || barcodeMap.get(key) || null;
-              const price = Number(m.sellPrice ?? m.price ?? 0);
-              const qty = Number(m.qty ?? 0);
-
-              if (!productCatalog.has(prodId)) {
-                productCatalog.set(prodId, {
-                  id: prodId,
-                  barcode: barcode,
-                  sku: String(m.menuCode || menuId),
-                  brand: norm.brand,
-                  varian: norm.varian,
-                  productTitle: norm.displayName,
-                  packageType: norm.packageType,
-                  volume: norm.volume,
-                  unitVolume: 'ml',
-                  price: price,
-                  wpStatus: 'publish',
-                  lastUpdated: new Date().toISOString(),
-                });
-              }
-
-              if (storeId) {
-                db.setProductStock(storeId, prodId, qty);
-                totalStockEntries++;
-              }
-            }
-          }
-        }
-        console.log(`[Direct ESB Sync] Branch ${b.branchCode} (${b.branchName}) synced.`);
-      } catch (err) {
-        console.warn(`[Direct ESB Sync] Branch ${b.branchCode} sync error:`, err.message);
-      }
-    }
-
-    // Save all deduplicated products into SQLite
-    for (const prod of productCatalog.values()) {
-      db.saveProduct(prod);
-    }
-
-    db.setConfig('last_esb_synced_at', new Date().toISOString());
-    console.log(`[Direct ESB Sync] Success! Synced ${productCatalog.size} products & ${totalStockEntries} branch stocks.`);
-    return {
-      success: true,
-      totalProducts: productCatalog.size,
-      totalStockEntries,
-      totalStores: branches.length,
-    };
-  } finally {
-    isEsbSyncing = false;
-  }
-}
-
-// ==========================================
-// BIRMAS CENTRAL SERVER INVENTORY SYNC ENGINE
-// Pulls directly from Birmas central server (which has permanent ESB API access)
-// No session cookies or cURL required!
-// ==========================================
-let isBirmasServerSyncing = false;
-
-export async function runBirmasServerSync(options = {}) {
-  if (isBirmasServerSyncing) {
-    return { success: false, message: 'Birmas Central Server sync is already running in background' };
-  }
-  isBirmasServerSyncing = true;
-  try {
-    const baseUrl = options.baseUrl || options.birmasServerUrl || db.getConfig('wp_url') || process.env.BIRMAS_BACKEND_URL || 'https://admin.birmas.id';
-    const token = options.token || options.apiToken || options.birmasServerToken || db.getConfig('birmas_server_token') || process.env.BIRMAS_API_TOKEN || '';
-    const endpointPath = options.endpointPath || options.birmasServerEndpoint || db.getConfig('birmas_server_endpoint') || process.env.BIRMAS_ENDPOINT_PATH || '/wp-json/api/v1/product_stocks';
-
-    console.log(`[Birmas Server Sync] Connecting to Birmas central server (${baseUrl}${endpointPath}) ...`);
-
-    const existingProducts = db.getAllProducts();
-    const barcodeMap = new Map();
-    for (const p of existingProducts) {
-      if (p.barcode) {
-        barcodeMap.set(p.id, p.barcode);
-        if (p.productTitle) barcodeMap.set(p.productTitle.toLowerCase().trim(), p.barcode);
-      }
-    }
-
-    let totalSyncedProducts = 0;
-    let page = 1;
-    let hasMore = true;
-
-    while (hasMore && page <= 20) {
-      const cleanEndpoint = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
-      const sep = cleanEndpoint.includes('?') ? '&' : '?';
-      const url = `${baseUrl.replace(/\/+$/, '')}${cleanEndpoint}${sep}per_page=100&page=${page}`;
-
-      let items = [];
-
-      try {
-        const headers = {
-          'user-agent': 'BirmasStockAudit/2.0',
-          'accept': 'application/json',
-        };
-        if (token && token.trim()) {
-          headers['authorization'] = `Bearer ${token.trim()}`;
-        }
-
-        const res = await fetch(url, {
-          headers,
-          signal: AbortSignal.timeout(15000),
-        });
-
-        if (!res.ok) {
-          console.log(`[Birmas Server Sync] Response status ${res.status} from page ${page}.`);
-          break;
-        }
-
-        const rawJson = await res.json();
-        if (Array.isArray(rawJson)) {
-          items = rawJson;
-        } else if (rawJson && Array.isArray(rawJson.data)) {
-          items = rawJson.data;
-        } else if (rawJson && Array.isArray(rawJson.products)) {
-          items = rawJson.products;
-        } else if (rawJson && Array.isArray(rawJson.stocks)) {
-          items = rawJson.stocks;
-        } else if (rawJson && Array.isArray(rawJson.items)) {
-          items = rawJson.items;
-        } else {
-          items = [];
-        }
-      } catch (fetchErr) {
-        console.warn(`[Birmas Server Sync] Page ${page} notice: ${fetchErr.message}. Utilizing existing database stock.`);
-        break;
-      }
-
-      if (!Array.isArray(items) || items.length === 0) {
-        hasMore = false;
-        break;
-      }
-
-      for (const item of items) {
-        const storeId = extractMatchedStoreId(item) || db.resolveStoreIdForStock(item.store || item.store_name || item.storeName || item.branch || item.storeId || '');
-        if (!storeId) continue;
-
-        const pv = item.product_variant?.[0];
-        const p = pv?.product?.[0];
-
-        const prodName = (p?.post_title || item.product_name || item.productName || item.product_title || item.name || item.varian || '').trim();
-        if (!prodName) continue;
-
-        // Skip non-retail merchandise
-        const categoryName = (p?.product_category?.post_title || item.category || 'BEVERAGE').toUpperCase();
-        if (
-          prodName.toLowerCase().includes('cleaner') ||
-          prodName.toLowerCase().includes('router') ||
-          prodName.toLowerCase().includes('es batu') ||
-          prodName.toLowerCase().includes('gelas cup')
-        ) {
-          continue;
-        }
-
-        const esbId = item.esb_menu_id || item.id || prodName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-        const prodId = `erp-${esbId}`;
-        const existingBarcode = barcodeMap.get(prodId) || barcodeMap.get(prodName.toLowerCase().trim()) || item.barcode || null;
-
-        const brand = item.brand || db.deriveProductBrand(prodName);
-        let varian = item.varian || prodName;
-        if (varian.toLowerCase().startsWith(brand.toLowerCase())) {
-          varian = varian.slice(brand.length).trim();
-        }
-
-        const price = parseFloat(pv?.regular_price ?? item.price ?? 0) || 0;
-        const unit = pv?.variant || item.unit || item.defaultUnit || 'BOTOL';
-        const stockQty = Math.round(Number(item.stock ?? item.stock_qty ?? item.stockQty ?? item.qty ?? 0) || 0);
-
-        db.saveProduct({
-          id: prodId,
-          barcode: existingBarcode,
-          sku: item.sku || `SKU-${esbId}`,
-          brand: brand,
-          varian: varian || prodName,
-          productTitle: prodName,
-          category: categoryName,
-          subCategory: brand,
-          defaultUnit: unit,
-          packageType: unit.toLowerCase().includes('can') || unit.toLowerCase().includes('kaleng') ? 'Kaleng' : 'Botol',
-          volume: parseInt(pv?.volume || item.volume) || (prodName.includes('620') ? 620 : 330),
-          unitVolume: pv?.unit_volume || item.unitVolume || 'ml',
-          price: price,
-          wpStatus: 'publish',
-          lastUpdated: new Date().toISOString(),
-        });
-
-        db.setProductStock(storeId, prodId, stockQty);
-        totalSyncedProducts++;
-      }
-
-      if (items.length < 50) {
-        hasMore = false;
-        break;
-      }
-
-      page++;
-      // Brief breathing space between requests
-      await new Promise((r) => setTimeout(r, 300));
-    }
-
-    if (totalSyncedProducts > 0) {
-      db.setConfig('last_birmas_server_synced_at', new Date().toISOString());
-      console.log(`[Birmas Server Sync] Completed! Synced ${totalSyncedProducts} store stocks from Birmas central server.`);
+    if (loadedStores && loadedStores.length > 0) {
+      stores.value = loadedStores;
     } else {
-      console.log('[Birmas Server Sync] Finished. Local SQLite database inventory is active.');
-    }
-
-    return {
-      success: true,
-      message: `Successfully synchronized with Birmas Central Server (${baseUrl})`,
-      totalSyncedProducts,
-      source: 'birmas_server',
-    };
-  } catch (err) {
-    console.warn('[Birmas Server Sync Notice]:', err.message);
-    return { success: false, error: err.message };
-  } finally {
-    isBirmasServerSyncing = false;
-  }
-}
-
-// ==========================================
-// MY ESB ERP INVENTORY SYNC ENGINE
-// Pulls directly from My ESB ERP (Stock Period List)
-// ==========================================
-let isErpSyncing = false;
-
-const DEFAULT_ERP_COOKIE = `_csrf-esb-fnb-backend=f78ccb84cefe055a764612525d2f74062e83a7c0a022538d86aa4fae44216c71a%3A2%3A%7Bi%3A0%3Bs%3A21%3A%22_csrf-esb-fnb-backend%22%3Bi%3A1%3Bs%3A32%3A%22L4gJX2eDfoa3DbPJAvw5vRJ89C12jNGn%22%3B%7D; PHPSESSID=t4vll2k1onjef4pmhma58f4bb0; _jwt-token=6610caad01882c9402616a0929ee9dfa964c4e662ad1643bde5be6fd8c0701c3a%3A2%3A%7Bi%3A0%3Bs%3A10%3A%22_jwt-token%22%3Bi%3A1%3Bs%3A373%3A%22eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdXRob3JpemVkIjp0cnVlLCJjb21wYW55Q29kZSI6IkJSTSIsImNvbXBhbnlJRCI6NTk3MSwiY29tcGFueU5hbWUiOiJQVC4gQmlybWFzIE1lcnViYWggUGVyc2Vwc2kiLCJkYk5hbWUiOiJmbmJfYnJtIiwiZXhwIjoxNzkwOTU1MDE0LCJmdWxsTmFtZSI6IlBoaWxsaXAiLCJzZXJ2ZXJDb2RlIjoiZ2xvYmFsMyIsInVzZXJSb2xlSUQiOjEsInVzZXJuYW1lIjoiQlJNUGhpbGxpcCJ9.j1zACEId80wffGXPNaJMGXA9A39dnOjngStrNCEHbVQ%22%3B%7D; _identity=18b2dc04b4c5721f9b9c31dd6309b0068ae32ae914af34d8ade231f4cc8f8542a%3A2%3A%7Bi%3A0%3Bs%3A9%3A%22_identity%22%3Bi%3A1%3Bs%3A28%3A%22%5B%22BRMPhillip%22%2Cnull%2C31104000%5D%22%3B%7D;`;
-const DEFAULT_ERP_CSRF = 'YG3zBCat5kSNTL7OxAYsz9Az4Rt7B2fsyYtF8Y3WYCQsWZROfp-DAOsj3_2AZHyFkUWWLg1VLdTwyHTD55gnSg==';
-
-export async function runDirectESBERPSync(options = {}) {
-  if (isErpSyncing) {
-    return { success: false, message: 'ERP Stock sync is already running in background' };
-  }
-  isErpSyncing = true;
-  try {
-    const savedCookie = db.getConfig('esb_erp_cookie');
-    const savedCsrf = db.getConfig('esb_erp_csrf');
-    const cookie = options.cookie || savedCookie || DEFAULT_ERP_COOKIE;
-    const csrf = options.csrf || savedCsrf || DEFAULT_ERP_CSRF;
-
-    if (options.cookie) db.setConfig('esb_erp_cookie', options.cookie);
-    if (options.csrf) db.setConfig('esb_erp_csrf', options.csrf);
-
-    const today = new Date().toISOString().split('T')[0];
-
-    // The 4 official Birmas locations in ESB ERP
-    const allBranches = [
-      { branchId: 3, locationId: 5, storeId: 'birmas-kuningan', name: 'BIRMAS KUNINGAN' },
-      { branchId: 2, locationId: 4, storeId: 'birmas-sudirman', name: 'BIRMAS SUDIRMAN' },
-      { branchId: 5, locationId: 9, storeId: 'birmas-kwitang', name: 'BIRMAS KWITANG' },
-      { branchId: 9, locationId: 17, storeId: 'birmas-lebak-bulus', name: 'BIRMAS LEBAK BULUS' },
-    ];
-
-    // Sync requested store or all 4 official locations
-    const targetBranches = options.storeId && options.storeId !== 'all'
-      ? allBranches.filter((b) => b.storeId === options.storeId)
-      : allBranches;
-
-    const existingProducts = db.getAllProducts();
-    const barcodeMap = new Map();
-    for (const p of existingProducts) {
-      if (p.barcode) {
-        barcodeMap.set(p.id, p.barcode);
-        if (p.productTitle) barcodeMap.set(p.productTitle.toLowerCase().trim(), p.barcode);
-      }
-    }
-
-    let totalSyncedProducts = 0;
-    const sampleItems = [];
-
-    // Filter out non-inventory outlet hardware/assets
-    const excludedCategories = [
-      'PERLENGKAPAN OUTLET',
-      'ASSET',
-      'NON DEPRECIATED ASSET',
-      'ELECTRONIC',
-      'RENOVATION',
-      'TABLET',
-      'KITCHENWARE AND SUPPLIES',
-    ];
-
-    let isSessionExpired = false;
-    for (const b of targetBranches) {
-      if (isSessionExpired) break;
-      for (let page = 1; page <= 16; page++) {
-        const url = `https://erp.esb.co.id/stock-period?StockCardForm%5BcategoryTypeID%5D%5B%5D=1&StockCardForm%5BbranchID%5D=${b.branchId}&StockCardForm%5BlocationID%5D%5B%5D=${b.locationId}&StockCardForm%5BstockDate%5D=${today}&_pjax=%23search-pjax&page=${page}`;
-        let res;
-        try {
-          res = await fetch(url, {
-            headers: {
-              cookie,
-              'x-csrf-token': csrf,
-              'x-pjax': 'true',
-              'x-pjax-container': '#search-pjax',
-              'x-requested-with': 'XMLHttpRequest',
-              'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/154.0.0.0',
-            },
-            redirect: 'manual',
-            signal: AbortSignal.timeout(15000),
-          });
-        } catch (fetchErr) {
-          console.warn(`[ESB ERP Sync] Network notice: ${fetchErr.message}`);
-          break;
-        }
-
-        // Check if ERP session has expired or requires authentication (302 redirect)
-        if (res.status === 302 || res.status === 401 || res.status === 403 || res.url.includes('/site/login')) {
-          console.log('[ESB ERP Sync] Notice: ESB ERP session requires fresh credentials (HTTP 302 redirect). Preserving local SQLite database.');
-          isSessionExpired = true;
-          break;
-        }
-
-        if (!res.ok) {
-          console.log(`[ESB ERP Sync] Page ${page} finished with status ${res.status}`);
-          break;
-        }
-
-        const html = await res.text();
-        const rows = html.match(/<tr[^>]*data-key[^>]*>[\s\S]*?<\/tr>/gi) || [];
-        if (rows.length === 0) break;
-
-        for (const r of rows) {
-          const cells = [];
-          for (const m of r.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)) {
-            cells.push(m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim());
-          }
-          if (cells.length >= 10 && cells[0] !== '#') {
-            const idMatch = r.match(/productID%22%3A(\d+)/i) || r.match(/"productID":(\d+)/i);
-            const productId = idMatch ? idMatch[1] : `erp-${totalSyncedProducts + 1}`;
-            const prodName = cells[3] || '';
-            const prodCode = cells[4] || '';
-            const category = cells[5] || '';
-            const subCategory = cells[6] || '';
-            const defaultUnit = cells[7] || '';
-            const stockQty = parseFloat(cells[9]?.replace(/\./g, '').replace(',', '.')) || 0;
-            const availableQty = parseFloat(cells[11]?.replace(/\./g, '').replace(',', '.')) || 0;
-            const price = parseFloat(cells[12]?.replace(/\./g, '').replace(',', '.')) || 0;
-
-            // Skip non-merchandise supplies
-            if (
-              excludedCategories.includes(category.toUpperCase()) ||
-              prodName.toLowerCase().includes('cleaner') ||
-              prodName.toLowerCase().includes('router') ||
-              prodName.toLowerCase().includes('shovel')
-            ) {
-              continue;
-            }
-
-            const prodId = `erp-${productId}`;
-            const existingBarcode = barcodeMap.get(prodId) || barcodeMap.get(prodName.toLowerCase().trim()) || null;
-
-            let brand = subCategory || 'Birmas';
-            let varian = prodName;
-            if (varian.toLowerCase().startsWith(brand.toLowerCase())) {
-              varian = varian.slice(brand.length).trim();
-            }
-
-            db.saveProduct({
-              id: prodId,
-              barcode: existingBarcode,
-              sku: prodCode || `SKU-${productId}`,
-              brand: brand,
-              varian: varian || prodName,
-              productTitle: prodName,
-              category: category,
-              subCategory: subCategory,
-              defaultUnit: defaultUnit,
-              packageType: defaultUnit === 'CAN' ? 'Kaleng' : 'Botol',
-              volume: prodName.includes('620') ? 620 : 330,
-              unitVolume: 'ml',
-              price: price,
-              wpStatus: 'publish',
-              lastUpdated: new Date().toISOString(),
-            });
-
-            db.setProductStock(b.storeId, prodId, availableQty);
-            totalSyncedProducts++;
-            if (sampleItems.length < 5) {
-              sampleItems.push({ id: prodId, name: prodName, availableQty, store: b.name });
-            }
-          }
-        }
-      }
-      console.log(`[ESB ERP Sync] Finished location: ${b.name}`);
-    }
-
-    db.setConfig('last_esb_erp_synced_at', new Date().toISOString());
-    console.log(`[ESB ERP Sync] Success! Synced ${totalSyncedProducts} items from 4 Birmas store locations.`);
-    return {
-      success: true,
-      totalSyncedProducts,
-      sampleItems,
-      lastSyncedAt: new Date().toISOString(),
-    };
-  } catch (err) {
-    console.error('[ESB ERP Sync] Error:', err);
-    return { success: false, message: err.message };
-  } finally {
-    isErpSyncing = false;
-  }
-}
-
-async function startServer() {
-  const app = express();
-  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-  // Global CORS headers for cross-origin sync from Birmas server & dashboards
-  app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    if (req.method === 'OPTIONS') {
-      return res.sendStatus(200);
-    }
-    next();
-  });
-
-  // Ensure SQLite tables are initialized
-  db.getDb();
-
-  // 1. Stores API (Unified for both Store Audit CCTV and Physical Stock Audit)
-  app.get('/api/stores', (req, res) => {
-    try {
-      const cctvStores = storeAuditService.getCctvStores() || [];
-      const stockStores = db.getAllStores() || [];
-
-      const map = new Map();
-
-      // First register all known store branches from stock database
-      stockStores.forEach((s, idx) => {
-        const cleanName = String(s.name || '').toLowerCase().replace(/^birmas\s+/i, '').trim();
-        map.set(cleanName, {
-          id: s.id,
-          store_id: s.store_id || idx + 1,
-          name: s.name,
-          locationCode: s.locationCode || s.location_code || 'BRM',
-          esbBranchCode: s.esbBranchCode || s.esb_branch_code || 'BRM',
-        });
-      });
-
-      // Merge and update with CCTV audit store records
-      cctvStores.forEach((cs, idx) => {
-        const cleanCsName = String(cs.name || '').toLowerCase().replace(/^birmas\s+/i, '').trim();
-        const existing = map.get(cleanCsName);
-        if (existing) {
-          existing.store_id = cs.store_id || existing.store_id;
-          existing.name = cs.name;
-        } else {
-          map.set(cleanCsName, {
-            id: `birmas-${cleanCsName.replace(/[^a-z0-9]/g, '-')}`,
-            store_id: cs.store_id || idx + 1,
-            name: cs.name,
-            locationCode: `BRM-${cleanCsName.substring(0, 3).toUpperCase()}`,
-            esbBranchCode: cleanCsName.toUpperCase(),
-          });
-        }
-      });
-
-      const result = Array.from(map.values()).sort((a, b) => a.store_id - b.store_id);
-      res.json(result);
-    } catch (err) {
-      console.warn('[/api/stores] Fallback error:', err.message);
-      res.json(db.getAllStores());
-    }
-  });
-
-  app.post('/api/stores', (req, res) => {
-    const { name, locationCode, esbBranchCode } = req.body;
-    if (!name) {
-      return res.status(400).json({ error: 'Store name is required' });
-    }
-    const id = req.body.id || `birmas-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-    const newStore = {
-      id,
-      name,
-      locationCode: locationCode || `BRM-${id.substring(7, 10).toUpperCase()}`,
-      esbBranchCode: esbBranchCode || `ESB_${id.substring(7, 10).toUpperCase()}`,
-    };
-    db.saveStore(newStore);
-    res.json({ success: true, store: newStore, stores: db.getAllStores() });
-  });
-
-  app.delete('/api/stores/:id', (req, res) => {
-    const { id } = req.params;
-    db.deleteStore(id);
-    res.json({ success: true, stores: db.getAllStores() });
-  });
-
-  // 2. Products API
-  app.get('/api/products', (req, res) => {
-    res.json(db.getAllProducts());
-  });
-
-  // 3. Add or match new barcode
-  app.post('/api/products/match-barcode', (req, res) => {
-    const payload = req.body;
-    if (!payload.barcode) {
-      return res.status(400).json({ error: 'Barcode is required' });
-    }
-
-    const cleanBarcode = payload.barcode.trim();
-    const all = db.getAllProducts();
-    const targetTitle = (payload.productTitle || payload.varian || '').toLowerCase().trim();
-    const existing = (payload.productId || payload.wpId)
-      ? all.find(p => p.id === (payload.productId || payload.wpId))
-      : (targetTitle ? all.find(p => (p.productTitle && p.productTitle.toLowerCase().trim() === targetTitle) || (p.varian && p.varian.toLowerCase().trim() === targetTitle)) : null);
-
-    const productItem = {
-      id: existing ? existing.id : (payload.wpId || `prod-${Date.now()}`),
-      barcode: cleanBarcode,
-      sku: existing?.sku || payload.sku || `SKU-${Date.now().toString().slice(-4)}`,
-      brand: existing?.brand || payload.brand || 'Birmas',
-      varian: existing?.varian || payload.varian || cleanBarcode,
-      productTitle: existing?.productTitle || payload.productTitle || `${existing?.brand || payload.brand || 'Birmas'} ${existing?.varian || payload.varian || cleanBarcode}`,
-      packageType: existing?.packageType || payload.packageType || 'Kaleng',
-      volume: existing?.volume || payload.volume || 330,
-      unitVolume: existing?.unitVolume || payload.unitVolume || 'ml',
-      price: existing?.price !== undefined ? existing.price : (payload.price || 0),
-      stockByStore: existing?.stockByStore || payload.stockByStore || {},
-      wpStatus: 'publish',
-      lastUpdated: new Date().toISOString(),
-    };
-
-    db.saveProduct(productItem);
-
-    // Ensure all products matching this title or variant in SQLite get this barcode updated for all stores
-    if (targetTitle) {
       try {
-        const sqliteDb = db.getDb();
-        sqliteDb.prepare(`
-          UPDATE products
-          SET barcode = ?
-          WHERE LOWER(TRIM(product_title)) = ? OR LOWER(TRIM(varian)) = ?
-        `).run(cleanBarcode, targetTitle, targetTitle);
+        const localStores = JSON.parse(localStorage.getItem('birmas_stores') || '[]');
+        if (localStores.length > 0) stores.value = localStores;
       } catch (_) {}
     }
-
-    res.json({
-      success: true,
-      message: `Barcode ${cleanBarcode} linked successfully to ${productItem.productTitle || productItem.varian} across all stores`,
-      product: productItem,
-    });
-  });
-
-  app.delete('/api/products/match-barcode/:barcode', (req, res) => {
-    const { barcode } = req.params;
-    const all = db.getAllProducts();
-    const prod = all.find(p => p.barcode === barcode);
-    if (prod) {
-      const sqliteDb = db.getDb();
-      sqliteDb.prepare('DELETE FROM products WHERE id = ?;').run(prod.id);
-      sqliteDb.prepare('DELETE FROM store_stocks WHERE product_id = ?;').run(prod.id);
+    if (loadedConfig) {
+      wpConfig.value = { ...wpConfig.value, ...loadedConfig };
     }
-    res.json({ success: true, message: `Barcode ${barcode} removed from SQLite` });
-  });
-
-  // 4. Audit State per store
-  app.get('/api/audit/state', (req, res) => {
-    const stores = db.getAllStores();
-    const storeId = (req.query.storeId) || (stores[0]?.id || 'birmas-sudirman');
-    const scans = db.getScansByStore(storeId);
-    
-    // Calculate counts per barcode
-    const counts = {};
-    for (const s of scans) {
-      counts[s.barcode] = (counts[s.barcode] || 0) + 1;
-    }
-
-    res.json({
-      storeId,
-      counts,
-      scanLogs: scans,
-      totalScans: scans.length,
-    });
-  });
-
-  // 5. Send physical scan
-  app.post('/api/audit/scan', (req, res) => {
-    const stores = db.getAllStores();
-    const { barcode, storeId = (stores[0]?.id || 'birmas-sudirman'), auditorName = 'Auditor' } = req.body;
-    if (!barcode) {
-      return res.status(400).json({ error: 'Barcode is required' });
-    }
-
-    const clean = barcode.trim();
-    const products = db.getAllProducts();
-    const product = products.find((p) => p.barcode === clean);
-
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: `Barcode ${clean} is not registered in the database.`,
-        unknownBarcode: clean,
-      });
-    }
-
-    const scans = db.getScansByStore(storeId);
-    const currentCount = scans.filter(s => s.barcode === clean).length;
-    const newCount = currentCount + 1;
-
-    const scanEvent = {
-      id: `scan-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      timestamp: new Date().toISOString(),
-      barcode: clean,
-      brand: product.brand,
-      varian: product.varian,
-      scanSequence: newCount,
-      storeId,
-      auditorName,
-    };
-
-    db.saveScan(scanEvent);
-
-    const wpExpected = (product.stockByStore && product.stockByStore[storeId]) ?? 0;
-    const discrepancy = newCount - wpExpected;
-
-    res.json({
-      success: true,
-      message: `${product.brand} ${product.varian} counted (${newCount}/${wpExpected})`,
-      product,
-      scannedCount: newCount,
-      wpExpected,
-      discrepancy,
-      status: discrepancy === 0 ? 'matched' : discrepancy < 0 ? 'missing' : 'surplus',
-      scanEvent,
-    });
-  });
-
-  // 6. Manual Adjust Count
-  app.post('/api/audit/adjust', (req, res) => {
-    const { barcode, storeId = 'birmas-sudirman', count, delta } = req.body;
-    if (!barcode) return res.status(400).json({ error: 'Barcode required' });
-
-    const scans = db.getScansByStore(storeId);
-    const barcodeScans = scans.filter(s => s.barcode === barcode);
-    const current = barcodeScans.length;
-    
-    let targetCount = current;
-    if (typeof count === 'number') {
-      targetCount = Math.max(0, count);
-    } else if (typeof delta === 'number') {
-      targetCount = Math.max(0, current + delta);
-    }
-
-    if (targetCount > current) {
-      const diff = targetCount - current;
-      const products = db.getAllProducts();
-      const product = products.find(p => p.barcode === barcode);
-      for (let i = 0; i < diff; i++) {
-        db.saveScan({
-          storeId,
-          barcode,
-          brand: product?.brand || '',
-          varian: product?.varian || '',
-          scanSequence: current + i + 1,
-          auditorName: 'Adjusted',
-        });
-      }
-    } else if (targetCount < current) {
-      const sqliteDb = db.getDb();
-      const toDelete = current - targetCount;
-      const scanIdsToDelete = barcodeScans.slice(0, toDelete).map(s => `'${s.id}'`).join(',');
-      if (scanIdsToDelete) {
-        sqliteDb.exec(`DELETE FROM audit_scans WHERE id IN (${scanIdsToDelete});`);
-      }
-    }
-
-    res.json({ success: true, count: targetCount });
-  });
-
-  // 7. Reset audit for store
-  app.post('/api/audit/reset', (req, res) => {
-    const stores = db.getAllStores();
-    const { storeId = (stores[0]?.id || 'birmas-sudirman') } = req.body;
-    db.clearScansByStore(storeId);
-    res.json({ success: true, message: `Physical count reset for ${storeId}` });
-  });
-
-  // 8. Finalize Audit
-  app.post('/api/audit/finalize', (req, res) => {
-    const audit = req.body;
-    if (!audit.storeId) return res.status(400).json({ error: 'Store ID required' });
-
-    const auditRecord = {
-      id: audit.id || `audit-${Date.now()}`,
-      storeId: audit.storeId,
-      storeName: audit.storeName || 'Birmas Store',
-      auditorName: audit.auditorName || 'Auditor',
-      timestamp: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      totalItems: audit.totalScanned || 0,
-      varianceCount: audit.missingCount || 0,
-      accuracy: audit.accuracy || 100,
-      records: audit.items || [],
-    };
-
-    db.saveAuditHistoryRecord(auditRecord);
-
-    // Update stock in SQLite if pushed
-    if (audit.pushedToWordPress && audit.items) {
-      const allProducts = db.getAllProducts();
-      audit.items.forEach((item) => {
-        const prod = allProducts.find((p) => p.barcode === item.barcode);
-        if (prod) {
-          db.setProductStock(audit.storeId, prod.id, item.scannedCount);
-        }
-      });
-    }
-
-    // Clear active scans for this store
-    db.clearScansByStore(audit.storeId);
-
-    res.json({
-      success: true,
-      message: 'Audit signed off and persisted in SQLite history',
-      audit: auditRecord,
-    });
-  });
-
-  // 9. Audit History
-  app.get('/api/audit/history', (req, res) => {
-    res.json(db.getAllAuditHistory());
-  });
-
-  app.delete('/api/audit/history', (req, res) => {
-    const sqliteDb = db.getDb();
-    sqliteDb.exec('DELETE FROM audit_history;');
-    res.json({ success: true, message: 'Audit history cleared in SQLite' });
-  });
-
-  // 10. WordPress / ESB Config
-  app.get('/api/wordpress/config', (req, res) => {
-    res.json(db.getWpConfig());
-  });
-
-  app.post('/api/wordpress/config', (req, res) => {
-    if (req.body.wpUrl) db.setConfig('wp_url', req.body.wpUrl);
-    if (req.body.customEndpointPath) db.setConfig('custom_endpoint_path', req.body.customEndpointPath);
-    if (req.body.selectedStoreId) db.setConfig('selected_store_id', req.body.selectedStoreId);
-    res.json({ success: true, config: db.getWpConfig() });
-  });
-
-  // 11. Sync data (ESB POS Exclusive)
-  app.post('/api/wordpress/sync', async (req, res) => {
-    try {
-      const result = await runDirectESBSync();
-      res.json({
-        success: true,
-        message: 'Synchronized live catalog from ESB POS',
-        data: db.getAllProducts(),
-        ...result,
-      });
-    } catch (err) {
-      res.status(500).json({ success: false, message: err.message });
-    }
-  });
-
-  // 12. Cleanup legacy WordPress duplicates
-  app.post('/api/esb/cleanup-duplicates', (req, res) => {
-    try {
-      const result = db.cleanupLegacyWordPressData();
-      res.json({ success: true, message: 'Cleaned up duplicate WordPress data from database', ...result });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // 13. Direct ESB Live Sync (POS Menu)
-  app.post('/api/esb/sync-direct', async (req, res) => {
-    try {
-      const result = await runDirectESBSync();
-      res.json({
-        success: true,
-        message: 'Successfully synchronized directly with ESB POS',
-        ...result,
-      });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // 13b. Direct My ESB ERP Inventory Stock Sync (Stock Period List)
-  app.post('/api/esb/sync-erp', async (req, res) => {
-    try {
-      const result = await runDirectESBERPSync(req.body || {});
-      res.json({
-        success: true,
-        message: `Successfully synchronized ${result.totalSyncedProducts || 0} real inventory items from My ESB ERP (Kuningan)`,
-        ...result,
-      });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.get('/api/esb/erp-config', (req, res) => {
-    res.json({
-      hasCustomCookie: !!db.getConfig('esb_erp_cookie'),
-      lastSyncedAt: db.getConfig('last_esb_erp_synced_at') || null,
-    });
-  });
-
-  app.post('/api/esb/erp-config', (req, res) => {
-    let { cookie, csrf, rawCurl } = req.body;
-    if (rawCurl) {
-      // Auto-extract cookie from -b '...' or -H 'cookie: ...'
-      const cookieMatch = rawCurl.match(/-b\s+['"]([^'"]+)['"]/i) || rawCurl.match(/-H\s+['"]cookie:\s*([^'"]+)['"]/i);
-      if (cookieMatch) cookie = cookieMatch[1];
-      // Auto-extract csrf token from -H 'x-csrf-token: ...'
-      const csrfMatch = rawCurl.match(/x-csrf-token:\s*([^\s'"]+)/i);
-      if (csrfMatch) csrf = csrfMatch[1];
-    }
-    if (cookie) db.setConfig('esb_erp_cookie', cookie);
-    if (csrf) db.setConfig('esb_erp_csrf', csrf);
-    res.json({
-      success: true,
-      message: 'Updated My ESB ERP session credentials',
-      hasCookie: !!cookie,
-      hasCsrf: !!csrf,
-    });
-  });
-
-  // 13c. Birmas Central Server Sync (Permanent & No cURL needed)
-  app.post('/api/birmas/sync', async (req, res) => {
-    try {
-      const result = await runBirmasServerSync(req.body || {});
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.get('/api/birmas/config', (req, res) => {
-    const token = db.getConfig('birmas_server_token') || '';
-    res.json({
-      birmasServerUrl: db.getConfig('wp_url') || 'https://admin.birmas.id',
-      birmasServerEndpoint: db.getConfig('birmas_server_endpoint') || '/wp-json/api/v1/product_stocks',
-      hasToken: !!token,
-      birmasServerToken: token,
-      lastSyncedAt: db.getConfig('last_birmas_server_synced_at') || null,
-    });
-  });
-
-  app.post('/api/birmas/config', (req, res) => {
-    if (req.body.birmasServerUrl !== undefined) {
-      db.setConfig('wp_url', req.body.birmasServerUrl.trim());
-    }
-    if (req.body.birmasServerToken !== undefined) {
-      db.setConfig('birmas_server_token', req.body.birmasServerToken.trim());
-    }
-    if (req.body.birmasServerEndpoint !== undefined) {
-      db.setConfig('birmas_server_endpoint', req.body.birmasServerEndpoint.trim());
-    }
-    res.json({
-      success: true,
-      birmasServerUrl: db.getConfig('wp_url'),
-      birmasServerEndpoint: db.getConfig('birmas_server_endpoint'),
-      hasToken: !!db.getConfig('birmas_server_token'),
-      lastSyncedAt: db.getConfig('last_birmas_server_synced_at'),
-    });
-  });
-
-  // 13d. Direct Push API: Send stock payload directly from Birmas Backend to this Audit Server
-  app.post(['/api/stock/push', '/api/sync/push'], (req, res) => {
-    try {
-      const payload = req.body;
-      const items = Array.isArray(payload) ? payload : (payload.items || payload.data || payload.products || []);
-      if (!items || items.length === 0) {
-        return res.status(400).json({ success: false, error: 'Expected JSON array of product stock items' });
-      }
-
-      // Check optional token if configured
-      const configuredToken = db.getConfig('birmas_server_token');
-      if (configuredToken) {
-        const auth = req.headers['authorization'] || '';
-        const token = auth.replace(/^Bearer\s+/i, '').trim();
-        if (token && token !== configuredToken.trim()) {
-          return res.status(401).json({ success: false, error: 'Unauthorized: Invalid Bearer Token' });
-        }
-      }
-
-      const allStores = db.getAllStores();
-      let importedCount = 0;
-
-      for (const item of items) {
-        const rawStore = item.store || item.storeName || item.store_name || item.branch || item.storeId || allStores[0]?.id;
-        const storeId = db.resolveStoreIdForStock(rawStore);
-        const prodName = String(item.productName || item.product_name || item.productTitle || item.name || item.varian || '').trim();
-        if (!prodName) continue;
-
-        const barcode = (item.barcode && String(item.barcode).trim()) || null;
-        const stockQty = Math.round(Number(item.stockQty ?? item.stock_qty ?? item.stock ?? item.qty ?? 0) || 0);
-        const category = item.category || 'Craft Beer';
-        const unit = item.unit || item.defaultUnit || 'Can';
-
-        const slug = prodName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-        const productId = item.id || `prod-${slug}`;
-
-        db.saveProduct({
-          id: productId,
-          barcode: barcode,
-          sku: item.sku || `SKU-${slug.slice(0, 8).toUpperCase()}`,
-          brand: item.brand || db.deriveProductBrand(prodName),
-          varian: prodName,
-          productTitle: prodName,
-          category: category,
-          subCategory: item.brand || db.deriveProductBrand(prodName),
-          defaultUnit: unit,
-          packageType: unit.toLowerCase().includes('botol') ? 'Botol' : 'Kaleng',
-          volume: item.volume || 330,
-          unitVolume: item.unitVolume || 'ml',
-          price: item.price || 0,
-          wpStatus: 'publish',
-          lastUpdated: new Date().toISOString(),
-        });
-
-        db.setProductStock(storeId, productId, stockQty);
-        importedCount++;
-      }
-
-      db.setConfig('last_birmas_server_synced_at', new Date().toISOString());
-
-      res.json({
-        success: true,
-        message: `Successfully received and imported ${importedCount} items into audit database!`,
-        importedCount,
-        stores: allStores.map(s => s.name),
-      });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // 14. Instant Webhook from ESB / WordPress
-  app.post('/api/esb/webhook', (req, res) => {
-    const { location, variant_title, stock } = req.body;
-    console.log('[ESB Webhook Received]:', req.body);
-
-    if (variant_title) {
-      const stores = db.getAllStores();
-      const locKey = (location || '').toLowerCase();
-      const targetStore = stores.find((s) => s.id === locKey || s.locationCode?.toLowerCase() === locKey || s.name.toLowerCase().includes(locKey));
-      const storeId = targetStore ? targetStore.id : (stores[0]?.id || 'birmas-sudirman');
-
-      const products = db.getAllProducts();
-      const existing = products.find((p) => p.varian?.toLowerCase() === variant_title.toLowerCase() || p.productTitle === variant_title);
-      if (existing) {
-        db.setProductStock(storeId, existing.id, Number(stock) || 0);
-      }
-    }
-
-    res.json({ success: true, receivedAt: new Date().toISOString() });
-  });
-
-  // 15. Push Endpoints: Birmas Server sends ESB sales and stock data directly to this dashboard
-  app.post('/api/sales/push', (req, res) => {
-    try {
-      const body = req.body;
-      const rawList = Array.isArray(body) ? body : (body.transactions || body.items || body.data || []);
-      const fileInfo = {
-        id: body.fileId || `sfile-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-        filename: body.filename || `Sales_Recap_${new Date().toISOString().slice(0, 10)}.csv`,
-        file_size: body.fileSize || `${(rawList.length * 0.15).toFixed(1)} KB`,
-        uploaded_at: new Date().toISOString(),
-        uploaded_by: body.uploadedBy || 'Admin',
-        file_content: body.fileContent || '',
-      };
-
-      if (!Array.isArray(rawList) || rawList.length === 0) {
-        return res.status(400).json({ success: false, message: 'No transactions found in request body' });
-      }
-
-      console.log(`[Sales Push] Received ${rawList.length} transactions from file: ${fileInfo.filename}`);
-
-      const normalized = rawList.map((tx, idx) => {
-        const storeKey = String(tx.store_id || tx.store_name || tx.branch || tx.location || '').toLowerCase();
-        let storeId = 'birmas-kuningan';
-        let storeName = 'Birmas Kuningan';
-
-        if (storeKey.includes('sudirman')) {
-          storeId = 'birmas-sudirman';
-          storeName = 'Birmas Sudirman';
-        } else if (storeKey.includes('kwitang')) {
-          storeId = 'birmas-kwitang';
-          storeName = 'Birmas Kwitang';
-        } else if (storeKey.includes('kuningan') || storeKey.includes('kunngan')) {
-          storeId = 'birmas-kuningan';
-          storeName = 'Birmas Kuningan';
-        } else if (storeKey.includes('lebak') || storeKey.includes('bulus')) {
-          storeId = 'birmas-lebak-bulus';
-          storeName = 'Birmas Lebak Bulus';
-        } else if (storeKey.includes('gading') || storeKey.includes('kgading')) {
-          storeId = 'birmas-kelapa-gading';
-          storeName = 'Birmas Kelapa Gading';
-        } else if (storeKey.includes('tebet')) {
-          storeId = 'birmas-tebet';
-          storeName = 'Birmas Tebet';
-        } else if (storeKey.includes('nomadic') || storeKey.includes('bandung')) {
-          storeId = 'birmas-nomadic';
-          storeName = 'Birmas Nomadic';
-        } else if (storeKey.includes('nusa') || storeKey.includes('bali')) {
-          storeId = 'birmas-nusadua';
-          storeName = 'Birmas Nusa Dua';
-        } else if (tx.store_name || tx.branch) {
-          storeName = String(tx.store_name || tx.branch).trim();
-          storeId = `store-${storeName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-        }
-
-        const brandName = tx.brand || tx.menu_category_detail || tx.menuCategoryDetail || '';
-        const visitPurpose = tx.visit_purpose || tx.visitPurpose || tx.order_mode || tx.orderMode || 'DINE IN';
-        const itemName = tx.item_name || tx.menu || tx.itemName || tx.product_name || 'Retail Item';
-        const variantName = tx.variant || tx.menu || tx.product_variant || '';
-
-        return {
-          id: tx.id || `push-${tx.bill_no || tx.billNumber || Date.now()}-${idx}`,
-          bill_no: tx.bill_no || tx.billNumber || tx.bill_number || tx.invoice_no || `ESB-${Date.now()}-${idx}`,
-          date: tx.date || tx.sales_date_in || tx.salesDateIn || tx.sales_date || tx.created_at || new Date().toISOString(),
-          store_id: storeId,
-          store_name: tx.store_name || storeName,
-          item_name: itemName,
-          variant: variantName,
-          brand: brandName,
-          category: tx.category || tx.menu_category || tx.menuCategory || 'Beverage',
-          barcode: tx.barcode || '',
-          qty: Number(tx.qty || tx.quantity) || 1,
-          unit_price: parseSafeMoney(tx.unit_price || tx.price),
-          discount: parseSafeMoney(tx.discount),
-          tax: parseSafeMoney(tx.tax),
-          subtotal: parseSafeMoney(tx.subtotal) || ((Number(tx.qty) || 1) * parseSafeMoney(tx.unit_price || tx.price)),
-          total: parseSafeMoney(tx.total || tx.nett_sales || tx.nettSales) || ((Number(tx.qty) || 1) * parseSafeMoney(tx.unit_price || tx.price)),
-          payment_method: tx.payment_method || tx.paymentMethod || 'QRIS BCA',
-          visit_purpose: visitPurpose,
-          cashier: tx.cashier || tx.waiter || 'Kasir',
-          file_id: fileInfo.id,
-        };
-      });
-
-      const saveRes = db.saveSalesFileRecord(fileInfo, normalized);
-      if (!saveRes.success) {
-        return res.status(500).json({ success: false, error: saveRes.error || 'Failed to save sales file records to database' });
-      }
-      db.setConfig('last_sales_pushed_at', new Date().toISOString());
-
-      res.json({
-        success: true,
-        message: `Successfully received and saved ${normalized.length} sales records!`,
-        count: normalized.length,
-        fileId: saveRes.fileId,
-        receivedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error('[Sales Push Error]:', err);
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Sales Files History & Management Endpoints
-  app.get('/api/sales/files', (req, res) => {
-    try {
-      const files = db.getSalesFilesList();
-      res.json({ success: true, files });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.get('/api/sales/files/:id/download', (req, res) => {
-    try {
-      const file = db.getSalesFileById(req.params.id);
-      if (!file) {
-        return res.status(404).send('Sales file not found');
-      }
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
-      res.send(file.file_content || '');
-    } catch (err) {
-      res.status(500).send(err.message);
-    }
-  });
-
-  app.delete('/api/sales/files/:id', (req, res) => {
-    try {
-      const result = db.deleteSalesFileRecord(req.params.id);
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // ==========================================
-  // Stock Audit CSV Upload & Management Endpoints
-  // ==========================================
-
-  app.get('/api/stock-csv/history', (req, res) => {
-    try {
-      const files = db.getStockFilesList();
-      res.json({ success: true, files });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.get('/api/stock-csv/active', (req, res) => {
-    try {
-      const file = db.getActiveStockFile();
-      res.json({ success: true, file: file || null });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.post('/api/stock-csv/upload', (req, res) => {
-    try {
-      const {
-        filename,
-        fileSize,
-        uploadedBy,
-        metadata = {},
-        rows = [],
-        fileContent = '',
-      } = req.body;
-
-      if (!filename) {
-        return res.status(400).json({
-          success: false,
-          code: 'FILE_NAME_REQUIRED',
-          error: 'Filename is required.',
-        });
-      }
-
-      if (!filename.toLowerCase().endsWith('.csv')) {
-        return res.status(400).json({
-          success: false,
-          code: 'INVALID_FILE_TYPE',
-          error: 'File must be a CSV file (.csv).',
-        });
-      }
-
-      if (!rows || rows.length === 0) {
-        return res.status(400).json({
-          success: false,
-          code: 'NO_DATA_ROWS',
-          error: 'No valid product stock records found in the uploaded CSV table.',
-        });
-      }
-
-      const inferredStores = Array.from(new Set(rows.map(r => r.storeName).filter(Boolean))).join(', ');
-      const downloadedAt = metadata.downloadedAtEsb || metadata.cell4B || new Date().toLocaleString('id-ID');
-      const stockDate = metadata.stockDate || metadata.cell5B || new Date().toLocaleDateString('id-ID');
-      const activeStores = metadata.activeStores || metadata.cell6B || inferredStores || 'All Active Stores';
-
-      const fileInfo = {
-        filename,
-        file_size: fileSize || '0 KB',
-        uploaded_by: uploadedBy || 'Auditor',
-        downloaded_at_esb: downloadedAt,
-        stock_date: stockDate,
-        active_stores: activeStores,
-        file_content: fileContent,
-      };
-
-      const result = db.saveStockFileRecord(fileInfo, rows);
-      if (!result.success) {
-        return res.status(500).json(result);
-      }
-
-      res.json({
-        success: true,
-        message: `Successfully uploaded ${filename} and applied ${rows.length} product stock records to comparison table.`,
-        fileId: result.fileId,
-        activeStores: fileInfo.active_stores,
-        stockDate: fileInfo.stock_date,
-        downloadedAtEsb: fileInfo.downloaded_at_esb,
-        rowCount: rows.length,
-      });
-    } catch (err) {
-      console.error('[Upload Stock CSV Error]:', err);
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.post('/api/stock-csv/revert/:id', (req, res) => {
-    try {
-      const result = db.revertStockFileRecord(req.params.id);
-      if (!result.success) {
-        return res.status(404).json(result);
-      }
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.delete('/api/stock-csv/:id', (req, res) => {
-    try {
-      const result = db.deleteStockFileRecord(req.params.id);
-      if (!result.success) {
-        return res.status(404).json(result);
-      }
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.get('/api/stock-csv/template', (req, res) => {
-    try {
-      const templatePath = path.join(process.cwd(), 'public', 'templates', 'stock_period_list_sample.csv');
-      if (fs.existsSync(templatePath)) {
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', 'attachment; filename="stock_period_list_template.csv"');
-        return fs.createReadStream(templatePath).pipe(res);
-      }
-      res.status(404).send('Template not found');
-    } catch (err) {
-      res.status(500).send(err.message);
-    }
-  });
-
-  // Audit Session Lock & Approval Endpoints (Superadmin approval required to unlock)
-  app.get('/api/audit/session/:storeId/lock', (req, res) => {
-    try {
-      const state = db.getSessionLockState(req.params.storeId);
-      res.json({ success: true, ...state });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.post('/api/audit/session/:storeId/lock', (req, res) => {
-    try {
-      const user = req.body?.user || 'Auditor';
-      const result = db.setSessionLockState(req.params.storeId, true, user);
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.post('/api/audit/session/:storeId/unlock', (req, res) => {
-    try {
-      const role = req.body?.role || '';
-      const user = req.body?.user || 'Super Admin';
-      if (role !== 'superadmin') {
-        return res.status(403).json({ success: false, error: 'Only Superadmin can approve unlocking an audit session.' });
-      }
-      const result = db.setSessionLockState(req.params.storeId, false, user);
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Store Audit API Endpoints
-  app.get('/api/categories', (req, res) => {
-    try {
-      const cats = storeAuditService.getCctvCategories();
-      res.json(cats);
-    } catch (err) {
-      res.status(500).json([]);
-    }
-  });
-
-  app.get('/api/criteria', (req, res) => {
-    try {
-      const crit = storeAuditService.getCctvCriteria(req.query);
-      res.json(crit);
-    } catch (err) {
-      res.status(500).json([]);
-    }
-  });
-
-  app.get('/api/category/:category/monthly', (req, res) => {
-    try {
-      const data = storeAuditService.getCategoryMonthly(req.params.category, req.query);
-      res.json(data);
-    } catch (err) {
-      res.status(500).json({ labels: [], datasets: [] });
-    }
-  });
-
-  app.get('/api/category/:category/criterion/:criterion/monthly', (req, res) => {
-    try {
-      const data = storeAuditService.getCategoryCriterionMonthly(req.params.category, req.params.criterion, req.query);
-      res.json(data);
-    } catch (err) {
-      res.status(500).json({ labels: [], datasets: [] });
-    }
-  });
-
-  app.get('/api/category/:category/passrate', (req, res) => {
-    try {
-      const data = storeAuditService.getCategoryPassrate(req.params.category, req.query);
-      res.json(data);
-    } catch (err) {
-      res.status(500).json({ labels: [], datasets: [] });
-    }
-  });
-
-  app.get('/api/store/:storeId/passrate', (req, res) => {
-    try {
-      const data = storeAuditService.getStorePassrate(req.params.storeId, req.query);
-      res.json(data);
-    } catch (err) {
-      res.status(500).json({ labels: [], datasets: [] });
-    }
-  });
-
-  app.get('/api/stores/:storeId/passrate', (req, res) => {
-    try {
-      const data = storeAuditService.getStorePassrate(req.params.storeId, req.query);
-      res.json(data);
-    } catch (err) {
-      res.status(500).json({ labels: [], datasets: [] });
-    }
-  });
-
-  app.get('/api/passing-grades', (req, res) => {
-    try {
-      const grades = storeAuditService.getPassingGrades(req.query);
-      res.json(grades);
-    } catch (err) {
-      res.status(500).json({});
-    }
-  });
-
-  app.get('/api/drilldown', (req, res) => {
-    try {
-      const data = storeAuditService.getCctvDrilldown(req.query);
-      res.json(data);
-    } catch (err) {
-      res.status(500).json({ infractions: [] });
-    }
-  });
-
-  app.get('/api/months', (req, res) => {
-    res.json([
-      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-    ]);
-  });
-
-  // Upload and process store audit CSV
-  app.post('/api/upload', upload.single('file'), async (req, res) => {
-    try {
-      const { store, year, month, confirm } = req.body;
-      const file = req.file;
-
-      if (!file) {
-        return res.status(400).json({
-          status: 'error',
-          errorType: 'EMPTY_FILE',
-          message: 'No CSV file was uploaded. Please choose a valid audit CSV file.',
-        });
-      }
-
-      const fileName = file.originalname || 'audit.csv';
-      if (!fileName.toLowerCase().endsWith('.csv')) {
-        return res.status(400).json({
-          status: 'error',
-          errorType: 'INVALID_FILE_TYPE',
-          message: 'Invalid file format. Strictly .csv files are supported.',
-        });
-      }
-
-      // Strictly limit allowed upload outlets to Sudirman, Kuningan, Kwitang
-      const allowedStores = ['sudirman', 'kuningan', 'kwitang'];
-      const rawStore = String(store || '').trim();
-      const cleanInputStore = rawStore.toLowerCase().replace(/^birmas\s+/i, '').trim();
-
-      if (!cleanInputStore || !allowedStores.includes(cleanInputStore)) {
-        return res.status(400).json({
-          status: 'error',
-          errorType: 'UNSUPPORTED_OUTLET',
-          message: 'Birmas Outlet is limited to only Sudirman, Kuningan, and Kwitang. Please choose one of these outlets.',
-        });
-      }
-
-      // Canonical name for the store
-      const canonicalStoreMap = {
-        sudirman: 'Birmas Sudirman',
-        kuningan: 'Birmas Kuningan',
-        kwitang: 'Birmas Kwitang',
-      };
-      const storeName = canonicalStoreMap[cleanInputStore] || rawStore;
-      let yr = year;
-      let mo = month;
-
-      if (!yr || !mo) {
-        return res.status(400).json({
-          status: 'error',
-          errorType: 'MISSING_FIELDS',
-          message: 'Please select store, audit year, and audit month before uploading.',
-        });
-      }
-
-      // Extract outlet and month from uploaded CSV file (filename + first rows)
-      const lowerName = fileName.toLowerCase();
-      const fileTextSample = file.buffer ? file.buffer.toString('utf-8').slice(0, 4096).toLowerCase() : '';
-
-      const outletKeywords = [
-        { key: 'sudirman', name: 'Sudirman', official: 'Birmas Sudirman' },
-        { key: 'kuningan', name: 'Kuningan', official: 'Birmas Kuningan' },
-        { key: 'kwitang', name: 'Kwitang', official: 'Birmas Kwitang' },
-        { key: 'kelapa gading', name: 'Kelapa Gading', official: 'Birmas Kelapa Gading' },
-        { key: 'gading', name: 'Kelapa Gading', official: 'Birmas Kelapa Gading' },
-        { key: 'lebak bulus', name: 'Lebak Bulus', official: 'Birmas Lebak Bulus' },
-        { key: 'bulus', name: 'Lebak Bulus', official: 'Birmas Lebak Bulus' },
-        { key: 'tebet', name: 'Tebet', official: 'Birmas Tebet' },
-        { key: 'nomadic', name: 'Nomadic', official: 'Birmas Nomadic (Bandung)' },
-        { key: 'bandung', name: 'Nomadic', official: 'Birmas Nomadic (Bandung)' },
-        { key: 'nusa dua', name: 'Nusa Dua', official: 'Birmas Nusa Dua (Bali)' },
-        { key: 'nusadua', name: 'Nusa Dua', official: 'Birmas Nusa Dua (Bali)' },
-        { key: 'bali', name: 'Nusa Dua', official: 'Birmas Nusa Dua (Bali)' },
-      ];
-
-      let detectedFileOutlet = null;
-      for (const o of outletKeywords) {
-        if (lowerName.includes(o.key)) {
-          detectedFileOutlet = o;
-          break;
-        }
-      }
-      if (!detectedFileOutlet) {
-        for (const o of outletKeywords) {
-          if (fileTextSample.includes(o.key)) {
-            detectedFileOutlet = o;
-            break;
-          }
-        }
-      }
-
-      const monthMap = {
-        januari: 'Januari', january: 'Januari', jan: 'Januari',
-        februari: 'Februari', february: 'Februari', feb: 'Februari',
-        maret: 'Maret', march: 'Maret', mar: 'Maret',
-        april: 'April', apr: 'April',
-        mei: 'Mei', may: 'Mei',
-        juni: 'Juni', june: 'Juni', jun: 'Juni',
-        juli: 'Juli', july: 'Juli', jul: 'Juli',
-        agustus: 'Agustus', august: 'Agustus', agu: 'Agustus', agt: 'Agustus', aug: 'Agustus',
-        september: 'September', sep: 'September', sept: 'September',
-        oktober: 'Oktober', october: 'Oktober', okt: 'Oktober', oct: 'Oktober',
-        november: 'November', nov: 'November',
-        desember: 'Desember', december: 'Desember', des: 'Desember', dec: 'Desember',
-      };
-
-      let detectedFileMonth = null;
-      for (const [k, canonical] of Object.entries(monthMap)) {
-        const regex = new RegExp(`(^|[^a-z0-9])${k}([^a-z0-9]|$)`, 'i');
-        if (regex.test(lowerName)) {
-          detectedFileMonth = canonical;
-          break;
-        }
-      }
-      if (!detectedFileMonth) {
-        for (const [k, canonical] of Object.entries(monthMap)) {
-          const regex = new RegExp(`(^|[^a-z0-9])${k}([^a-z0-9]|$)`, 'i');
-          if (regex.test(fileTextSample)) {
-            detectedFileMonth = canonical;
-            break;
-          }
-        }
-      }
-
-      // Check if file belongs to an unsupported outlet
-      if (detectedFileOutlet && !allowedStores.includes(detectedFileOutlet.key)) {
-        return res.status(400).json({
-          status: 'error',
-          errorType: 'UNSUPPORTED_OUTLET',
-          message: `The uploaded CSV file ("${fileName}") is for ${detectedFileOutlet.name}. Only Sudirman, Kuningan, and Kwitang outlets are supported.`,
-        });
-      }
-
-      // Validate that file outlet and month match the user input
-      const fileStoreKey = detectedFileOutlet ? detectedFileOutlet.key : null;
-      const storeMismatch = fileStoreKey && cleanInputStore && (fileStoreKey !== cleanInputStore);
-
-      const userMonthClean = String(mo || '').toLowerCase().trim();
-      const fileMonthClean = detectedFileMonth ? detectedFileMonth.toLowerCase().trim() : null;
-      const monthMismatch = fileMonthClean && userMonthClean && (fileMonthClean !== userMonthClean);
-
-      if (storeMismatch && monthMismatch) {
-        return res.status(400).json({
-          status: 'error',
-          errorType: 'MISMATCH_INPUT',
-          message: `CSV file does not match selected outlet and month: The file ("${fileName}") is for ${detectedFileOutlet.name} (${detectedFileMonth}), but you selected ${storeName} (${mo}).`,
-        });
-      }
-
-      if (storeMismatch) {
-        return res.status(400).json({
-          status: 'error',
-          errorType: 'OUTLET_MISMATCH',
-          message: `CSV file does not match selected outlet: The file ("${fileName}") is for ${detectedFileOutlet.name}, but you selected ${storeName}. Please select Birmas ${detectedFileOutlet.name} or upload the matching file.`,
-        });
-      }
-
-      if (monthMismatch) {
-        return res.status(400).json({
-          status: 'error',
-          errorType: 'MONTH_MISMATCH',
-          message: `CSV file does not match selected month: The file ("${fileName}") is for ${detectedFileMonth}, but you selected ${mo}. Please select ${detectedFileMonth} or upload the matching file.`,
-        });
-      }
-
-      const result = storeAuditService.processAuditUpload({
-        storeName: storeName,
-        year: parseInt(yr, 10),
-        month: mo,
-        fileName: fileName,
-        fileBuffer: file.buffer,
-        confirm: confirm === '1' || confirm === true,
-      });
-
-      if (!result.success && result.errorType) {
-        return res.status(400).json(result);
-      }
-
-      res.json(result);
-    } catch (err) {
-      console.error('/api/upload error:', err);
-      res.status(500).json({
-        status: 'error',
-        message: err.message || 'Failed to process audit upload.',
-      });
-    }
-  });
-
-  app.get('/api/uploaded-files', (req, res) => {
-    try {
-      const files = storeAuditService.getCctvUploadedFiles();
-      res.json(files);
-    } catch (err) {
-      console.error('/api/uploaded-files error:', err);
-      res.status(500).json([]);
-    }
-  });
-
-  app.get('/api/download-audit-file', (req, res) => {
-    try {
-      const auditId = req.query.audit_id ? parseInt(req.query.audit_id, 10) : null;
-      if (!auditId) {
-        return res.status(400).send('audit_id is required');
-      }
-
-      const files = storeAuditService.getCctvUploadedFiles();
-      const match = files.find((f) => f.audit_id === auditId);
-
-      const indonesianMonths = [
-        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-      ];
-
-      if (match) {
-        const monthName = indonesianMonths[(match.month || 1) - 1] || 'Januari';
-        const possiblePaths = [
-          path.join(__dirname, 'audit_birmas', match.store_name || '', String(match.year), monthName, match.file_name),
-          path.join(__dirname, 'audit_birmas', match.store_name || '', match.file_name),
-          path.join(__dirname, 'audit_birmas', match.file_name),
-        ];
-
-        for (const p of possiblePaths) {
-          if (fs.existsSync(p)) {
-            return res.download(p, match.file_name || `Audit_${match.store_name}_${match.year}_${monthName}.csv`);
-          }
-        }
-      }
-
-      // If physical file is not on disk, generate CSV from SQLite scores
-      const cctvDb = storeAuditService.getCctvDb();
-      if (!cctvDb) {
-        return res.status(404).send('Audit database not found');
-      }
-
-      const rows = cctvDb.prepare(`
-        SELECT c.name AS criteria_name, c.category, c.passing_grade, sc.score
-        FROM scores sc
-        JOIN criteria c ON sc.criteria_id = c.criteria_id
-        WHERE sc.audit_id = ?
-        ORDER BY c.category, c.name
-      `).all(auditId);
-
-      if (!rows || rows.length === 0) {
-        return res.status(404).send('No scores found for this audit ID');
-      }
-
-      let csvContent = 'Criteria,Category,Passing Grade,Score,Status\n';
-      for (const r of rows) {
-        const status = r.score >= r.passing_grade ? 'PASS' : 'FAIL';
-        const cleanCrit = `"${(r.criteria_name || '').replace(/"/g, '""')}"`;
-        const cleanCat = `"${(r.category || '').replace(/"/g, '""')}"`;
-        csvContent += `${cleanCrit},${cleanCat},${r.passing_grade || ''},${r.score || ''},${status}\n`;
-      }
-
-      const dlFilename = match?.file_name || `Audit_Export_${auditId}.csv`;
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${dlFilename}"`);
-      return res.send(csvContent);
-    } catch (err) {
-      console.error('/api/download-audit-file error:', err);
-      res.status(500).send('Failed to generate audit download file');
-    }
-  });
-
-  app.post('/api/stock/push', (req, res) => {
-    try {
-      const body = req.body;
-      const rawList = Array.isArray(body) ? body : (body.stocks || body.items || body.products || []);
-
-      if (!Array.isArray(rawList) || rawList.length === 0) {
-        return res.status(400).json({ success: false, message: 'No stock items found in request body' });
-      }
-
-      console.log(`[Stock Push] Received ${rawList.length} stock items from Birmas server!`);
-
-      let updatedCount = 0;
-      for (const item of rawList) {
-        const storeId = extractMatchedStoreId(item);
-        if (!storeId) continue;
-
-        if (item.product_id && item.stock !== undefined) {
-          db.setProductStock(storeId, item.product_id, Number(item.stock) || 0);
-          updatedCount++;
-        } else if (item.product_variant || item.esb_menu_id || item.id) {
-          const pv = item.product_variant?.[0];
-          const esbId = item.esb_menu_id || item.id;
-          const prodId = `erp-${esbId}`;
-          const stockQty = parseFloat(item.stock) || 0;
-
-          db.setProductStock(storeId, prodId, stockQty);
-          updatedCount++;
-        }
-      }
-
-      db.setConfig('last_stock_pushed_at', new Date().toISOString());
-
-      res.json({
-        success: true,
-        message: `Successfully received and updated ${updatedCount} stock items!`,
-        count: updatedCount,
-        receivedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error('[Stock Push Error]:', err);
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // 13. Auth endpoints
-  app.post('/api/auth/login', (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Username and password required' });
-    }
-
-    const cleanUser = username.trim().toLowerCase();
-    const user = db.getUserByUsername(cleanUser);
-
-    if (!user || user.password !== password) {
-      return res.status(401).json({ success: false, message: 'Invalid username or password' });
-    }
-
-    const safeUser = { id: user.id, username: user.username, name: user.name, email: user.email, role: user.role };
-    res.json({ success: true, message: `Welcome back, ${user.name}`, user: safeUser });
-  });
-
-  // 14. Sales Report Endpoints (ESB report-sales-recapitulation-detail)
-  app.get('/api/sales/report', (req, res) => {
-    try {
-      const filters = {
-        storeId: req.query.storeId,
-        startDate: req.query.startDate,
-        endDate: req.query.endDate,
-        search: req.query.search,
-        category: req.query.category,
-        brand: req.query.brand,
-        visitPurpose: req.query.visitPurpose,
-        paymentMethod: req.query.paymentMethod,
-        limit: req.query.limit || 200,
-        offset: req.query.offset || 0,
-      };
-      const transactions = db.getSalesTransactions(filters);
-      res.json({ success: true, transactions, total: transactions.length });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.get('/api/sales/summary', (req, res) => {
-    try {
-      const filters = {
-        storeId: req.query.storeId,
-        startDate: req.query.startDate,
-        endDate: req.query.endDate,
-        visitPurpose: req.query.visitPurpose,
-        category: req.query.category,
-        paymentMethod: req.query.paymentMethod,
-      };
-      const summary = db.getSalesSummary(filters);
-      res.json({ success: true, summary });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.delete('/api/sales/clear', (req, res) => {
-    try {
-      const result = db.clearAllSalesTransactions();
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.post('/api/sales/sync-birmas', async (req, res) => {
-    try {
-      const birmasUrl = db.getConfig('wp_url', 'https://admin.birmas.id');
-      const salesEndpoint = `${birmasUrl.replace(/\/+$/, '')}/wp-json/api/v1/sales_report`;
-      console.log(`[Sales Sync] Querying Birmas server sales bridge at: ${salesEndpoint}`);
-
-      try {
-        const response = await fetch(salesEndpoint, {
-          method: 'GET',
-          headers: { 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(8000),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const items = Array.isArray(data) ? data : (data.items || data.transactions || data.data || []);
-          if (items.length > 0) {
-            db.saveBulkSalesTransactions(items);
-            return res.json({
-              success: true,
-              message: `Successfully synchronized ${items.length} sales records from Birmas Central Server!`,
-              count: items.length,
-            });
-          }
-        }
-      } catch (fetchErr) {
-        console.warn('[Sales Sync] Birmas server endpoint not yet active or timed out:', fetchErr.message);
-      }
-
-      // Return status with bridge instructions
-      res.json({
-        success: true,
-        message: 'Loaded local ESB sales recapitulation data. To pull live from Birmas server, add the WordPress bridge snippet on admin.birmas.id.',
-        bridgeReady: false,
-      });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // 15. Database health & system status
-  app.get('/api/database/status', (req, res) => {
-    const dbPath = path.join(__dirname, 'data', 'birmas_audit.sqlite');
-    const stats = fs.existsSync(dbPath) ? fs.statSync(dbPath) : null;
-    const stores = db.getAllStores();
-    const products = db.getAllProducts();
-    const history = db.getAllAuditHistory();
-
-    res.json({
-      status: 'healthy',
-      engine: 'SQLite (Relational Tables)',
-      dbFile: dbPath,
-      fileSizeKB: stats ? Math.round(stats.size / 1024) : 0,
-      totalProducts: products.length,
-      totalStores: stores.length,
-      totalAuditsArchived: history.length,
-      lastSaved: new Date().toISOString(),
-      autoSyncEnabled: true,
-      autoSyncIntervalSeconds: 30,
-    });
-  });
-
-  // Handle any unmatched API routes with JSON 404, never letting it fall through to HTML
-  app.all('/api/*', (req, res) => {
-    res.status(404).json({ success: false, error: `API route not found: ${req.method} ${req.originalUrl}` });
-  });
-
-  // Vite Dev Middlewares or Production Static Serving
-  const isProduction = process.env.NODE_ENV === 'production';
-  const distHtmlPath = path.join(__dirname, 'dist', 'index.html');
-  const hasDist = fs.existsSync(distHtmlPath);
-
-  if (isProduction || (hasDist && process.env.NODE_ENV !== 'development')) {
-    console.log('[Server] Serving production assets from ./dist');
-    app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (req, res) => {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      res.sendFile(distHtmlPath);
-    });
-  } else {
-    console.log('[Server] Starting Vite development middleware');
-    const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: false,
-      },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-    app.use('*', async (req, res, next) => {
-      if (req.originalUrl.startsWith('/api')) {
-        return next();
-      }
-      try {
-        const url = req.originalUrl;
-        let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
-        template = await vite.transformIndexHtml(url, template);
-        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
-      } catch (e) {
-        if (vite && vite.ssrFixStacktrace) {
-          vite.ssrFixStacktrace(e);
-        }
-        next(e);
-      }
-    });
-  }
-
-  // Express global error catching middleware
-  app.use((err, req, res, next) => {
-    console.error('[API Express Error]:', err.message);
-    if (!res.headersSent) {
-      res.status(err.status || 500).json({ success: false, error: err.message });
-    }
-  });
-
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Birmas Server] SQLite Tables Ready at http://localhost:${PORT}`);
-
-    // Combined automatic sync routine:
-    // 1. Primary: Pull from Birmas Central Server (https://admin.birmas.id) - Permanent & No cURL needed!
-    // 2. Secondary fallback: My ESB ERP session if configured
-    async function executePeriodicSync() {
-      console.log('[Auto-Sync] Running scheduled 15-minute background inventory sync...');
-      try {
-        const birmasRes = await runBirmasServerSync();
-        if (birmasRes.success && birmasRes.totalSyncedProducts > 0) {
-          console.log(`[Auto-Sync] Successfully synchronized ${birmasRes.totalSyncedProducts} items from Birmas Central Server!`);
-          return;
-        }
-      } catch (e) {
-        console.warn('[Auto-Sync] Birmas Central Server sync notice:', e.message);
-      }
-
-      // Only attempt direct ESB ERP scrape if a custom session was actively saved by the user
-      const customErpCookie = db.getConfig('esb_erp_cookie');
-      if (customErpCookie) {
-        try {
-          console.log('[Auto-Sync] Executing configured ESB ERP session sync...');
-          await runDirectESBERPSync({ storeId: 'all' });
-        } catch (e) {
-          console.warn('[Auto-Sync] ESB ERP notice:', e.message);
-        }
-      } else {
-        console.log('[Auto-Sync] Local SQLite catalog and store stock records are up to date.');
-      }
-    }
-
-    setTimeout(() => {
-      executePeriodicSync();
-    }, 3000);
-
-    const SYNC_INTERVAL_MS = 15 * 60 * 1000; // Automatically every 15 minutes
-    setInterval(() => {
-      executePeriodicSync();
-    }, SYNC_INTERVAL_MS);
-  });
-
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(`[CRITICAL] Port ${PORT} is already in use by another application!`);
-      console.error(`Please ensure you launch with: PORT=3005 node server.js`);
+    if (loadedProducts && loadedProducts.length > 0) {
+      wpProducts.value = loadedProducts;
     } else {
-      console.error('[Server Error]:', err);
+      try {
+        const localProds = JSON.parse(localStorage.getItem('birmas_products') || '[]');
+        if (localProds.length > 0) wpProducts.value = localProds;
+      } catch (_) {}
     }
-  });
+    if (loadedHistory) {
+      auditHistory.value = loadedHistory;
+    }
+
+    await loadStoreScans(selectedStoreId.value);
+    isInitialized.value = true;
+  } catch (err) {
+    console.warn('Backend init fallback:', err);
+    try {
+      const localProds = JSON.parse(localStorage.getItem('birmas_products') || '[]');
+      if (localProds.length > 0) wpProducts.value = localProds;
+    } catch (_) {}
+  }
 }
 
-if (process.argv.includes('--sync-esb')) {
-  console.log('[CLI] Connecting directly to ESB Production (core-api.esb.co.id)...');
-  runDirectESBSync().then((res) => {
-    const stores = db.getAllStores();
-    const products = db.getAllProducts();
-    console.log(`[CLI] Direct ESB Sync complete! Total products in SQLite: ${products.length}, Stores: ${stores.length}, Stock entries: ${res.totalStockEntries}`);
-    process.exit(0);
-  }).catch((err) => {
-    console.error('[CLI] Direct ESB Sync failed:', err);
-    process.exit(1);
+const isSessionLocked = ref(false);
+const sessionLockInfo = ref(null);
+
+async function loadSessionLockState(storeId) {
+  if (!storeId) return;
+  try {
+    const res = await fetch(`/api/audit/session/${encodeURIComponent(storeId)}/lock`);
+    const data = await res.json();
+    if (data.success) {
+      isSessionLocked.value = Boolean(data.isLocked);
+      sessionLockInfo.value = {
+        lockedAt: data.lockedAt,
+        lockedBy: data.lockedBy,
+        unlockedAt: data.unlockedAt,
+        unlockedBy: data.unlockedBy,
+      };
+      return;
+    }
+  } catch (_) {}
+
+  try {
+    const local = JSON.parse(localStorage.getItem(`birmas_session_lock_${storeId}`) || 'null');
+    if (local) {
+      isSessionLocked.value = Boolean(local.isLocked);
+      sessionLockInfo.value = local;
+    } else {
+      isSessionLocked.value = false;
+      sessionLockInfo.value = null;
+    }
+  } catch (_) {
+    isSessionLocked.value = false;
+  }
+}
+
+async function lockCurrentSession(user = 'Auditor') {
+  const storeId = selectedStoreId.value;
+  try {
+    await fetch(`/api/audit/session/${encodeURIComponent(storeId)}/lock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user }),
+    });
+  } catch (_) {}
+
+  isSessionLocked.value = true;
+  sessionLockInfo.value = {
+    isLocked: true,
+    lockedAt: new Date().toISOString(),
+    lockedBy: user,
+  };
+  try {
+    localStorage.setItem(`birmas_session_lock_${storeId}`, JSON.stringify(sessionLockInfo.value));
+  } catch (_) {}
+}
+
+async function unlockCurrentSession(user = 'Super Admin', role = 'superadmin') {
+  const storeId = selectedStoreId.value;
+  if (role !== 'superadmin') {
+    throw new Error('Only Superadmin can approve unlocking this audit session.');
+  }
+
+  try {
+    await fetch(`/api/audit/session/${encodeURIComponent(storeId)}/unlock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user, role }),
+    });
+  } catch (_) {}
+
+  isSessionLocked.value = false;
+  sessionLockInfo.value = {
+    isLocked: false,
+    unlockedAt: new Date().toISOString(),
+    unlockedBy: user,
+  };
+  try {
+    localStorage.setItem(`birmas_session_lock_${storeId}`, JSON.stringify(sessionLockInfo.value));
+  } catch (_) {}
+}
+
+async function loadStoreScans(storeId) {
+  try {
+    const res = await fetchAuditState(storeId);
+    scannedCounts.value = res.counts || res.scannedCounts || {};
+    scanLogs.value = res.scanLogs || [];
+  } catch (err) {
+    console.warn('Failed to load store scans:', err);
+  }
+  await loadSessionLockState(storeId);
+}
+
+export function useAuditStore() {
+  if (!isInitialized.value) {
+    initializeFromBackend();
+  }
+
+  const visibleStores = computed(() => {
+    if (!stores.value || stores.value.length === 0) return [];
+    return stores.value.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   });
-} else if (process.argv.includes('--sync')) {
-  console.log('[CLI] Connecting directly to ESB to sync products into SQLite tables...');
-  runDirectESBSync().then(() => {
-    const stores = db.getAllStores();
-    const products = db.getAllProducts();
-    console.log(`[CLI] ESB Sync finished! Total products in SQLite: ${products.length}, Stores in SQLite: ${stores.length}`);
-    process.exit(0);
-  }).catch((err) => {
-    console.error('[CLI] Sync failed:', err);
-    process.exit(1);
+
+  const currentStore = computed(() => {
+    const found = visibleStores.value.find((s) => s.id === selectedStoreId.value);
+    if (!found && visibleStores.value.length > 0) {
+      selectedStoreId.value = visibleStores.value[0].id;
+      return visibleStores.value[0];
+    }
+    return found || visibleStores.value[0] || stores.value[0];
   });
-} else {
-  startServer().catch((err) => {
-    console.error('Failed to start server:', err);
-    process.exit(1);
+
+  // Compare Scanned Physical Count with WordPress/ESB Stock for this Store
+  const auditItems = computed(() => {
+    const storeId = selectedStoreId.value;
+
+    return wpProducts.value.map((prod) => {
+      const rawExpected = (prod.stockByStore && prod.stockByStore[storeId]) ?? 0;
+      const wpExpected = Math.round(Number(rawExpected) || 0);
+      const count = scannedCounts.value[prod.barcode] ?? 0;
+
+      let status = 'unscanned';
+      let discrepancy = 0;
+
+      if (wpExpected < 0) {
+        // Negative ESB stock means the ERP recorded that items are missing in the store (e.g. -2 means 2 cans missing)
+        if (count === 0) {
+          status = 'missing'; // Items are physically missing
+          discrepancy = wpExpected; // e.g. -2
+        } else if (count < Math.abs(wpExpected)) {
+          status = 'counting';
+          discrepancy = wpExpected + count;
+        } else if (count === Math.abs(wpExpected)) {
+          status = 'matched';
+          discrepancy = 0;
+        } else {
+          status = 'surplus';
+          discrepancy = count - Math.abs(wpExpected);
+        }
+      } else if (count === 0 && wpExpected === 0) {
+        status = 'zero_stock'; // Stok Kosong
+        discrepancy = 0;
+      } else if (count === 0 && wpExpected > 0) {
+        status = 'unscanned'; // Belum Dipindai
+        discrepancy = -wpExpected;
+      } else if (count === wpExpected) {
+        status = 'matched'; // Sesuai Persis
+        discrepancy = 0;
+      } else if (count < wpExpected) {
+        status = count > 0 ? 'counting' : 'unscanned'; // Sedang dihitung atau belum
+        discrepancy = count - wpExpected;
+      } else {
+        status = 'surplus'; // Kelebihan / Overcount
+        discrepancy = count - wpExpected;
+      }
+
+      const lastLog = scanLogs.value.find((l) => l.barcode === prod.barcode);
+
+      return {
+        barcode: prod.barcode,
+        wpId: prod.id,
+        brand: prod.subCategory || prod.brand || 'Birmas',
+        subCategory: prod.subCategory || prod.brand || 'Birmas',
+        productTitle: prod.productTitle || prod.varian,
+        category: prod.category,
+        defaultUnit: prod.defaultUnit,
+        varian: prod.varian,
+        wpExpectedQty: wpExpected,
+        scannedCount: count,
+        discrepancy,
+        status,
+        hasNegativeStock: wpExpected < 0,
+        negativeStockDeficit: wpExpected < 0 ? Math.abs(wpExpected) : 0,
+        isMatched: status === 'matched',
+        isSurplus: status === 'surplus',
+        isDeficit: status === 'missing' || (count < wpExpected && wpExpected > 0),
+        isUnscanned: status === 'unscanned',
+        lastScannedAt: lastLog ? lastLog.timestamp : null,
+      };
+    });
   });
+
+  // KPI Metrics
+  const totalWpExpected = computed(() => {
+    return Math.round(auditItems.value.reduce((acc, item) => acc + item.wpExpectedQty, 0));
+  });
+
+  const totalScanned = computed(() => {
+    return auditItems.value.reduce((acc, item) => acc + item.scannedCount, 0);
+  });
+
+  const hasAuditStarted = computed(() => {
+    return totalScanned.value > 0;
+  });
+
+  // Items that belong to this store (have expected stock or were scanned)
+  const storeItemsCount = computed(() => {
+    return auditItems.value.filter((i) => i.wpExpectedQty > 0 || i.scannedCount > 0).length;
+  });
+
+  const scannedVariantsCount = computed(() => {
+    return auditItems.value.filter((i) => i.scannedCount > 0).length;
+  });
+
+  const matchedVariantsCount = computed(() => {
+    return auditItems.value.filter((i) => i.status === 'matched').length;
+  });
+
+  const countingVariantsCount = computed(() => {
+    return auditItems.value.filter((i) => i.status === 'counting').length;
+  });
+
+  const missingVariantsCount = computed(() => {
+    // True shortages during reconciliation (only evaluated once audit counting is underway)
+    if (!hasAuditStarted.value) return 0;
+    return auditItems.value.filter((i) => i.wpExpectedQty > 0 && i.scannedCount < i.wpExpectedQty).length;
+  });
+
+  const surplusVariantsCount = computed(() => {
+    return auditItems.value.filter((i) => i.status === 'surplus').length;
+  });
+
+  const unscannedVariantsCount = computed(() => {
+    return auditItems.value.filter((i) => i.status === 'unscanned').length;
+  });
+
+  const auditProgressPercentage = computed(() => {
+    const totalActive = storeItemsCount.value || 1;
+    return Math.min(100, Math.round((scannedVariantsCount.value / totalActive) * 100));
+  });
+
+  const netDiscrepancyBottles = computed(() => {
+    if (!hasAuditStarted.value) return 0;
+    return totalScanned.value - totalWpExpected.value;
+  });
+
+  const totalShortageBottles = computed(() => {
+    if (!hasAuditStarted.value) return 0;
+    return auditItems.value.reduce((acc, i) => {
+      return acc + (i.scannedCount < i.wpExpectedQty ? (i.wpExpectedQty - i.scannedCount) : 0);
+    }, 0);
+  });
+
+  const totalSurplusBottles = computed(() => {
+    return auditItems.value.reduce((acc, i) => {
+      return acc + (i.scannedCount > i.wpExpectedQty ? (i.scannedCount - i.wpExpectedQty) : 0);
+    }, 0);
+  });
+
+  async function selectStore(storeId) {
+    selectedStoreId.value = storeId;
+    await loadStoreScans(storeId);
+  }
+
+  // Register physical scan
+  async function registerAuditScan(barcode, auditorName = 'Auditor') {
+    if (isSessionLocked.value) {
+      return { success: false, message: 'Audit session is locked. Unlocking requires Superadmin approval.' };
+    }
+    const clean = (barcode || '').trim();
+
+    const res = await sendAuditScan(clean, selectedStoreId.value, auditorName);
+
+    if (res.success && res.scannedCount !== undefined) {
+      scannedCounts.value[clean] = res.scannedCount;
+
+      const scanEvent = {
+        id: `scan-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        barcode: clean,
+        brand: res.product?.brand || 'Birmas',
+        varian: res.product?.varian || 'Product',
+        scanSequence: res.scannedCount,
+        storeId: selectedStoreId.value,
+        auditorName,
+      };
+      scanLogs.value.unshift(scanEvent);
+
+      const currentItem = auditItems.value.find((i) => i.barcode === clean);
+
+      return {
+        success: true,
+        message: res.message,
+        item: currentItem,
+        isOvercount: res.discrepancy > 0,
+        isMatchedNow: res.discrepancy === 0,
+      };
+    } else {
+      return {
+        success: false,
+        message: res.message || `Barcode ${clean} not found in database.`,
+        unknownBarcode: clean,
+      };
+    }
+  }
+
+  async function decrementAuditCount(barcode) {
+    if (isSessionLocked.value) return;
+    const clean = (barcode || '').trim();
+    const cur = scannedCounts.value[clean] ?? 0;
+    if (cur > 0) {
+      scannedCounts.value[clean] = cur - 1;
+      await adjustAuditCount(clean, selectedStoreId.value, { delta: -1 });
+    }
+  }
+
+  async function setAuditCount(barcode, count) {
+    if (isSessionLocked.value) return;
+    const clean = (barcode || '').trim();
+    const safeCount = Math.max(0, count);
+    scannedCounts.value[clean] = safeCount;
+    await adjustAuditCount(clean, selectedStoreId.value, { count: safeCount });
+  }
+
+  async function addBatchAuditCount(barcode, delta) {
+    const clean = (barcode || '').trim();
+    const cur = scannedCounts.value[clean] ?? 0;
+    const target = Math.max(0, cur + delta);
+    scannedCounts.value[clean] = target;
+    await adjustAuditCount(clean, selectedStoreId.value, { delta });
+  }
+
+  async function resetCurrentAudit() {
+    scannedCounts.value = {};
+    scanLogs.value = [];
+    await resetAuditSession(selectedStoreId.value);
+  }
+
+  async function addNewBarcode(payload) {
+    const res = await saveNewBarcode(payload);
+    if (res.success && res.product) {
+      const cleanNew = String(res.product.barcode || '').trim();
+      const targetTitle = (payload.productTitle || payload.varian || '').toLowerCase().trim();
+
+      // Update ALL matching products in catalog across all store views
+      let matchedCount = 0;
+      wpProducts.value.forEach((p) => {
+        const pTitle = (p.productTitle || p.varian || '').toLowerCase().trim();
+        if (p.id === payload.productId || (targetTitle && pTitle === targetTitle)) {
+          p.barcode = cleanNew;
+          if (res.product.brand && !p.brand) p.brand = res.product.brand;
+          matchedCount++;
+        }
+      });
+
+      // If not yet present in wpProducts, add it
+      if (matchedCount === 0) {
+        wpProducts.value.push(res.product);
+      }
+
+      // Persist immediately to localStorage so all stores immediately recognize it
+      try {
+        localStorage.setItem('birmas_products', JSON.stringify(wpProducts.value));
+      } catch (_) {}
+
+      // Background sync with database to fetch any fresh barcodes without dropping existing products
+      try {
+        const fresh = await fetchProducts();
+        if (fresh && fresh.length > 0) {
+          fresh.forEach((fp) => {
+            if (!fp.barcode) return;
+            const fpTitle = (fp.productTitle || fp.varian || '').toLowerCase().trim();
+            wpProducts.value.forEach((p) => {
+              const pTitle = (p.productTitle || p.varian || '').toLowerCase().trim();
+              if (p.id === fp.id || (fpTitle && pTitle === fpTitle)) {
+                p.barcode = fp.barcode;
+              }
+            });
+          });
+          localStorage.setItem('birmas_products', JSON.stringify(wpProducts.value));
+        }
+      } catch (_) {}
+    }
+    return res;
+  }
+
+  async function syncFromWordPress() {
+    isSyncing.value = true;
+    try {
+      await saveWordPressConfig(wpConfig.value);
+      const res = await syncWordPressData(wpConfig.value);
+      if (res.data && res.data.length > 0) {
+        wpProducts.value = res.data;
+        wpConfig.value.isConnected = true;
+        wpConfig.value.lastSyncedAt = new Date().toISOString();
+        lastSyncStatus.value = { success: res.success, message: res.message };
+      } else {
+        lastSyncStatus.value = { success: false, message: res.message };
+      }
+    } catch (err) {
+      lastSyncStatus.value = { success: false, message: err.message };
+    } finally {
+      isSyncing.value = false;
+    }
+  }
+
+  async function syncFromESBDirect() {
+    isSyncing.value = true;
+    try {
+      const res = await syncDirectESB();
+      if (res.success) {
+        const [freshStores, freshProducts] = await Promise.all([fetchStores(), fetchProducts()]);
+        stores.value = freshStores;
+        wpProducts.value = freshProducts;
+        wpConfig.value.lastSyncedAt = new Date().toISOString();
+        try {
+          const auditState = await fetchAuditState(selectedStoreId.value);
+          if (auditState && auditState.counts) {
+            scannedCounts.value = auditState.counts;
+          }
+        } catch {}
+        lastSyncStatus.value = {
+          success: true,
+          message: `Direct ESB Sync Complete! ${res.totalProducts || 192} products & ${res.totalStockEntries || 951} branch stocks synchronized from ESB Cloud.`,
+        };
+      } else {
+        lastSyncStatus.value = { success: false, message: res.message || 'Direct ESB Sync failed' };
+      }
+      return res;
+    } catch (err) {
+      lastSyncStatus.value = { success: false, message: err.message };
+      return { success: false, error: err.message };
+    } finally {
+      isSyncing.value = false;
+    }
+  }
+
+  async function syncFromESBERP(credentials = {}) {
+    isSyncing.value = true;
+    try {
+      const payload = {
+        storeId: selectedStoreId.value,
+        ...credentials,
+      };
+      const res = await syncDirectESBERP(payload);
+      if (res.success) {
+        const [freshStores, freshProducts] = await Promise.all([fetchStores(), fetchProducts()]);
+        stores.value = freshStores;
+        wpProducts.value = freshProducts;
+        wpConfig.value.lastSyncedAt = new Date().toISOString();
+        try {
+          const auditState = await fetchAuditState(selectedStoreId.value);
+          if (auditState && auditState.counts) {
+            scannedCounts.value = auditState.counts;
+          }
+        } catch {}
+        lastSyncStatus.value = {
+          success: true,
+          message: `ESB Inventory Synced! ${res.totalSyncedProducts || 0} real inventory items updated for ${currentStore.value.name}.`,
+        };
+      } else {
+        lastSyncStatus.value = { success: false, message: res.message || 'ERP Sync failed' };
+      }
+      return res;
+    } catch (err) {
+      lastSyncStatus.value = { success: false, message: err.message };
+      return { success: false, error: err.message };
+    } finally {
+      isSyncing.value = false;
+    }
+  }
+
+  async function syncFromBirmasServer(customPayload = {}) {
+    isSyncing.value = true;
+    try {
+      const res = await fetch('/api/birmas/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(customPayload),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.isVisitPurposeData) {
+          lastSyncStatus.value = {
+            success: true,
+            isVisitPurposeData: true,
+            message: data.message,
+            visitPurposes: data.visitPurposes,
+            guidance: data.guidance,
+          };
+        } else {
+          const [freshStores, freshProducts] = await Promise.all([fetchStores(), fetchProducts()]);
+          stores.value = freshStores;
+          wpProducts.value = freshProducts;
+          wpConfig.value.lastSyncedAt = new Date().toISOString();
+          try {
+            const auditState = await fetchAuditState(selectedStoreId.value);
+            if (auditState && auditState.counts) {
+              scannedCounts.value = auditState.counts;
+            }
+          } catch {}
+          lastSyncStatus.value = {
+            success: true,
+            message: `Synced with Birmas Server! ${data.totalSyncedProducts || 0} items updated across all stores.`,
+          };
+        }
+      } else {
+        lastSyncStatus.value = { success: false, message: data.error || 'Birmas server sync failed' };
+      }
+      return data;
+    } catch (err) {
+      lastSyncStatus.value = { success: false, message: err.message };
+      return { success: false, error: err.message };
+    } finally {
+      isSyncing.value = false;
+    }
+  }
+
+  async function finalizeAudit(auditorName, notes = '', pushToWP = false) {
+    const completedRecord = {
+      id: `audit-${Date.now()}`,
+      storeId: selectedStoreId.value,
+      storeName: currentStore.value.name,
+      auditorName,
+      startedAt: scanLogs.value.length > 0 ? scanLogs.value[scanLogs.value.length - 1].timestamp : new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      totalExpected: totalWpExpected.value,
+      totalScanned: totalScanned.value,
+      matchedCount: matchedVariantsCount.value,
+      missingCount: missingVariantsCount.value,
+      surplusCount: surplusVariantsCount.value,
+      items: auditItems.value,
+      pushedToWordPress: pushToWP,
+      notes,
+    };
+
+    const res = await finalizeAuditSession(completedRecord);
+
+    if (res.success) {
+      auditHistory.value.unshift(completedRecord);
+      await lockCurrentSession(auditorName);
+      scannedCounts.value = {};
+      scanLogs.value = [];
+
+      if (pushToWP) {
+        const refreshed = await fetchProducts();
+        if (refreshed) wpProducts.value = refreshed;
+      }
+
+      return completedRecord;
+    } else {
+      throw new Error(res.message || 'Failed to finalize audit on backend');
+    }
+  }
+
+  async function clearHistory() {
+    await clearAuditHistory();
+    auditHistory.value = [];
+  }
+
+  async function createStore(storeData) {
+    const res = await apiAddStore(storeData);
+    if (res.success && res.stores) {
+      stores.value = res.stores;
+    }
+    return res;
+  }
+
+  async function removeStore(storeId) {
+    const res = await apiDeleteStore(storeId);
+    if (res.success && res.stores) {
+      stores.value = res.stores;
+    }
+    return res;
+  }
+
+  function applyStockCsvRows(rows = [], metadata = {}, filename = '') {
+    if (!rows || rows.length === 0) return { updatedCount: 0 };
+
+    const clean = (s) => (s || '').toString().toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+
+    // 1. Gather all store names and match or create stores
+    const updatedStores = [...stores.value];
+    const storeMap = new Map();
+
+    for (const s of updatedStores) {
+      if (s.name) storeMap.set(clean(s.name), s);
+      if (s.id) storeMap.set(clean(s.id), s);
+      if (s.esbBranchCode) storeMap.set(clean(s.esbBranchCode), s);
+    }
+
+    // 2. Discover stores from CSV rows
+    for (const r of rows) {
+      const sName = (r.storeName || '').trim();
+      if (!sName) continue;
+      const sKey = clean(sName);
+      if (!storeMap.has(sKey)) {
+        const newStoreId = 'store-' + (sKey || Date.now());
+        const newStore = {
+          id: newStoreId,
+          name: sName,
+          city: 'Jakarta',
+          esbBranchCode: sName,
+        };
+        updatedStores.push(newStore);
+        storeMap.set(sKey, newStore);
+      }
+    }
+    stores.value = updatedStores;
+
+    // 3. Update products and their stockByStore
+    const currentProducts = [...wpProducts.value];
+    let updatedCount = 0;
+
+    for (const r of rows) {
+      const sName = (r.storeName || '').trim();
+      const pName = (r.productName || '').trim();
+      if (!sName || !pName) continue;
+
+      const targetStore = storeMap.get(clean(sName)) || updatedStores.find(s => s.name.toLowerCase() === sName.toLowerCase());
+      const storeId = targetStore ? targetStore.id : selectedStoreId.value;
+
+      // Find matching product
+      let matchedProd = currentProducts.find((p) => {
+        if (p.productTitle && clean(p.productTitle) === clean(pName)) return true;
+        if (p.varian && clean(p.varian) === clean(pName)) return true;
+        if (p.barcode && r.barcode && clean(p.barcode) === clean(r.barcode)) return true;
+        return false;
+      });
+
+      if (!matchedProd) {
+        matchedProd = currentProducts.find((p) => {
+          const pt = clean(p.productTitle || '');
+          const pn = clean(pName);
+          return (pt.length > 4 && pn.length > 4 && (pt.includes(pn) || pn.includes(pt)));
+        });
+      }
+
+      const rawQty = typeof r.stockQty === 'number' ? r.stockQty : parseFloat(String(r.stockQty).replace(/[^0-9.-]/g, '')) || 0;
+      const qty = Math.round(Number(rawQty) || 0);
+
+      if (matchedProd) {
+        matchedProd.stockByStore = matchedProd.stockByStore || {};
+        matchedProd.stockByStore[storeId] = qty;
+        if (r.category && !matchedProd.category) matchedProd.category = r.category;
+        if (r.unit && !matchedProd.defaultUnit) matchedProd.defaultUnit = r.unit;
+        updatedCount++;
+      } else {
+        const newProd = {
+          id: 'stock-prod-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6),
+          barcode: (r.barcode && !String(r.barcode).startsWith('STK')) ? String(r.barcode).trim() : null,
+          productTitle: pName,
+          varian: pName,
+          brand: 'Birmas',
+          subCategory: 'Birmas',
+          category: r.category || 'Craft Beer',
+          defaultUnit: r.unit || 'Can',
+          stockByStore: { [storeId]: qty },
+        };
+        currentProducts.push(newProd);
+        updatedCount++;
+      }
+    }
+
+    wpProducts.value = currentProducts;
+
+    // Cache locally
+    try {
+      localStorage.setItem('birmas_products', JSON.stringify(wpProducts.value));
+      localStorage.setItem('birmas_stores', JSON.stringify(stores.value));
+      if (filename) {
+        const activeInfo = {
+          filename,
+          stock_date: metadata.stockDate || metadata.cell5B || new Date().toLocaleDateString('id-ID'),
+          downloaded_at_esb: metadata.downloadedAtEsb || metadata.cell4B || new Date().toLocaleString('id-ID'),
+          active_stores: metadata.activeStores || metadata.cell6B || '',
+          row_count: rows.length,
+          updated_at: new Date().toISOString(),
+        };
+        localStorage.setItem('birmas_active_stock_csv', JSON.stringify(activeInfo));
+      }
+    } catch (_) {}
+
+    return { updatedCount, totalProducts: wpProducts.value.length };
+  }
+
+  return {
+    stores: visibleStores,
+    rawStores: stores,
+    selectedStoreId,
+    currentStore,
+    wpConfig,
+    wpProducts,
+    auditItems,
+    scannedCounts,
+    scanLogs,
+    auditHistory,
+    isSyncing,
+    lastSyncStatus,
+    totalWpExpected,
+    totalScanned,
+    hasAuditStarted,
+    storeItemsCount,
+    scannedVariantsCount,
+    countingVariantsCount,
+    matchedVariantsCount,
+    missingVariantsCount,
+    surplusVariantsCount,
+    unscannedVariantsCount,
+    auditProgressPercentage,
+    netDiscrepancyBottles,
+    totalShortageBottles,
+    totalSurplusBottles,
+    isAutoCheckerActive,
+    lastCheckedAt,
+    selectStore,
+    registerAuditScan,
+    decrementAuditCount,
+    addBatchAuditCount,
+    setAuditCount,
+    resetCurrentAudit,
+    addNewBarcode,
+    syncFromWordPress,
+    syncFromESBDirect,
+    syncFromESBERP,
+    syncFromBirmasServer,
+    finalizeAudit,
+    clearHistory,
+    createStore,
+    removeStore,
+    applyStockCsvRows,
+    isSessionLocked,
+    sessionLockInfo,
+    loadSessionLockState,
+    lockCurrentSession,
+    unlockCurrentSession,
+    refreshAuditState: () => loadStoreScans(selectedStoreId.value),
+    refreshProducts: async () => {
+      try {
+        const prods = await fetchProducts();
+        if (prods && Array.isArray(prods)) {
+          wpProducts.value = prods;
+        }
+        const stds = await fetchStores();
+        if (stds && Array.isArray(stds) && stds.length > 0) {
+          stores.value = stds;
+        }
+        return prods;
+      } catch (err) {
+        console.warn('Failed to refresh products:', err);
+        return [];
+      }
+    },
+  };
 }
