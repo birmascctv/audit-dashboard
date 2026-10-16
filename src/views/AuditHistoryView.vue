@@ -29,7 +29,6 @@ import {
 
 const { auditHistory, clearHistory, stores } = useAuditStore();
 
-const activeTab = ref('leaderboard'); // 'leaderboard' | 'history'
 const searchQuery = ref('');
 const selectedAudit = ref(null);
 
@@ -186,7 +185,7 @@ function exportLeaderboardCSV() {
           <div>
             <div class="flex items-center gap-2">
               <h2 class="text-xl font-black text-slate-900 tracking-tight">
-                Store Audit Records & Shrinkage Leaderboard
+                Store Audit Records & History
               </h2>
               <span class="text-xs px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200 font-bold font-mono">
                 {{ stores.length }} Stores Monitored
@@ -199,23 +198,23 @@ function exportLeaderboardCSV() {
         </div>
       </div>
 
-      <div class="flex items-center gap-2 self-start md:self-center">
+      <div class="flex items-center gap-2 self-start md:self-center flex-wrap">
         <button
-          v-if="activeTab === 'leaderboard'"
           @click="exportLeaderboardCSV"
           type="button"
           class="px-3.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+          title="Export Loss Prevention Leaderboard to CSV"
         >
           <Download class="w-3.5 h-3.5 text-teal-600" />
           <span>Export Leaderboard CSV</span>
         </button>
 
         <button
-          v-else
           @click="exportHistoryCSV"
           :disabled="auditHistory.length === 0"
           type="button"
-          class="px-3.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 disabled:opacity-40 text-slate-700 border border-slate-300 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+          class="px-3.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 disabled:opacity-40 text-teal-800 border border-teal-200 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+          title="Export Audit Records History to CSV"
         >
           <Download class="w-3.5 h-3.5 text-teal-600" />
           <span>Export History CSV</span>
@@ -233,37 +232,8 @@ function exportLeaderboardCSV() {
       </div>
     </div>
 
-    <!-- Navigation Tabs -->
-    <div class="flex items-center gap-3 border-b border-slate-200 pb-1">
-      <button
-        @click="activeTab = 'leaderboard'"
-        type="button"
-        class="pb-2.5 px-3 text-xs font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer"
-        :class="activeTab === 'leaderboard' ? 'border-teal-600 text-teal-800' : 'border-transparent text-slate-500 hover:text-slate-800'"
-      >
-        <Trophy class="w-4 h-4" />
-        <span>Store Shrinkage Leaderboard</span>
-        <span class="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-teal-50 text-teal-800 border border-teal-200">
-          Rankings
-        </span>
-      </button>
-
-      <button
-        @click="activeTab = 'history'"
-        type="button"
-        class="pb-2.5 px-3 text-xs font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer"
-        :class="activeTab === 'history' ? 'border-teal-600 text-teal-800' : 'border-transparent text-slate-500 hover:text-slate-800'"
-      >
-        <History class="w-4 h-4" />
-        <span>Completed Audit Sessions History</span>
-        <span class="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200">
-          {{ auditHistory.length }}
-        </span>
-      </button>
-    </div>
-
-    <!-- TAB 1: STORE SHRINKAGE LEADERBOARD -->
-    <div v-if="activeTab === 'leaderboard'" class="space-y-6">
+    <!-- ON TOP OF PAGE: STORE SHRINKAGE LEADERBOARD -->
+    <div class="space-y-6">
       <!-- Executive Summary Cards -->
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <!-- Card 1: Overall Accuracy -->
@@ -326,15 +296,20 @@ function exportLeaderboardCSV() {
       <!-- Leaderboard Table -->
       <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
         <div class="p-5 border-b border-slate-100 flex items-center justify-between">
-          <div>
-            <h3 class="text-sm font-extrabold text-slate-900">
-              Store Shrinkage Ranking
-            </h3>
-            <p class="text-xs text-slate-500">
-              Ranked from highest physical stock shrinkage to best inventory compliance.
-            </p>
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700">
+              <Trophy class="w-4 h-4 text-amber-600" />
+            </div>
+            <div>
+              <h3 class="text-sm font-extrabold text-slate-900">
+                Store Shrinkage Leaderboard
+              </h3>
+              <p class="text-xs text-slate-500">
+                Ranked from highest physical stock shrinkage to best inventory compliance.
+              </p>
+            </div>
           </div>
-          <span class="text-xs text-slate-400 font-mono">
+          <span class="text-xs text-slate-500 font-mono font-bold bg-slate-100 px-2.5 py-1 rounded-lg">
             {{ shrinkageLeaderboard.length }} Outlets
           </span>
         </div>
@@ -464,8 +439,8 @@ function exportLeaderboardCSV() {
       </div>
     </div>
 
-    <!-- TAB 2: AUDIT HISTORY LOGS -->
-    <div v-else class="space-y-4">
+    <!-- PREVIOUS TEMPLATE: COMPLETED AUDIT SESSION ARCHIVE -->
+    <div class="space-y-4">
       <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
         <div class="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
