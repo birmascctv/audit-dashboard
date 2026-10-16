@@ -109,18 +109,42 @@ export function extractMatchedStoreId(item) {
 let isEsbSyncing = false;
 
 // Direct ESB Live Sync: Connects straight to ESB POS Cloud to fetch real store stock per branch
-export async function runDirectESBSync() {
+export async function runDirectESBSync(options = {}) {
   if (isEsbSyncing) {
     console.log('[Direct ESB Sync] Sync already in progress, skipping.');
     return { success: false, message: 'Already syncing' };
   }
   isEsbSyncing = true;
   try {
-    const token = process.env.ESB_BEARER_TOKEN || 'enAYShLVFFtWqFPmcd5nwkuJFmeVC5cG3pgwgShNpmmpRLzEPeRabbvG8zdm';
-    const baseUrl = (process.env.ESB_BASE_URL || 'https://stg7.esb.co.id/api-fnb-backend-int/web').replace(/\/$/, '');
-    const defaultVp = process.env.ESB_VISIT_PURPOSE_ID || '2';
+    const token = options.token || process.env.BIRMAS_API_TOKEN || process.env.ESB_BEARER_TOKEN || db.getConfig('birmas_server_token') || 'enAYShLVFFtWqFPmcd5nwkuJFmeVC5cG3pgwgShNpmmpRLzEPeRabbvG8zdm';
 
-    console.log(`[Direct ESB Sync] Connecting to ${baseUrl} ...`);
+    let baseUrl = options.baseUrl || process.env.ESB_BASE_URL;
+    if (!baseUrl) {
+      const candidateUrl = options.birmasServerUrl || process.env.BIRMAS_BACKEND_URL || db.getConfig('wp_url') || '';
+      if (candidateUrl.includes('esb.co.id')) {
+        try {
+          const u = new URL(candidateUrl);
+          baseUrl = `${u.protocol}//${u.host}`;
+        } catch {
+          baseUrl = 'https://core-api.esb.co.id';
+        }
+      } else {
+        baseUrl = 'https://stg7.esb.co.id/api-fnb-backend-int/web';
+      }
+    }
+    baseUrl = baseUrl.replace(/\/$/, '');
+
+    let defaultVp = options.visitPurposeId || process.env.ESB_VISIT_PURPOSE_ID;
+    if (!defaultVp) {
+      const cachedVps = db.getVisitPurposes();
+      if (cachedVps.length > 0 && cachedVps[0]?.id) {
+        defaultVp = String(cachedVps[0].id);
+      } else {
+        defaultVp = '2';
+      }
+    }
+
+    console.log(`[Direct ESB Sync] Connecting to ${baseUrl} (Visit Purpose ID: ${defaultVp}) ...`);
     const headers = {
       'Authorization': `Bearer ${token}`,
       'Accept': 'application/json',
@@ -304,11 +328,58 @@ export async function runBirmasServerSync(options = {}) {
   }
   isBirmasServerSyncing = true;
   try {
-    const baseUrl = options.baseUrl || options.birmasServerUrl || process.env.BIRMAS_BACKEND_URL || db.getConfig('wp_url') || 'https://admin.birmas.id';
+    const rawBaseUrl = options.baseUrl || options.birmasServerUrl || process.env.BIRMAS_BACKEND_URL || db.getConfig('wp_url') || 'https://admin.birmas.id';
+    const baseUrl = String(rawBaseUrl).trim();
     const token = options.token || options.apiToken || options.birmasServerToken || process.env.BIRMAS_API_TOKEN || db.getConfig('birmas_server_token') || '';
-    const endpointPath = options.endpointPath || options.birmasServerEndpoint || process.env.BIRMAS_ENDPOINT_PATH || db.getConfig('birmas_server_endpoint') || '/wp-json/api/v1/product_stocks';
 
-    console.log(`[Birmas Server Sync] Connecting to Birmas server (${baseUrl}${endpointPath}) ...`);
+    // Determine whether to append an endpoint path or use baseUrl directly
+    // If the user specifies noEndpoint: true, or endpointPath: '', 'none', or 'direct', DO NOT append any endpoint.
+    const explicitEndpoint = options.endpointPath !== undefined ? options.endpointPath : options.birmasServerEndpoint;
+    let resolvedEndpoint = '';
+
+    if (options.noEndpoint === true || explicitEndpoint === '' || explicitEndpoint === 'none' || explicitEndpoint === 'direct') {
+      resolvedEndpoint = ''; // Do NOT add any endpoint
+    } else if (typeof explicitEndpoint === 'string' && explicitEndpoint.trim()) {
+      resolvedEndpoint = explicitEndpoint.trim();
+    } else {
+      // Check stored database config or environment variable
+      const dbEndpoint = db.getConfig('birmas_server_endpoint', null);
+      const envEndpoint = process.env.BIRMAS_ENDPOINT_PATH !== undefined ? process.env.BIRMAS_ENDPOINT_PATH : null;
+
+      if (dbEndpoint === '' || dbEndpoint === 'none' || dbEndpoint === 'direct') {
+        resolvedEndpoint = '';
+      } else if (dbEndpoint) {
+        resolvedEndpoint = dbEndpoint;
+      } else if (envEndpoint === '' || envEndpoint === 'none' || envEndpoint === 'direct') {
+        resolvedEndpoint = '';
+      } else if (envEndpoint) {
+        resolvedEndpoint = envEndpoint;
+      } else {
+        // If baseUrl already looks like a complete endpoint URL
+        // (e.g. contains /extv1/, /visit-purpose, /wp-json/, .php, /api/, etc.)
+        const lowerUrl = baseUrl.toLowerCase();
+        const hasExistingRoute = 
+          lowerUrl.includes('/extv1/') || 
+          lowerUrl.includes('visit-purpose') || 
+          lowerUrl.includes('/wp-json/') || 
+          lowerUrl.includes('.php') || 
+          lowerUrl.includes('/product_stocks');
+          
+        if (hasExistingRoute) {
+          resolvedEndpoint = ''; // Do NOT add any endpoint! User provided a full URL!
+        } else {
+          resolvedEndpoint = '/wp-json/api/v1/product_stocks';
+        }
+      }
+    }
+
+    let targetUrl = baseUrl.trim();
+    if (resolvedEndpoint && resolvedEndpoint !== 'none' && resolvedEndpoint !== 'direct') {
+      const cleanEndpoint = resolvedEndpoint.startsWith('/') ? resolvedEndpoint : `/${resolvedEndpoint}`;
+      targetUrl = `${baseUrl.replace(/\/+$/, '')}${cleanEndpoint}`;
+    }
+
+    console.log(`[Birmas Server Sync] Connecting to: ${targetUrl} (Endpoint appended: ${resolvedEndpoint ? resolvedEndpoint : 'NONE (Direct URL)'}) ...`);
 
     const existingProducts = db.getAllProducts();
     const barcodeMap = new Map();
@@ -319,16 +390,23 @@ export async function runBirmasServerSync(options = {}) {
       }
     }
 
+    // Determine pagination: single call if direct URL, ESB endpoint, or visit-purpose
+    const isDirectOrEsb = resolvedEndpoint === '' || targetUrl.toLowerCase().includes('visit-purpose') || targetUrl.toLowerCase().includes('/extv1/');
+    const maxPages = isDirectOrEsb ? 1 : 20;
+
     let totalSyncedProducts = 0;
     let page = 1;
     let hasMore = true;
 
-    while (hasMore && page <= 20) {
-      const cleanEndpoint = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
-      const sep = cleanEndpoint.includes('?') ? '&' : '?';
-      const url = `${baseUrl.replace(/\/+$/, '')}${cleanEndpoint}${sep}per_page=100&page=${page}`;
+    while (hasMore && page <= maxPages) {
+      let url = targetUrl;
+      if (!isDirectOrEsb) {
+        const sep = targetUrl.includes('?') ? '&' : '?';
+        url = `${targetUrl}${sep}per_page=100&page=${page}`;
+      }
 
       let items = [];
+      let rawJson = null;
 
       try {
         const headers = {
@@ -345,11 +423,24 @@ export async function runBirmasServerSync(options = {}) {
         });
 
         if (!res.ok) {
-          console.log(`[Birmas Server Sync] Response status ${res.status} from page ${page}.`);
-          break;
+          let errMsg = `HTTP ${res.status} ${res.statusText || ''}`.trim();
+          try {
+            const errJson = await res.json();
+            if (errJson && errJson.message) {
+              errMsg = `${errJson.message} (HTTP ${res.status})`;
+            }
+          } catch {}
+          console.warn(`[Birmas Server Sync] Response error from ${url}: ${errMsg}`);
+          return {
+            success: false,
+            urlCalled: url,
+            endpointUsed: resolvedEndpoint || '(Direct URL - No Endpoint Added)',
+            error: `API error from ${url}: ${errMsg}`,
+            message: `Remote server returned ${errMsg}. If this endpoint requires credentials, check your Bearer token or URL.`,
+          };
         }
 
-        const rawJson = await res.json();
+        rawJson = await res.json();
         if (Array.isArray(rawJson)) {
           items = rawJson;
         } else if (rawJson && Array.isArray(rawJson.data)) {
@@ -364,7 +455,100 @@ export async function runBirmasServerSync(options = {}) {
           items = [];
         }
       } catch (fetchErr) {
-        console.warn(`[Birmas Server Sync] Page ${page} notice: ${fetchErr.message}. Utilizing existing database stock.`);
+        console.warn(`[Birmas Server Sync] Request notice: ${fetchErr.message}. Utilizing existing database stock.`);
+        break;
+      }
+
+      // 1. Detect if this is ESB Visit Purpose data
+      const isVisitPurposeData = 
+        targetUrl.toLowerCase().includes('visit-purpose') ||
+        (Array.isArray(items) && items.length > 0 && items.some(x => x && (x.visitPurposeID !== undefined || x.visitPurposeName !== undefined || x.visit_purpose_name !== undefined))) ||
+        (rawJson && (rawJson.visitPurposes || (Array.isArray(rawJson?.data) && rawJson.data.some(x => x && x.visitPurposeID !== undefined))));
+
+      if (isVisitPurposeData) {
+        const rawList = Array.isArray(items) && items.length > 0 ? items : (Array.isArray(rawJson?.data) ? rawJson.data : (Array.isArray(rawJson) ? rawJson : []));
+        const vpList = rawList.map(vp => ({
+          id: vp.visitPurposeID ?? vp.id ?? vp.code,
+          name: vp.visitPurposeName ?? vp.name ?? vp.title ?? `Purpose ${vp.visitPurposeID}`,
+          companyCode: vp.companyCode ?? vp.company_code ?? 'BRM',
+          raw: vp,
+        }));
+
+        if (vpList.length > 0) {
+          db.setVisitPurposes(vpList);
+          console.log(`[Birmas Server Sync] Captured ${vpList.length} ESB Visit Purposes:`, vpList.map(v => `${v.name} (#${v.id})`).join(', '));
+          
+          return {
+            success: true,
+            isVisitPurposeData: true,
+            urlCalled: targetUrl,
+            endpointAdded: resolvedEndpoint ? resolvedEndpoint : 'None (Direct URL)',
+            totalVisitPurposes: vpList.length,
+            visitPurposes: vpList,
+            message: `Retrieved ${vpList.length} ESB Visit Purposes (${vpList.map(v => `${v.name} [ID:${v.id}]`).join(', ')}) from ${targetUrl}`,
+            guidance: 'Visit purposes represent order channels (e.g. Dine In, Take Away, Delivery), not inventory stocks. To fetch product stocks from ESB, connect to /extv1/menu with branchCode and visitPurposeID.',
+          };
+        }
+      }
+
+      // 2. Detect if this is ESB Branch data
+      const isBranchData =
+        targetUrl.toLowerCase().includes('/extv1/branch') ||
+        (Array.isArray(items) && items.length > 0 && items.some(x => x && (x.branchCode !== undefined || x.branchName !== undefined)));
+
+      if (isBranchData) {
+        const branches = Array.isArray(items) ? items : (rawJson?.data || []);
+        return {
+          success: true,
+          isBranchData: true,
+          urlCalled: targetUrl,
+          endpointAdded: resolvedEndpoint ? resolvedEndpoint : 'None (Direct URL)',
+          totalBranches: branches.length,
+          branches: branches,
+          message: `Received ${branches.length} ESB Branches: ${branches.map(b => b.branchName || b.branchCode).join(', ')}.`,
+          guidance: 'Branch list received. To pull inventory stock, connect to /extv1/menu for these branches.',
+        };
+      }
+
+      // 3. Handle ESB Menu hierarchical category format if returned from /extv1/menu
+      if (Array.isArray(rawJson) && rawJson.some(c => c && Array.isArray(c.menuCategoryDetails))) {
+        for (const cat of rawJson) {
+          for (const detail of (cat.menuCategoryDetails || [])) {
+            for (const m of (detail.menus || [])) {
+              const menuId = m.menuID;
+              const prodName = (m.menuName || m.menuShortName || '').trim();
+              if (!prodName) continue;
+
+              const prodId = `esb-${menuId}`;
+              const existingBarcode = barcodeMap.get(prodId) || barcodeMap.get(prodName.toLowerCase().trim()) || null;
+              const price = Number(m.sellPrice ?? m.price ?? 0);
+              const qty = Number(m.qty ?? 0);
+
+              db.saveProduct({
+                id: prodId,
+                barcode: existingBarcode,
+                sku: String(m.menuCode || menuId),
+                brand: cat.categoryName || 'Birmas',
+                varian: prodName,
+                productTitle: prodName,
+                category: cat.categoryName || 'BEVERAGE',
+                subCategory: cat.categoryName || 'Craft Beer',
+                defaultUnit: 'BOTOL',
+                packageType: 'Botol',
+                volume: 330,
+                unitVolume: 'ml',
+                price: price,
+                wpStatus: 'publish',
+                lastUpdated: new Date().toISOString(),
+              });
+
+              const defaultStore = db.getAllStores()[0]?.id || 'birmas-sudirman';
+              db.setProductStock(defaultStore, prodId, qty);
+              totalSyncedProducts++;
+            }
+          }
+        }
+        hasMore = false;
         break;
       }
 
@@ -430,27 +614,30 @@ export async function runBirmasServerSync(options = {}) {
         totalSyncedProducts++;
       }
 
-      if (items.length < 50) {
+      if (items.length < 50 || isDirectOrEsb) {
         hasMore = false;
         break;
       }
 
       page++;
-      // Brief breathing space between requests
       await new Promise((r) => setTimeout(r, 300));
     }
 
     if (totalSyncedProducts > 0) {
       db.setConfig('last_birmas_server_synced_at', new Date().toISOString());
-      console.log(`[Birmas Server Sync] Completed! Synced ${totalSyncedProducts} store stocks from Birmas central server.`);
+      console.log(`[Birmas Server Sync] Completed! Synced ${totalSyncedProducts} store stocks from ${targetUrl}.`);
     } else {
-      console.log('[Birmas Server Sync] Finished. Local SQLite database inventory is active.');
+      console.log(`[Birmas Server Sync] Finished querying ${targetUrl}.`);
     }
 
     return {
       success: true,
-      message: `Successfully synchronized with Birmas Central Server (${baseUrl})`,
+      message: totalSyncedProducts > 0 
+        ? `Successfully synchronized ${totalSyncedProducts} store stocks from ${targetUrl}`
+        : `Connected to ${targetUrl}. No product stock records were returned. (Endpoint used: ${resolvedEndpoint || 'None'})`,
       totalSyncedProducts,
+      urlCalled: targetUrl,
+      endpointUsed: resolvedEndpoint || '(Direct URL - No Endpoint Added)',
       source: 'birmas_server',
     };
   } catch (err) {
@@ -1077,11 +1264,42 @@ async function startServer() {
 
   app.get('/api/birmas/config', (req, res) => {
     const token = db.getConfig('birmas_server_token') || '';
+    const rawUrl = db.getConfig('wp_url') || process.env.BIRMAS_BACKEND_URL || 'https://admin.birmas.id';
+    const dbEndpoint = db.getConfig('birmas_server_endpoint');
+    const envEndpoint = process.env.BIRMAS_ENDPOINT_PATH;
+    
+    // Determine effective endpoint
+    let effectiveEndpoint = '';
+    let isNoEndpoint = false;
+    
+    if (dbEndpoint === '' || dbEndpoint === 'none' || dbEndpoint === 'direct') {
+      effectiveEndpoint = '';
+      isNoEndpoint = true;
+    } else if (dbEndpoint) {
+      effectiveEndpoint = dbEndpoint;
+    } else if (envEndpoint === '' || envEndpoint === 'none' || envEndpoint === 'direct') {
+      effectiveEndpoint = '';
+      isNoEndpoint = true;
+    } else if (envEndpoint) {
+      effectiveEndpoint = envEndpoint;
+    } else {
+      const lower = rawUrl.toLowerCase();
+      if (lower.includes('/extv1/') || lower.includes('visit-purpose') || lower.includes('/wp-json/') || lower.includes('.php')) {
+        effectiveEndpoint = '';
+        isNoEndpoint = true;
+      } else {
+        effectiveEndpoint = '/wp-json/api/v1/product_stocks';
+      }
+    }
+
     res.json({
-      birmasServerUrl: db.getConfig('wp_url') || process.env.BIRMAS_BACKEND_URL || 'https://admin.birmas.id',
-      birmasServerEndpoint: db.getConfig('birmas_server_endpoint') || process.env.BIRMAS_ENDPOINT_PATH || '/wp-json/api/v1/product_stocks',
+      birmasServerUrl: rawUrl,
+      birmasServerEndpoint: effectiveEndpoint,
+      noEndpoint: isNoEndpoint,
       hasToken: !!(token || process.env.BIRMAS_API_TOKEN),
       lastSyncedAt: db.getConfig('last_birmas_server_synced_at') || null,
+      visitPurposes: db.getVisitPurposes(),
+      lastVisitPurposesSyncedAt: db.getConfig('last_visit_purposes_synced_at') || null,
     });
   });
 
@@ -1092,15 +1310,31 @@ async function startServer() {
     if (req.body.birmasServerToken !== undefined) {
       db.setConfig('birmas_server_token', req.body.birmasServerToken.trim());
     }
-    if (req.body.birmasServerEndpoint !== undefined) {
-      db.setConfig('birmas_server_endpoint', req.body.birmasServerEndpoint.trim());
+    if (req.body.noEndpoint === true) {
+      db.setConfig('birmas_server_endpoint', 'none');
+    } else if (req.body.birmasServerEndpoint !== undefined) {
+      const val = req.body.birmasServerEndpoint.trim();
+      db.setConfig('birmas_server_endpoint', val === '' ? 'none' : val);
     }
+    
+    const dbEndpoint = db.getConfig('birmas_server_endpoint');
+    const isNoEp = dbEndpoint === 'none' || dbEndpoint === '';
     res.json({
       success: true,
       birmasServerUrl: db.getConfig('wp_url'),
-      birmasServerEndpoint: db.getConfig('birmas_server_endpoint'),
+      birmasServerEndpoint: isNoEp ? '' : dbEndpoint,
+      noEndpoint: isNoEp,
       hasToken: !!db.getConfig('birmas_server_token'),
       lastSyncedAt: db.getConfig('last_birmas_server_synced_at'),
+      visitPurposes: db.getVisitPurposes(),
+    });
+  });
+
+  app.get('/api/esb/visit-purposes', (req, res) => {
+    res.json({
+      success: true,
+      visitPurposes: db.getVisitPurposes(),
+      lastSyncedAt: db.getConfig('last_visit_purposes_synced_at') || null,
     });
   });
 
