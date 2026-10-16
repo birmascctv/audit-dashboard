@@ -61,6 +61,13 @@ const selectedProduct = computed(() => {
   return esbProductList.value.find((p) => p.id === selectedProductId.value) || null;
 });
 
+// Check if product has an actively assigned valid barcode
+function hasRealBarcode(prod) {
+  if (!prod || !prod.barcode) return false;
+  const b = String(prod.barcode).trim();
+  return b !== '' && b !== '-' && !b.startsWith('STK');
+}
+
 watch(
   () => props.prefilledBarcode,
   (newVal) => {
@@ -89,7 +96,7 @@ async function handleSubmit() {
   }
 
   if (!selectedProduct.value) {
-    feedbackMessage.value = { type: 'error', text: 'Please select an ESB product variant!' };
+    feedbackMessage.value = { type: 'error', text: 'Please select a product variant!' };
     return;
   }
 
@@ -100,10 +107,10 @@ async function handleSubmit() {
       productId: selectedProduct.value.id,
       barcode: cleanBarcode,
       sku: selectedProduct.value.sku,
-      brand: selectedProduct.value.brand,
-      varian: selectedProduct.value.varian,
-      productTitle: selectedProduct.value.productTitle || `${selectedProduct.value.brand} ${selectedProduct.value.varian}`,
-      packageType: selectedProduct.value.packageType || 'Botol',
+      brand: selectedProduct.value.brand || 'Birmas',
+      varian: selectedProduct.value.varian || selectedProduct.value.productTitle,
+      productTitle: selectedProduct.value.productTitle || selectedProduct.value.varian,
+      packageType: selectedProduct.value.packageType || 'Kaleng',
       volume: selectedProduct.value.volume || 330,
       unitVolume: selectedProduct.value.unitVolume || 'ml',
       price: selectedProduct.value.price || 0,
@@ -147,7 +154,7 @@ async function handleSubmit() {
           <div>
             <h3 class="text-base font-bold text-slate-900">Add New Barcode</h3>
             <p class="text-xs text-slate-500">
-              Assign scanned barcode to an ESB product variant
+              Assign scanned barcode to a product variant
             </p>
           </div>
         </div>
@@ -187,15 +194,15 @@ async function handleSubmit() {
           </p>
         </div>
 
-        <!-- 2. Choose ESB Product Variant -->
+        <!-- 2. Choose Product Variant -->
         <div class="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2.5">
           <div class="flex items-center justify-between">
             <label class="block text-slate-900 font-bold text-xs flex items-center gap-1.5">
               <Package class="w-4 h-4 text-teal-600" />
-              <span>Choose ESB Product Variant:</span>
+              <span>Choose Product Variant:</span>
             </label>
             <span class="text-[10px] text-teal-700 font-bold bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-              {{ esbProductList.length }} Products in ESB
+              {{ esbProductList.length }} Products
             </span>
           </div>
 
@@ -205,7 +212,7 @@ async function handleSubmit() {
             <input
               v-model="productSearchQuery"
               type="text"
-              placeholder="Filter by name (e.g. Bintang, Coca Cola, Canard)..."
+              placeholder="Search product variant (e.g. Bintang, Coca Cola, Canard)..."
               class="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-teal-500"
             />
           </div>
@@ -220,11 +227,11 @@ async function handleSubmit() {
               :key="p.id"
               :value="p.id"
             >
-              {{ p.productTitle || p.varian }} • {{ p.packageType }} {{ p.volume }}{{ p.unitVolume }} • Rp {{ (p.price || 0).toLocaleString() }}
+              {{ p.productTitle || p.varian }}
             </option>
           </select>
 
-          <!-- Selected Product Info Card (Read-only, automatically set according to ESB) -->
+          <!-- Selected Product Info Card -->
           <div v-if="selectedProduct" class="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
             <div class="flex items-center justify-between text-xs">
               <span class="text-slate-500 font-medium">Brand:</span>
@@ -234,18 +241,14 @@ async function handleSubmit() {
               <span class="text-slate-500 font-medium">Variant / Name:</span>
               <span class="font-bold text-slate-900">{{ selectedProduct.productTitle || selectedProduct.varian }}</span>
             </div>
-            <div class="flex items-center justify-between text-xs">
-              <span class="text-slate-500 font-medium">Packaging & Volume:</span>
-              <span class="font-semibold text-slate-800">{{ selectedProduct.packageType }} • {{ selectedProduct.volume }}{{ selectedProduct.unitVolume }}</span>
-            </div>
-            <div class="flex items-center justify-between text-xs">
-              <span class="text-slate-500 font-medium">ESB Retail Price:</span>
-              <span class="font-bold text-teal-800">Rp {{ (selectedProduct.price || 0).toLocaleString() }}</span>
+            <div v-if="selectedProduct.category" class="flex items-center justify-between text-xs">
+              <span class="text-slate-500 font-medium">Category:</span>
+              <span class="font-semibold text-slate-700">{{ selectedProduct.category }}</span>
             </div>
             <div class="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
               <span class="text-slate-500 font-medium">Current Registered Barcode:</span>
-              <span class="font-mono text-xs font-bold" :class="selectedProduct.barcode ? 'text-teal-700' : 'text-slate-400 italic'">
-                {{ selectedProduct.barcode || 'None (Unassigned)' }}
+              <span class="font-mono text-xs font-bold" :class="hasRealBarcode(selectedProduct) ? 'text-teal-700' : 'text-slate-400 font-normal'">
+                {{ hasRealBarcode(selectedProduct) ? selectedProduct.barcode : '-' }}
               </span>
             </div>
           </div>
