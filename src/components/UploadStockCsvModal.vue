@@ -293,7 +293,8 @@ function validateAndParseStockCsv(csvText, filename) {
     let stockQty = 0;
     if (stockQtyRaw) {
       const cleanNum = stockQtyRaw.replace(/[^0-9.-]+/g, '');
-      stockQty = parseFloat(cleanNum) || 0;
+      const parsed = parseFloat(cleanNum);
+      stockQty = isNaN(parsed) ? 0 : Math.round(parsed);
     }
 
     if (storeName && productName) {
