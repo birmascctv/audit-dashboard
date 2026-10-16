@@ -234,10 +234,6 @@ async function handleSubmit() {
           <!-- Selected Product Info Card -->
           <div v-if="selectedProduct" class="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
             <div class="flex items-center justify-between text-xs">
-              <span class="text-slate-500 font-medium">Brand:</span>
-              <span class="font-bold text-slate-900">{{ selectedProduct.brand || 'Birmas' }}</span>
-            </div>
-            <div class="flex items-center justify-between text-xs">
               <span class="text-slate-500 font-medium">Variant / Name:</span>
               <span class="font-bold text-slate-900">{{ selectedProduct.productTitle || selectedProduct.varian }}</span>
             </div>
