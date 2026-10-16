@@ -209,7 +209,8 @@ export function useAuditStore() {
     const storeId = selectedStoreId.value;
 
     return wpProducts.value.map((prod) => {
-      const wpExpected = (prod.stockByStore && prod.stockByStore[storeId]) ?? 0;
+      const rawExpected = (prod.stockByStore && prod.stockByStore[storeId]) ?? 0;
+      const wpExpected = Math.round(Number(rawExpected) || 0);
       const count = scannedCounts.value[prod.barcode] ?? 0;
 
       let status = 'unscanned';
@@ -275,7 +276,7 @@ export function useAuditStore() {
 
   // KPI Metrics
   const totalWpExpected = computed(() => {
-    return auditItems.value.reduce((acc, item) => acc + item.wpExpectedQty, 0);
+    return Math.round(auditItems.value.reduce((acc, item) => acc + item.wpExpectedQty, 0));
   });
 
   const totalScanned = computed(() => {
@@ -422,21 +423,47 @@ export function useAuditStore() {
   async function addNewBarcode(payload) {
     const res = await saveNewBarcode(payload);
     if (res.success && res.product) {
-      const cleanNew = String(res.product.barcode || '').toLowerCase().trim();
-      const idx = wpProducts.value.findIndex(
-        (p) => p.id === res.product.id || (p.barcode && String(p.barcode).toLowerCase().trim() === cleanNew)
-      );
-      if (idx >= 0) {
-        wpProducts.value[idx] = { ...wpProducts.value[idx], ...res.product };
-      } else {
+      const cleanNew = String(res.product.barcode || '').trim();
+      const targetTitle = (payload.productTitle || payload.varian || '').toLowerCase().trim();
+
+      // Update ALL matching products in catalog across all store views
+      let matchedCount = 0;
+      wpProducts.value.forEach((p) => {
+        const pTitle = (p.productTitle || p.varian || '').toLowerCase().trim();
+        if (p.id === payload.productId || (targetTitle && pTitle === targetTitle)) {
+          p.barcode = cleanNew;
+          if (res.product.brand && !p.brand) p.brand = res.product.brand;
+          matchedCount++;
+        }
+      });
+
+      // If not yet present in wpProducts, add it
+      if (matchedCount === 0) {
         wpProducts.value.push(res.product);
       }
+
+      // Persist immediately to localStorage so all stores immediately recognize it
+      try {
+        localStorage.setItem('birmas_products', JSON.stringify(wpProducts.value));
+      } catch (_) {}
+
+      // Background sync with database to fetch any fresh barcodes without dropping existing products
       try {
         const fresh = await fetchProducts();
         if (fresh && fresh.length > 0) {
-          wpProducts.value = fresh;
+          fresh.forEach((fp) => {
+            if (!fp.barcode) return;
+            const fpTitle = (fp.productTitle || fp.varian || '').toLowerCase().trim();
+            wpProducts.value.forEach((p) => {
+              const pTitle = (p.productTitle || p.varian || '').toLowerCase().trim();
+              if (p.id === fp.id || (fpTitle && pTitle === fpTitle)) {
+                p.barcode = fp.barcode;
+              }
+            });
+          });
+          localStorage.setItem('birmas_products', JSON.stringify(wpProducts.value));
         }
-      } catch {}
+      } catch (_) {}
     }
     return res;
   }
@@ -679,7 +706,8 @@ export function useAuditStore() {
         });
       }
 
-      const qty = typeof r.stockQty === 'number' ? r.stockQty : parseFloat(String(r.stockQty).replace(/[^0-9.-]/g, '')) || 0;
+      const rawQty = typeof r.stockQty === 'number' ? r.stockQty : parseFloat(String(r.stockQty).replace(/[^0-9.-]/g, '')) || 0;
+      const qty = Math.round(Number(rawQty) || 0);
 
       if (matchedProd) {
         matchedProd.stockByStore = matchedProd.stockByStore || {};
@@ -690,7 +718,7 @@ export function useAuditStore() {
       } else {
         const newProd = {
           id: 'stock-prod-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6),
-          barcode: r.barcode || ('STK' + Math.floor(1000000000 + Math.random() * 9000000000)),
+          barcode: (r.barcode && !String(r.barcode).startsWith('STK')) ? String(r.barcode).trim() : null,
           productTitle: pName,
           varian: pName,
           brand: 'Birmas',
