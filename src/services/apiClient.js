@@ -87,13 +87,17 @@ export async function apiSendScan(barcode, storeId, auditorName) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ barcode, storeId, auditorName }),
   });
-  if (!ok || !data) {
+  if (data) {
     return {
-      success: false,
-      message: error || 'Scan error (offline or server error)',
+      ...data,
+      unknownBarcode: data.unknownBarcode || (!data.success ? barcode : undefined),
     };
   }
-  return data;
+  return {
+    success: false,
+    message: error || 'Scan error (offline or server error)',
+    unknownBarcode: barcode,
+  };
 }
 
 export async function apiAdjustCount(barcode, storeId, opts = {}) {
