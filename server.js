@@ -66,8 +66,10 @@ process.on('unhandledRejection', (reason) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// In AI Studio / Cloud Run, the app must bind strictly to port 3000
-const PORT = 3000;
+// Port configuration: support process.env.PORT or CLI argument, default 3000
+const portArgIndex = process.argv.indexOf('--port');
+const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : null;
+const PORT = cliPort || (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
 
 export const BIRMAS_STORE_KEYWORD_MAP = [
   { storeId: 'birmas-sudirman', name: 'Birmas Sudirman', keywords: ['sudirman', 'outs', 'sdr', 'outlet sudirman', 'brms'] },
@@ -1924,7 +1926,10 @@ async function startServer() {
   } else {
     console.log('[Server] Starting Vite development middleware');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
