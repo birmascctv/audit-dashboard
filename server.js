@@ -321,6 +321,55 @@ export async function runDirectESBSync(options = {}) {
 // Pulls directly from Birmas central server (which has permanent ESB API access)
 // No session cookies or cURL required!
 // ==========================================
+const SALES_SYNC_INTERVAL_MS = 60 * 1000;
+const salesSyncStatus = { state: 'idle', message: 'Not synced yet', lastAttemptAt: null, lastSyncedAt: null, lastCount: 0 };
+let isSalesSyncing = false;
+
+function getSalesSyncEndpoint() {
+  const explicit = process.env.SALES_SYNC_URL || db.getConfig('sales_sync_url');
+  if (explicit) return explicit;
+  const base = String(process.env.BIRMAS_BACKEND_URL || db.getConfig('wp_url') || 'http://10.0.0.10').replace(/\/+$/, '');
+  return `${base}/wp-json/api/v1/sales_report`;
+}
+
+// Pulls the rolling last-2-days window from the Birmas server and replaces it idempotently
+export async function runSalesSync() {
+  if (isSalesSyncing) return { ok: false, message: 'A sales sync is already running.' };
+  isSalesSyncing = true;
+  salesSyncStatus.lastAttemptAt = new Date().toISOString();
+  try {
+    const latest = salesDb.getLatestSalesDate(salesDb.getSalesDb());
+    const from = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+    const fromDate = latest && latest < from ? latest : from;
+    const url = new URL(getSalesSyncEndpoint());
+    url.searchParams.set('from', fromDate);
+    const headers = { accept: 'application/json', 'user-agent': 'BirmasSalesSync/1.0' };
+    const token = process.env.BIRMAS_API_TOKEN || db.getConfig('birmas_server_token');
+    if (token) headers.authorization = `Bearer ${token}`;
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(45000) });
+    if (response.status === 404) {
+      salesSyncStatus.state = 'unavailable';
+      salesSyncStatus.message = 'The Birmas server has no sales endpoint yet (404). Add a sales_report route there, or push data to /api/sales/push.';
+      return { ok: false, message: salesSyncStatus.message };
+    }
+    if (!response.ok) throw new Error(`Birmas server returned HTTP ${response.status}`);
+    const body = await response.json();
+    const rows = Array.isArray(body) ? body : (body.items || body.transactions || body.data || []);
+    const count = rows.length ? salesDb.replaceLiveSalesWindow(salesDb.getSalesDb(), { fromDate, rows }) : 0;
+    salesSyncStatus.state = 'ok';
+    salesSyncStatus.lastSyncedAt = new Date().toISOString();
+    salesSyncStatus.lastCount = count;
+    salesSyncStatus.message = `Synced ${count} sales rows from ${fromDate}`;
+    return { ok: true, message: salesSyncStatus.message, count };
+  } catch (err) {
+    salesSyncStatus.state = 'error';
+    salesSyncStatus.message = err.message;
+    return { ok: false, message: err.message };
+  } finally {
+    isSalesSyncing = false;
+  }
+}
+
 let isBirmasServerSyncing = false;
 
 export async function runBirmasServerSync(options = {}) {
@@ -2154,44 +2203,13 @@ async function startServer() {
     }
   });
 
+  app.get('/api/sales/sync-status', (req, res) => {
+    res.json({ success: true, ...salesSyncStatus, intervalSeconds: SALES_SYNC_INTERVAL_MS / 1000, endpoint: getSalesSyncEndpoint() });
+  });
+
   app.post('/api/sales/sync-birmas', async (req, res) => {
-    try {
-      const birmasUrl = db.getConfig('wp_url', 'http://10.0.0.10');
-      const salesEndpoint = `${birmasUrl.replace(/\/+$/, '')}/wp-json/api/v1/sales_report`;
-      console.log(`[Sales Sync] Querying Birmas server sales bridge at: ${salesEndpoint}`);
-
-      try {
-        const response = await fetch(salesEndpoint, {
-          method: 'GET',
-          headers: { 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(8000),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const items = Array.isArray(data) ? data : (data.items || data.transactions || data.data || []);
-          if (items.length > 0) {
-            db.saveBulkSalesTransactions(items);
-            return res.json({
-              success: true,
-              message: `Successfully synchronized ${items.length} sales records from Birmas Central Server!`,
-              count: items.length,
-            });
-          }
-        }
-      } catch (fetchErr) {
-        console.warn('[Sales Sync] Birmas server endpoint not yet active or timed out:', fetchErr.message);
-      }
-
-      // Return status with bridge instructions
-      res.json({
-        success: true,
-        message: 'Loaded local ESB sales recapitulation data. To pull live from Birmas server, add the WordPress bridge snippet on admin.birmas.id.',
-        bridgeReady: false,
-      });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
+    const result = await runSalesSync();
+    res.json({ success: result.ok, message: result.message, count: result.count || 0, status: salesSyncStatus });
   });
 
   // 15. Database health & system status
@@ -2272,6 +2290,8 @@ async function startServer() {
   });
 
   const server = app.listen(PORT, '0.0.0.0', () => {
+    runSalesSync();
+    setInterval(runSalesSync, SALES_SYNC_INTERVAL_MS);
     console.log(`[Birmas Server] SQLite Tables Ready at http://localhost:${PORT}`);
 
     // Combined automatic sync routine:

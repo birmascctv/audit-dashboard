@@ -715,6 +715,7 @@ function handleClose() {
             <span>{{ uploadStatus.message }}</span>
           </div>
         </div>
+        <slot name="history" />
       </div>
 
       <!-- Modal Footer -->

@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { BarChart3, Download, FileSpreadsheet, Package, RefreshCw, Store, Trash2, TrendingUp, UploadCloud } from 'lucide-vue-next';
 import UploadSalesCsvModal from '../components/UploadSalesCsvModal.vue';
 import AnalyticsPieChart, { PIE_CHART_COLORS } from '../components/AnalyticsPieChart.vue';
 import AnalyticsLineChart from '../components/AnalyticsLineChart.vue';
+import AnalyticsBarChart from '../components/AnalyticsBarChart.vue';
 
 const activeTab = ref('analytics');
 const period = ref('all');
@@ -32,6 +33,8 @@ const categoryChartCategories = ref(null);
 const categoryChartMetric = ref('sales');
 const visitPurposeChartStores = ref(null);
 const paymentBarStores = ref(null);
+const paymentChartStore = ref('all');
+const monthStore = ref('all');
 const paymentBarPayments = ref(null);
 const timeRangeStart = ref('');
 const timeRangeEnd = ref('');
@@ -338,16 +341,24 @@ const visiblePromotionChartItems = computed(() => {
       : '',
   })).sort((a, b) => a.sortDate.localeCompare(b.sortDate) || a.name.localeCompare(b.name));
 });
-const paymentChartDenominator = computed(() => {
-  const pairs = summary.value.storePayments || [];
-  if (paymentChartMode.value === 'payment') {
-    const totals = new Map();
-    for (const item of pairs) totals.set(item.payment_method, (totals.get(item.payment_method) || 0) + Number(item.sales || 0));
-    return Math.max(0, ...totals.values());
+const paymentDonutItems = computed(() => {
+  const totals = new Map();
+  for (const item of summary.value.storePayments || []) {
+    if (paymentChartStore.value !== 'all' && item.branch !== paymentChartStore.value) continue;
+    totals.set(item.payment_method, (totals.get(item.payment_method) || 0) + Number(item.sales || 0));
   }
-  return pairs.reduce((sum, item) => sum + Number(item.sales || 0), 0);
+  return [...totals].map(([name, sales]) => ({ name, sales })).filter((item) => item.sales > 0).sort((a, b) => b.sales - a.sales);
 });
-const paymentChartTotal = paymentChartDenominator;
+const monthStoreNames = computed(() => [...new Set((timeSummary.value.monthlyByStore || []).map((item) => item.branch))].sort());
+const monthStoreRows = computed(() => (timeSummary.value.monthlySales || []).map((month) => {
+  const bySales = new Map((timeSummary.value.monthlyByStore || []).filter((item) => item.month === month.month)
+    .map((item) => [item.branch, Number(item.sales) || 0]));
+  const label = new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' }).format(new Date(`${month.month}-01T12:00:00`));
+  const total = monthStore.value === 'all' ? Number(month.sales) || 0 : bySales.get(monthStore.value) || 0;
+  return { key: month.month, name: label, bySales, sales: total };
+}));
+const monthChartItems = computed(() => monthStoreRows.value.map(({ name, sales }) => ({ name, sales })));
+let autoRefreshTimer = null;
 const selectedPivotRow = computed(() => {
   if (selectedPivotProduct.value === '__all__') {
     return allPivotRows.value.reduce((combined, row) => {
@@ -698,7 +709,13 @@ onMounted(() => {
   loadFiles();
   loadReport();
   loadTimeSummary();
+  autoRefreshTimer = setInterval(() => {
+    if (document.hidden || loading.value || uploadOpen.value) return;
+    loadReport();
+    loadTimeSummary();
+  }, 60000);
 });
+onBeforeUnmount(() => clearInterval(autoRefreshTimer));
 </script>
 
 <template>
@@ -721,16 +738,6 @@ onMounted(() => {
       </div>
     </section>
 
-      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <header class="border-b border-slate-100 px-4 py-3"><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><FileSpreadsheet class="h-4 w-4 text-teal-700" />Imported CSV batches</h2><p class="text-[11px] text-slate-500">Downloads contain the 12 clean columns, not unused original report fields.</p></header>
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[700px] text-left text-xs">
-            <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">File</th><th class="px-4 py-2">Uploaded</th><th class="px-4 py-2">Stores</th><th class="px-4 py-2 text-right">Rows</th><th class="px-4 py-2 text-right">Net sales</th><th class="px-4 py-2 text-right">Actions</th></tr></thead>
-            <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button class="rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50" title="Download clean CSV" @click="downloadFile(file)"><Download class="h-3.5 w-3.5" /></button><button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
-              <tr v-if="!files.length"><td colspan="6" class="p-8 text-center text-slate-400">No imported CSV batches.</td></tr></tbody>
-          </table>
-        </div>
-      </section>
 
     <template v-if="activeTab === 'analytics'">
       <section class="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -797,7 +804,7 @@ onMounted(() => {
     </section>
 
     <template v-if="activeTab === 'analytics'">
-      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
             <div><h2 class="text-sm font-bold text-slate-900">Sales by Visit Purpose</h2><p class="text-[11px] text-slate-500">Current store selection: {{ selectedStoreLabel }}</p></div>
@@ -849,7 +856,7 @@ onMounted(() => {
             </details>
           </div>
         </header>
-        <div class="grid grid-cols-1 xl:grid-cols-2">
+        <div class="grid grid-cols-1 lg:grid-cols-2">
           <div class="h-96 overflow-auto">
             <table class="sales-data-table w-full table-fixed text-left text-xs"><colgroup><col class="w-[25%]"><col><col class="w-[12%]"><col class="w-[26%]"></colgroup><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-1 py-2">Store</th><th class="px-1 py-2">Promotion</th><th class="px-1 py-2 text-right">Units</th><th class="px-1 py-2 text-right">Sales</th></tr></thead>
               <tbody class="sales-table-body"><tr v-for="(item,index) in visiblePromotions" :key="`${item.branch}-${item.name}-${index}`"><td class="break-words px-1 py-2 font-semibold">{{ item.branch }}</td><td class="break-words px-1 py-2">{{ item.name }}</td><td class="break-all px-1 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="break-all px-1 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr>
@@ -857,7 +864,7 @@ onMounted(() => {
               </tbody>
             </table>
           </div>
-          <div class="border-t border-slate-100 xl:col-span-1 xl:border-l xl:border-t-0">
+          <div class="border-t border-slate-100 lg:col-span-1 lg:border-l lg:border-t-0">
             <header class="px-4 pt-3 text-xs font-bold text-slate-700">Promotion Sales Share by Store</header>
             <AnalyticsLineChart :items="visiblePromotionChartItems" metric="sales" :x-axis-label="promotionChartStores === null ? 'Store' : 'Promotion'" :x-axis-font-size="12" :line-color="promotionChartStores === null ? '#0f766e' : '#7c3aed'" :show-percent="false" :sort-items="false" empty-label="No promotion sales for this selection." />
           </div>
@@ -875,7 +882,7 @@ onMounted(() => {
             </div>
           </details>
         </header>
-        <div class="grid grid-cols-1 xl:grid-cols-2">
+        <div class="grid grid-cols-1 lg:grid-cols-2">
           <div class="max-h-[24rem] overflow-auto">
             <table class="w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Menu category</th><th class="px-4 py-2 text-right">Units</th><th class="px-4 py-2 text-right">Sales</th></tr></thead>
               <tbody class="sales-table-body">
@@ -884,14 +891,14 @@ onMounted(() => {
               </tbody>
             </table>
           </div>
-          <div class="border-t border-slate-100 xl:border-l xl:border-t-0">
+          <div class="border-t border-slate-100 lg:border-l lg:border-t-0">
             <header class="px-4 pt-3 text-xs font-bold text-slate-700">Category Sales Share</header>
             <AnalyticsLineChart :items="visibleCategoryTable" metric="sales" x-axis-label="Category" :x-axis-font-size="12" line-color="#0f766e" :sort-items="false" empty-label="No category sales for this selection." />
           </div>
         </div>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <header class="border-b border-slate-100 px-4 py-3"><h2 class="text-sm font-bold text-slate-900">Sales by Payment Method</h2><p class="text-[11px] text-slate-500">Amounts allocated across split tenders when a bill uses multiple methods</p></header>
           <div class="min-h-[22rem] overflow-x-auto">
@@ -905,43 +912,20 @@ onMounted(() => {
         </article>
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-            <div><h3 class="text-sm font-bold text-slate-900">Payment share chart</h3><p class="text-[11px] text-slate-500">Payment methods below 1% of the filtered chart total are hidden.</p></div>
-            <div class="flex flex-wrap gap-2">
-              <select v-model="paymentChartMode" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
-                <option value="payment">Share by payment</option><option value="store">Share by store</option>
-              </select>
-              <select v-if="paymentChartMode === 'payment'" v-model="paymentChartStore" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
-                <option value="all">All stores</option><option v-for="store in stores" :key="store.name" :value="store.name">{{ store.name }}</option>
-              </select>
-              <select v-else v-model="paymentChartMethod" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
-                <option value="all">All payment methods</option><option v-for="payment in summary.payments || []" :key="payment.name" :value="payment.name">{{ payment.name }}</option>
-              </select>
-            </div>
+            <div><h3 class="text-sm font-bold text-slate-900">Payment Share Chart</h3><p class="text-[11px] text-slate-500">Share of net sales by payment method.</p></div>
+            <select v-model="paymentChartStore" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
+              <option value="all">All stores</option><option v-for="store in stores" :key="store.name" :value="store.name">{{ store.name }}</option>
+            </select>
           </header>
-          <AnalyticsStackedBarChart :rows="paymentChartItems" empty-label="No store payment sales for this selection." />
+          <AnalyticsPieChart :items="paymentDonutItems" show-values-on-hover show-legend-values empty-label="No payment sales for this selection." />
         </article>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <header class="border-b border-slate-100 px-4 py-3"><h2 class="text-sm font-bold text-slate-900">Product Sales by Brand</h2></header>
-          <div class="h-[22rem] overflow-auto">
-            <table class="w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Brand</th><th class="px-4 py-2 text-right">Units</th><th class="px-4 py-2 text-right">Sales</th></tr></thead>
-              <tbody class="sales-table-body"><tr v-for="item in summary.byBrand || []" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr></tbody>
-            </table>
-          </div>
-        </article>
-        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <header class="border-b border-slate-100 px-4 py-3"><h3 class="text-xs font-bold text-slate-700">Brand sales distribution</h3></header>
-          <AnalyticsPieChart :items="brandChartItems" :max-items="12" />
-        </article>
-      </section>
-
-      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <header class="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 px-4 py-3">
           <div class="flex min-w-0 flex-col gap-2">
-            <div><h2 class="text-sm font-bold text-slate-900">Product Sales by Payment Method</h2><p class="text-[11px] text-slate-500">Click a product row to show its payment mix. ALL PRODUCT includes promotions and matches net sales.</p></div>
+            <div><h2 class="text-sm font-bold text-slate-900">Sales by Product Variant</h2><p class="text-[11px] text-slate-500">Click a product row to show its payment mix. ALL PRODUCT includes promotions and matches net sales.</p></div>
             <div class="relative" data-dropdown="pivot" @focusout="closePivotDropdown">
               <input v-model="pivotSearch" type="search" placeholder="Select or search product variant..." autocomplete="off"
                 class="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
@@ -1003,6 +987,25 @@ onMounted(() => {
             <tbody class="sales-table-body"><tr v-for="(item,index) in visibleTopProducts" :key="`${item.branch}-${item.menu}-${index}`" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.branch }}</td><td class="px-4 py-2">{{ item.menu }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr><tr v-if="!visibleTopProducts.length"><td colspan="3" class="p-6 text-center text-slate-400">No product sales for this store and period.</td></tr></tbody>
           </table>
         </div>
+        </article>
+      </section>
+
+      <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+            <h2 class="text-sm font-bold text-slate-900">Store Sales per Month</h2>
+            <select v-model="monthStore" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs"><option value="all">All stores</option><option v-for="name in monthStoreNames" :key="name" :value="name">{{ name }}</option></select>
+          </header>
+          <div class="max-h-[24rem] overflow-auto">
+            <table class="w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Month</th><th v-for="name in (monthStore === 'all' ? monthStoreNames : [monthStore])" :key="name" class="px-4 py-2 text-right">{{ name }}</th><th v-if="monthStore === 'all'" class="px-4 py-2 text-right">Total</th></tr></thead>
+              <tbody class="sales-table-body"><tr v-for="row in monthStoreRows" :key="row.key" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ row.name }}</td><td v-for="name in (monthStore === 'all' ? monthStoreNames : [monthStore])" :key="name" class="px-4 py-2 text-right font-mono">{{ formatMoney(row.bySales.get(name) || 0) }}</td><td v-if="monthStore === 'all'" class="px-4 py-2 text-right font-mono font-bold">{{ formatMoney(row.sales) }}</td></tr>
+                <tr v-if="!monthStoreRows.length"><td colspan="9" class="p-6 text-center text-slate-400">No monthly sales yet.</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="border-b border-slate-100 px-4 py-3"><h3 class="text-xs font-bold text-slate-700">Store Sales per Month Chart</h3></header>
+          <AnalyticsBarChart :items="monthChartItems" :denominator="monthChartItems.reduce((t, i) => t + i.sales, 0)" :max-items="24" x-axis-label="Month" empty-label="No monthly sales yet." />
         </article>
       </section>
 
@@ -1102,7 +1105,15 @@ onMounted(() => {
 
     <Teleport v-if="hourTooltip" to="body">
       <div class="pointer-events-none fixed z-[100] max-h-[70vh] max-w-[22rem] overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${hourTooltip.x}px`, top: `${hourTooltip.y}px` }">
-        <p class="font-bold">{{ hourTooltip.hour }}</p><p class="text-slate-300">{{ hourTooltip.store }}</p><p class="mt-1">{{ hourTooltip.sales }} customer-paid sales</p>
+        <p class="font-bold">{{ hourTooltip.hour }}</p>
+        <template v-if="hourTooltip.stores?.length">
+          <p class="mt-1 text-[10px] font-bold uppercase text-slate-400">Revenue per store</p>
+          <p v-for="store in hourTooltip.stores" :key="store.name" class="flex justify-between gap-4"><span>{{ store.name }}</span><span class="font-mono">{{ formatMoney(store.sales) }}</span></p>
+        </template>
+        <template v-if="hourTooltip.payments?.length">
+          <p class="mt-1 text-[10px] font-bold uppercase text-slate-400">Payment methods</p>
+          <p v-for="pay in hourTooltip.payments" :key="pay.name" class="flex justify-between gap-4"><span>{{ pay.name }}</span><span class="font-mono">{{ formatMoney(pay.sales) }}</span></p>
+        </template>
       </div>
     </Teleport>
 
@@ -1113,7 +1124,20 @@ onMounted(() => {
       </section>
     </div>
 
-    <UploadSalesCsvModal :is-open="uploadOpen" @close="uploadOpen = false" @imported="handleImported" />
+    <UploadSalesCsvModal :is-open="uploadOpen" @close="uploadOpen = false" @imported="handleImported">
+      <template #history>
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="border-b border-slate-100 px-4 py-3"><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><FileSpreadsheet class="h-4 w-4 text-teal-700" />Imported CSV batches</h2><p class="text-[11px] text-slate-500">Downloads contain the 12 clean columns, not unused original report fields.</p></header>
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[700px] text-left text-xs">
+            <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">File</th><th class="px-4 py-2">Uploaded</th><th class="px-4 py-2">Stores</th><th class="px-4 py-2 text-right">Rows</th><th class="px-4 py-2 text-right">Net sales</th><th class="px-4 py-2 text-right">Actions</th></tr></thead>
+            <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button class="rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50" title="Download clean CSV" @click="downloadFile(file)"><Download class="h-3.5 w-3.5" /></button><button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
+              <tr v-if="!files.length"><td colspan="6" class="p-8 text-center text-slate-400">No imported CSV batches.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+      </template>
+    </UploadSalesCsvModal>
   </main>
 </template>
 

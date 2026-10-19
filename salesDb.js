@@ -158,6 +158,33 @@ export function insertSalesRows(db, {
   `).get(fileId);
 }
 
+// Idempotent live sync: replaces the rows of one rolling window under a fixed import id
+export function replaceLiveSalesWindow(db, { fileId = 'birmas-live', filename = 'Birmas live sync', fromDate, rows }) {
+  const clean = rows.map(normalizeRow).filter((row) => row.sales_date_in.slice(0, 10) >= fromDate);
+  db.exec('BEGIN');
+  try {
+    db.prepare(`INSERT INTO sales_imports (id, filename, file_size, uploaded_at, uploaded_by)
+      VALUES (?, ?, '', ?, 'Birmas server') ON CONFLICT(id) DO UPDATE SET filename = excluded.filename`)
+      .run(fileId, filename, new Date().toISOString());
+    db.prepare('DELETE FROM sales_transactions WHERE import_id = ? AND substr(sales_date_in, 1, 10) >= ?').run(fileId, fromDate);
+    let sourceRow = db.prepare('SELECT COALESCE(MAX(source_row), -1) + 1 AS next FROM sales_transactions WHERE import_id = ?').get(fileId).next;
+    const insert = db.prepare(`INSERT INTO sales_transactions (
+      import_id, source_row, sales_date_in, branch, visit_purpose, payment_method,
+      menu_category, menu_category_detail, menu, qty, price, subtotal, discount, total_after_bill_discount
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    for (const row of clean) insert.run(fileId, sourceRow++, ...CSV_COLUMNS.map(([key]) => row[key]));
+    db.exec('COMMIT');
+    return clean.length;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export function getLatestSalesDate(db, fileId = 'birmas-live') {
+  return db.prepare('SELECT MAX(substr(sales_date_in, 1, 10)) AS d FROM sales_transactions WHERE import_id = ?').get(fileId)?.d || null;
+}
+
 export function makeWhere(filters = {}) {
   const clauses = [];
   const values = [];
