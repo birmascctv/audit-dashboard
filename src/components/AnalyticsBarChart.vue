@@ -7,6 +7,7 @@ const props = defineProps({
   maxItems: { type: Number, default: 12 },
   emptyLabel: { type: String, default: 'No chart data for this selection.' },
   xAxisLabel: { type: String, default: 'Item' },
+  valueAxis: { type: String, default: 'percent' },
 });
 const tooltip = ref(null);
 
@@ -28,7 +29,20 @@ const barWidth = computed(() => Math.min(32, slotWidth.value * 0.75));
 function barX(index) {
   return left + (index + 0.5) * slotWidth.value - barWidth.value / 2;
 }
+const maxSales = computed(() => Math.max(0, ...props.items.slice(0, props.maxItems).map((item) => Number(item.sales) || 0)));
+const rupiahMode = computed(() => props.valueAxis === 'rupiah');
+const ticks = computed(() => [0, 25, 50, 75, 100].map((tick) => ({
+  tick,
+  label: rupiahMode.value ? compactRupiah(maxSales.value * tick / 100) : `${tick}%`,
+})));
+function compactRupiah(value) {
+  if (value >= 1e9) return `Rp ${(value / 1e9).toFixed(1).replace(/\.0$/, '')}B`;
+  if (value >= 1e6) return `Rp ${(value / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
+  if (value >= 1e3) return `Rp ${Math.round(value / 1e3)}K`;
+  return `Rp ${Math.round(value)}`;
+}
 function barHeight(item) {
+  if (rupiahMode.value) return maxSales.value > 0 ? ((Number(item.sales) || 0) / maxSales.value) * plotHeight : 0;
   return Math.max(0, (item.percent / 100) * plotHeight);
 }
 function money(value) {
@@ -66,11 +80,11 @@ function moveTooltip(event) {
   <div v-if="chartItems.length" class="relative min-h-[21rem]">
     <div class="overflow-hidden px-2 pb-2">
       <svg class="w-full" :viewBox="`0 0 ${width} 300`" height="300" preserveAspectRatio="none" role="img" aria-label="Sales share bar chart">
-      <g v-for="tick in [0, 25, 50, 75, 100]" :key="tick">
+      <g v-for="{ tick, label } in ticks" :key="tick">
         <line :x1="left" :x2="width - 12" :y1="baseline - (tick / 100) * plotHeight" :y2="baseline - (tick / 100) * plotHeight" stroke="#cbd5e1" stroke-dasharray="3 4" />
-        <text :x="left - 8" :y="baseline - (tick / 100) * plotHeight + 4" text-anchor="end" fill="#475569" font-size="10">{{ tick }}%</text>
+        <text :x="left - 8" :y="baseline - (tick / 100) * plotHeight + 4" text-anchor="end" fill="#475569" font-size="10">{{ label }}</text>
       </g>
-      <text x="12" :y="top + plotHeight / 2" text-anchor="middle" fill="#334155" font-size="10" transform="rotate(-90 12 105)">Sales share (%)</text>
+      <text x="12" :y="top + plotHeight / 2" text-anchor="middle" fill="#334155" font-size="10" transform="rotate(-90 12 105)">{{ rupiahMode ? 'Revenue (Rp)' : 'Sales share (%)' }}</text>
       <g v-for="(item,index) in chartItems" :key="item.name">
         <rect
           :x="barX(index)"
@@ -99,7 +113,7 @@ function moveTooltip(event) {
   <Teleport v-if="tooltip" to="body">
     <div class="pointer-events-none fixed z-[100] min-w-48 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${tooltip.x}px`, top: `${tooltip.y}px` }">
       <p class="font-bold">{{ tooltip.name }}</p><p v-if="tooltip.details" class="mt-0.5 text-slate-300">{{ tooltip.details }}</p>
-      <p class="mt-1">{{ tooltip.percent }} · {{ tooltip.sales }}</p><p v-if="tooltip.units" class="text-slate-300">{{ tooltip.units }} units</p>
+      <p class="mt-1">{{ rupiahMode ? tooltip.sales : `${tooltip.percent} · ${tooltip.sales}` }}</p><p v-if="tooltip.units" class="text-slate-300">{{ tooltip.units }} units</p>
     </div>
   </Teleport>
 </template>
