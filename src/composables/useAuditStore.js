@@ -192,7 +192,10 @@ export function useAuditStore() {
 
   const visibleStores = computed(() => {
     if (!stores.value || stores.value.length === 0) return [];
-    return stores.value.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    // Hide stores whose ESB stock is entirely 0 (inactive); keep all if none have stock yet
+    const active = stores.value.filter((s) => s.hasStock !== false);
+    const list = active.length > 0 ? active : stores.value;
+    return list.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   });
 
   const currentStore = computed(() => {

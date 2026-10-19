@@ -894,6 +894,9 @@ async function startServer() {
       const all = Array.from(map.values());
       let nextId = Math.max(0, ...all.map((s) => Number(s.store_id) || 0)) + 1;
       all.forEach((s) => { if (!s.store_id) s.store_id = nextId++; });
+      const activeRows = db.getDb().prepare('SELECT DISTINCT store_id FROM store_stocks WHERE stock_qty <> 0').all();
+      const activeIds = new Set(activeRows.map((r) => r.store_id));
+      all.forEach((s) => { s.hasStock = activeIds.has(s.id); });
       const result = all.sort((a, b) => a.store_id - b.store_id);
       res.json(result);
     } catch (err) {

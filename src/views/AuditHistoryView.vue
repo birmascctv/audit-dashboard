@@ -172,20 +172,6 @@ function exportHistoryCSV() {
   exportToCSV(`Store_Audits_History_${new Date().toISOString().split('T')[0]}.csv`, data);
 }
 
-function exportLeaderboardCSV() {
-  const data = shrinkageLeaderboard.value.map((s, idx) => ({
-    Rank: idx + 1,
-    'Store Name': s.storeName,
-    'Audits Conducted': s.totalAudits,
-    'Accuracy Rate %': s.accuracy + '%',
-    'Missing Cans (Shortage)': s.totalMissing,
-    'Surplus Cans': s.totalSurplus,
-    'Net Discrepancy': s.netDiscrepancy,
-    'Shrinkage Risk': s.riskLevel,
-    'Last Audit': s.lastAuditDate ? formatDateTime(s.lastAuditDate).full : 'None',
-  }));
-  exportToCSV(`Store_Shrinkage_Leaderboard_${new Date().toISOString().split('T')[0]}.csv`, data);
-}
 </script>
 
 <template>
@@ -214,16 +200,6 @@ function exportLeaderboardCSV() {
       </div>
 
       <div class="flex items-center gap-2 self-start md:self-center flex-wrap">
-        <button
-          @click="exportLeaderboardCSV"
-          type="button"
-          class="px-3.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
-          title="Export Loss Prevention Leaderboard to CSV"
-        >
-          <Download class="w-3.5 h-3.5 text-teal-600" />
-          <span>Export Leaderboard CSV</span>
-        </button>
-
         <button
           @click="exportHistoryCSV"
           :disabled="auditHistory.length === 0"

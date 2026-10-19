@@ -706,7 +706,7 @@ onMounted(() => {
     <section class="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <div class="flex items-center gap-3">
         <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-teal-50 text-teal-700"><TrendingUp class="h-5 w-5" /></div>
-        <div class="min-h-[30rem]">
+        <div>
           <h1 class="text-xl font-black text-slate-900">Sales Report</h1>
           <p class="text-xs text-slate-500">Clean CSV-backed sales analytics and source columns</p>
         </div>
@@ -720,6 +720,42 @@ onMounted(() => {
         </button>
       </div>
     </section>
+
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="border-b border-slate-100 px-4 py-3"><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><FileSpreadsheet class="h-4 w-4 text-teal-700" />Imported CSV batches</h2><p class="text-[11px] text-slate-500">Downloads contain the 12 clean columns, not unused original report fields.</p></header>
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[700px] text-left text-xs">
+            <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">File</th><th class="px-4 py-2">Uploaded</th><th class="px-4 py-2">Stores</th><th class="px-4 py-2 text-right">Rows</th><th class="px-4 py-2 text-right">Net sales</th><th class="px-4 py-2 text-right">Actions</th></tr></thead>
+            <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button class="rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50" title="Download clean CSV" @click="downloadFile(file)"><Download class="h-3.5 w-3.5" /></button><button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
+              <tr v-if="!files.length"><td colspan="6" class="p-8 text-center text-slate-400">No imported CSV batches.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+    <template v-if="activeTab === 'analytics'">
+      <section class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><TrendingUp class="h-4 w-4 text-emerald-600" />Total net sales</p>
+          <p class="mt-2 text-2xl font-black text-slate-900">{{ formatMoney(summary.totalNetSales) }}</p>
+          <p class="mt-1 text-xs text-slate-500">Customer-paid amount after bill discount</p>
+        </article>
+        <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Package class="h-4 w-4 text-teal-600" />Units sold</p>
+          <p class="mt-2 text-2xl font-black text-slate-900">{{ Number(summary.totalUnitsSold || 0).toLocaleString('id-ID') }}</p>
+          <p class="mt-1 text-xs text-slate-500">{{ Number(summary.totalLineItems || 0).toLocaleString('id-ID') }} clean sales rows</p>
+        </article>
+        <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Store class="h-4 w-4 text-blue-600" />Top Stores</p>
+          <ol class="mt-2 space-y-1.5">
+            <li v-for="(store,index) in topStores" :key="store.name" class="flex items-center justify-between gap-2 text-xs">
+              <span class="truncate font-semibold text-slate-800"><span class="mr-1 text-teal-700">{{ index + 1 }}.</span>{{ store.name }}</span>
+              <span class="whitespace-nowrap font-mono font-bold text-slate-900">{{ formatMoney(store.sales) }}</span>
+            </li>
+            <li v-if="!topStores.length" class="text-xs text-slate-400">No store sales in this period.</li>
+          </ol>
+        </article>
+      </section>
+    </template>
 
     <p v-if="error" class="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ error }}</p>
 
@@ -761,30 +797,101 @@ onMounted(() => {
     </section>
 
     <template v-if="activeTab === 'analytics'">
-      <section class="order-1 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><TrendingUp class="h-4 w-4 text-emerald-600" />Total net sales</p>
-          <p class="mt-2 text-2xl font-black text-slate-900">{{ formatMoney(summary.totalNetSales) }}</p>
-          <p class="mt-1 text-xs text-slate-500">Customer-paid amount after bill discount</p>
+      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+            <div><h2 class="text-sm font-bold text-slate-900">Sales by Visit Purpose</h2><p class="text-[11px] text-slate-500">Current store selection: {{ selectedStoreLabel }}</p></div>
+          </header>
+          <div class="overflow-x-auto">
+            <table class="sales-data-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Visit purpose</th><th class="px-4 py-2 text-right">Sales</th><th class="px-4 py-2 text-right">Share</th></tr></thead>
+              <tbody class="sales-table-body"><tr v-for="item in visitPurposeRows" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td><td class="px-4 py-2 text-right">{{ formatPercent(item.sales, summary.totalNetSales) }}</td></tr>
+                <tr v-if="!visitPurposeRows.length"><td colspan="3" class="p-6 text-center text-slate-400">No visit-purpose sales in this period.</td></tr>
+              </tbody>
+            </table>
+          </div>
         </article>
-        <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Package class="h-4 w-4 text-teal-600" />Units sold</p>
-          <p class="mt-2 text-2xl font-black text-slate-900">{{ Number(summary.totalUnitsSold || 0).toLocaleString('id-ID') }}</p>
-          <p class="mt-1 text-xs text-slate-500">{{ Number(summary.totalLineItems || 0).toLocaleString('id-ID') }} clean sales rows</p>
-        </article>
-        <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Store class="h-4 w-4 text-blue-600" />Top Stores</p>
-          <ol class="mt-2 space-y-1.5">
-            <li v-for="(store,index) in topStores" :key="store.name" class="flex items-center justify-between gap-2 text-xs">
-              <span class="truncate font-semibold text-slate-800"><span class="mr-1 text-teal-700">{{ index + 1 }}.</span>{{ store.name }}</span>
-              <span class="whitespace-nowrap font-mono font-bold text-slate-900">{{ formatMoney(store.sales) }}</span>
-            </li>
-            <li v-if="!topStores.length" class="text-xs text-slate-400">No store sales in this period.</li>
-          </ol>
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <h3 class="text-xs font-bold text-slate-700">Visit Purpose Sales Distribution</h3>
+            <details class="relative">
+              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(visitPurposeChartStores, 'All stores', 'stores') }} <span aria-hidden="true">▾</span></summary>
+              <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="visitPurposeChartStores === null" @change="setVisitPurposeStoresAll">All stores</label>
+                <label v-for="store in visitPurposeStoreOptions" :key="store" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="visitPurposeChartStores === null || visitPurposeChartStores.includes(store)" @change="toggleVisitPurposeStore(store)">{{ store }}</label>
+              </div>
+            </details>
+          </header>
+          <AnalyticsPieChart :items="visitPurposeChartRows" show-values-on-hover empty-label="No visit-purpose sales for this store and period." />
         </article>
       </section>
 
-      <section class="order-7 grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <div><h2 class="text-sm font-bold text-slate-900">Promotion Performance</h2><p class="text-[11px] text-slate-500">Promo names come from Menu and are not treated as product brands.</p></div>
+          <div class="flex flex-wrap gap-2">
+            <details class="relative">
+              <summary class="flex min-w-32 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(promotionChartStores, 'All stores', 'stores') }}<span aria-hidden="true">▾</span></summary>
+              <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="promotionChartStores === null" @change="setPromotionStoresAll">All stores</label>
+                <label v-for="store in chartStoreOptions" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="promotionChartStores === null || promotionChartStores.includes(store.name)" @change="togglePromotionStore(store.name)">{{ store.name }}</label>
+              </div>
+            </details>
+            <details class="relative">
+              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(promotionChartPromos, 'All promotions', 'promotions') }}<span aria-hidden="true">▾</span></summary>
+              <div class="absolute right-0 z-20 mt-1 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <input v-model="promotionSearch" type="search" placeholder="Search promotions..." class="mb-2 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs" aria-label="Search promotions">
+                <div class="max-h-56 overflow-auto">
+                  <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="promotionChartPromos === null" @change="setPromotionPromosAll">All promotions</label>
+                  <label v-for="promo in promotionOptions" :key="promo" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="promotionChartPromos === null || promotionChartPromos.includes(promo)" @change="togglePromotionPromo(promo)"><span class="truncate">{{ promo }}</span></label>
+                  <p v-if="!promotionOptions.length" class="px-2 py-3 text-xs text-slate-400">No matching promotions.</p>
+                </div>
+              </div>
+            </details>
+          </div>
+        </header>
+        <div class="grid grid-cols-1 xl:grid-cols-2">
+          <div class="h-96 overflow-auto">
+            <table class="sales-data-table w-full table-fixed text-left text-xs"><colgroup><col class="w-[25%]"><col><col class="w-[12%]"><col class="w-[26%]"></colgroup><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-1 py-2">Store</th><th class="px-1 py-2">Promotion</th><th class="px-1 py-2 text-right">Units</th><th class="px-1 py-2 text-right">Sales</th></tr></thead>
+              <tbody class="sales-table-body"><tr v-for="(item,index) in visiblePromotions" :key="`${item.branch}-${item.name}-${index}`"><td class="break-words px-1 py-2 font-semibold">{{ item.branch }}</td><td class="break-words px-1 py-2">{{ item.name }}</td><td class="break-all px-1 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="break-all px-1 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr>
+                <tr v-if="!visiblePromotions.length"><td colspan="4" class="p-6 text-center text-slate-400">No promotion sales for this store and period.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="border-t border-slate-100 xl:col-span-1 xl:border-l xl:border-t-0">
+            <header class="px-4 pt-3 text-xs font-bold text-slate-700">Promotion Sales Share by Store</header>
+            <AnalyticsLineChart :items="visiblePromotionChartItems" metric="sales" :x-axis-label="promotionChartStores === null ? 'Store' : 'Promotion'" :x-axis-font-size="12" :line-color="promotionChartStores === null ? '#0f766e' : '#7c3aed'" :show-percent="false" :sort-items="false" empty-label="No promotion sales for this selection." />
+          </div>
+        </div>
+      </section>
+
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <div><h2 class="text-sm font-bold text-slate-900">Sales by Menu Category</h2><p class="text-[11px] text-slate-500">Beer, craft beer, liquor, etc. Includes the PROMO category.</p></div>
+          <details class="relative">
+            <summary class="flex min-w-32 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(categoryChartStores, 'All stores', 'stores') }}<span aria-hidden="true">▾</span></summary>
+            <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+              <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="categoryChartStores === null" @change="setCategoryStoresAll">All stores</label>
+              <label v-for="store in categoryStoreOptions" :key="store" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="categoryChartStores === null || categoryChartStores.includes(store)" @change="toggleCategoryStore(store)">{{ store }}</label>
+            </div>
+          </details>
+        </header>
+        <div class="grid grid-cols-1 xl:grid-cols-2">
+          <div class="max-h-[24rem] overflow-auto">
+            <table class="w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Menu category</th><th class="px-4 py-2 text-right">Units</th><th class="px-4 py-2 text-right">Sales</th></tr></thead>
+              <tbody class="sales-table-body">
+                <tr v-for="item in visibleCategoryTable" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr>
+                <tr v-if="!visibleCategoryTable.length"><td colspan="3" class="p-6 text-center text-slate-400">No category sales for this store and period.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="border-t border-slate-100 xl:border-l xl:border-t-0">
+            <header class="px-4 pt-3 text-xs font-bold text-slate-700">Category Sales Share</header>
+            <AnalyticsLineChart :items="visibleCategoryTable" metric="sales" x-axis-label="Category" :x-axis-font-size="12" line-color="#0f766e" :sort-items="false" empty-label="No category sales for this selection." />
+          </div>
+        </div>
+      </section>
+
+      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <header class="border-b border-slate-100 px-4 py-3"><h2 class="text-sm font-bold text-slate-900">Sales by Payment Method</h2><p class="text-[11px] text-slate-500">Amounts allocated across split tenders when a bill uses multiple methods</p></header>
           <div class="min-h-[22rem] overflow-x-auto">
@@ -815,7 +922,7 @@ onMounted(() => {
         </article>
       </section>
 
-      <section class="order-3 grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <header class="border-b border-slate-100 px-4 py-3"><h2 class="text-sm font-bold text-slate-900">Product Sales by Brand</h2></header>
           <div class="h-[22rem] overflow-auto">
@@ -828,60 +935,6 @@ onMounted(() => {
           <header class="border-b border-slate-100 px-4 py-3"><h3 class="text-xs font-bold text-slate-700">Brand sales distribution</h3></header>
           <AnalyticsPieChart :items="brandChartItems" :max-items="12" />
         </article>
-      </section>
-
-      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <header class="border-b border-slate-100 px-4 py-3"><h2 class="text-sm font-bold text-slate-900">Sales by Menu Category</h2><p class="text-[11px] text-slate-500">Includes the PROMO category.</p></header>
-          <div class="max-h-[22rem] overflow-auto">
-            <table class="w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Menu category</th><th class="px-4 py-2 text-right">Units</th><th class="px-4 py-2 text-right">Sales</th></tr></thead>
-              <tbody class="sales-table-body"><tr v-for="item in summary.byCategory || []" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr></tbody>
-            </table>
-          </div>
-        </article>
-        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <header class="border-b border-slate-100 px-4 py-3"><h3 class="text-xs font-bold text-slate-700">Category share · percent of category sales</h3></header>
-          <AnalyticsBarChart :items="categoryChartItems" :denominator="categoryTotal" />
-        </article>
-      </section>
-
-      <section class="order-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-          <div><h2 class="text-sm font-bold text-slate-900">Promotion Performance</h2><p class="text-[11px] text-slate-500">Promo names come from Menu and are not treated as product brands.</p></div>
-          <div class="flex flex-wrap gap-2">
-            <details class="relative">
-              <summary class="flex min-w-32 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(promotionChartStores, 'All stores', 'stores') }}<span aria-hidden="true">▾</span></summary>
-              <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
-                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="promotionChartStores === null" @change="setPromotionStoresAll">All stores</label>
-                <label v-for="store in chartStoreOptions" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="promotionChartStores === null || promotionChartStores.includes(store.name)" @change="togglePromotionStore(store.name)">{{ store.name }}</label>
-              </div>
-            </details>
-            <details class="relative">
-              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(promotionChartPromos, 'All promotions', 'promotions') }}<span aria-hidden="true">▾</span></summary>
-              <div class="absolute right-0 z-20 mt-1 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
-                <input v-model="promotionSearch" type="search" placeholder="Search promotions..." class="mb-2 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs" aria-label="Search promotions">
-                <div class="max-h-56 overflow-auto">
-                  <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="promotionChartPromos === null" @change="setPromotionPromosAll">All promotions</label>
-                  <label v-for="promo in promotionOptions" :key="promo" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="promotionChartPromos === null || promotionChartPromos.includes(promo)" @change="togglePromotionPromo(promo)"><span class="truncate">{{ promo }}</span></label>
-                  <p v-if="!promotionOptions.length" class="px-2 py-3 text-xs text-slate-400">No matching promotions.</p>
-                </div>
-              </div>
-            </details>
-          </div>
-        </header>
-        <div class="grid grid-cols-1 xl:grid-cols-3">
-          <div class="h-96 overflow-auto">
-            <table class="sales-data-table w-full table-fixed text-left text-xs"><colgroup><col class="w-[25%]"><col><col class="w-[12%]"><col class="w-[26%]"></colgroup><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-1 py-2">Store</th><th class="px-1 py-2">Promotion</th><th class="px-1 py-2 text-right">Units</th><th class="px-1 py-2 text-right">Sales</th></tr></thead>
-              <tbody class="sales-table-body"><tr v-for="(item,index) in visiblePromotions" :key="`${item.branch}-${item.name}-${index}`"><td class="break-words px-1 py-2 font-semibold">{{ item.branch }}</td><td class="break-words px-1 py-2">{{ item.name }}</td><td class="break-all px-1 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="break-all px-1 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr>
-                <tr v-if="!visiblePromotions.length"><td colspan="4" class="p-6 text-center text-slate-400">No promotion sales for this store and period.</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="border-t border-slate-100 xl:col-span-2 xl:border-l xl:border-t-0">
-            <header class="px-4 pt-3 text-xs font-bold text-slate-700">Promotion Sales Share by Store</header>
-            <AnalyticsLineChart :items="visiblePromotionChartItems" metric="sales" :x-axis-label="promotionChartStores === null ? 'Store' : 'Promotion'" :x-axis-font-size="12" :line-color="promotionChartStores === null ? '#0f766e' : '#7c3aed'" :show-percent="false" :sort-items="false" empty-label="No promotion sales for this selection." />
-          </div>
-        </div>
       </section>
 
       <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -933,7 +986,7 @@ onMounted(() => {
         </article>
       </section>
 
-      <section class="order-8 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
           <div><h2 class="text-sm font-bold text-slate-900">Top Products</h2><p class="text-[11px] text-slate-500">Top ten by customer-paid sales across all stores, or for the selected store.</p></div>
@@ -953,35 +1006,7 @@ onMounted(() => {
         </article>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-            <div><h2 class="text-sm font-bold text-slate-900">Sales by Visit Purpose</h2><p class="text-[11px] text-slate-500">Current store selection: {{ selectedStoreLabel }}</p></div>
-          </header>
-          <div class="overflow-x-auto">
-            <table class="sales-data-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Visit purpose</th><th class="px-4 py-2 text-right">Sales</th><th class="px-4 py-2 text-right">Share</th></tr></thead>
-              <tbody class="sales-table-body"><tr v-for="item in visitPurposeRows" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td><td class="px-4 py-2 text-right">{{ formatPercent(item.sales, summary.totalNetSales) }}</td></tr>
-                <tr v-if="!visitPurposeRows.length"><td colspan="3" class="p-6 text-center text-slate-400">No visit-purpose sales in this period.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </article>
-        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-            <h3 class="text-xs font-bold text-slate-700">Visit Purpose Sales Distribution</h3>
-            <details class="relative">
-              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(visitPurposeChartStores, 'All stores', 'stores') }} <span aria-hidden="true">▾</span></summary>
-              <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
-                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="visitPurposeChartStores === null" @change="setVisitPurposeStoresAll">All stores</label>
-                <label v-for="store in visitPurposeStoreOptions" :key="store" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="visitPurposeChartStores === null || visitPurposeChartStores.includes(store)" @change="toggleVisitPurposeStore(store)">{{ store }}</label>
-              </div>
-            </details>
-          </header>
-          <AnalyticsPieChart :items="visitPurposeChartRows" show-values-on-hover empty-label="No visit-purpose sales for this store and period." />
-        </article>
-      </section>
-
-      <section class="order-9 space-y-4 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section class="space-y-4 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <header class="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 pb-4">
           <div><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><BarChart3 class="h-4 w-4 text-indigo-600" />Sales by Time Range</h2><p class="text-[11px] text-slate-500">Hourly, weekly, and monthly revenue · payment-method breakdown is available on hover.</p></div>
           <div class="flex flex-wrap items-end gap-3">
@@ -1047,14 +1072,8 @@ onMounted(() => {
       </section>
     </template>
 
-    <Teleport v-if="hourTooltip" to="body">
-      <div class="pointer-events-none fixed z-[100] max-h-[70vh] max-w-[22rem] overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${hourTooltip.x}px`, top: `${hourTooltip.y}px` }">
-        <p class="font-bold">{{ hourTooltip.hour }}</p><p class="text-slate-300">{{ hourTooltip.store }}</p><p class="mt-1">{{ hourTooltip.sales }} customer-paid sales</p>
-      </div>
-    </Teleport>
-
     <template v-else>
-      <section class="order-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
           <div><h2 class="text-sm font-bold text-slate-900">Raw Clean Sales Records</h2><p class="text-[11px] text-slate-500">Showing {{ totalRows.toLocaleString() }} matching rows · up to 100 records per page</p></div>
           <input v-model="rawSearch" type="search" placeholder="Search branch, menu, payment..." class="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs sm:w-72">
@@ -1079,17 +1098,13 @@ onMounted(() => {
         </footer>
       </section>
 
-      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <header class="border-b border-slate-100 px-4 py-3"><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><FileSpreadsheet class="h-4 w-4 text-teal-700" />Imported CSV batches</h2><p class="text-[11px] text-slate-500">Downloads contain the 12 clean columns, not unused original report fields.</p></header>
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[700px] text-left text-xs">
-            <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">File</th><th class="px-4 py-2">Uploaded</th><th class="px-4 py-2">Stores</th><th class="px-4 py-2 text-right">Rows</th><th class="px-4 py-2 text-right">Net sales</th><th class="px-4 py-2 text-right">Actions</th></tr></thead>
-            <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button class="rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50" title="Download clean CSV" @click="downloadFile(file)"><Download class="h-3.5 w-3.5" /></button><button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
-              <tr v-if="!files.length"><td colspan="6" class="p-8 text-center text-slate-400">No imported CSV batches.</td></tr></tbody>
-          </table>
-        </div>
-      </section>
     </template>
+
+    <Teleport v-if="hourTooltip" to="body">
+      <div class="pointer-events-none fixed z-[100] max-h-[70vh] max-w-[22rem] overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${hourTooltip.x}px`, top: `${hourTooltip.y}px` }">
+        <p class="font-bold">{{ hourTooltip.hour }}</p><p class="text-slate-300">{{ hourTooltip.store }}</p><p class="mt-1">{{ hourTooltip.sales }} customer-paid sales</p>
+      </div>
+    </Teleport>
 
     <div v-if="deletingFile" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
       <section class="w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow-2xl">

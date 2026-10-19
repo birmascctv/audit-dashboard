@@ -371,25 +371,19 @@ const filteredItems = computed(() => {
     if (brandFilter.value !== 'ALL' && (item.subCategory !== brandFilter.value && item.brand !== brandFilter.value)) {
       return false;
     }
-    if (statusFilter.value === 'discrepancy') {
-      return item.status === 'missing' || item.status === 'surplus' || item.status === 'counting';
-    }
-    if (statusFilter.value === 'matched') {
-      return item.status === 'matched';
-    }
-    if (statusFilter.value === 'unscanned') {
-      return item.status === 'unscanned';
-    }
+    if (statusFilter.value === 'discrepancy' && !(item.status === 'missing' || item.status === 'surplus' || item.status === 'counting')) return false;
+    if (statusFilter.value === 'matched' && item.status !== 'matched') return false;
+    if (statusFilter.value === 'unscanned' && item.status !== 'unscanned') return false;
     if (searchQuery.value && searchQuery.value.trim()) {
       const q = searchQuery.value.toLowerCase().trim();
       const bCode = String(item.barcode || '').toLowerCase();
-      const bBrand = String(item.subCategory || item.brand || '').toLowerCase();
+      const bCategory = String(item.category || '').toLowerCase();
       const bTitle = String(item.productTitle || item.varian || '').toLowerCase();
       const bSku = String(item.sku || '').toLowerCase();
 
       const match =
         bCode.includes(q) ||
-        bBrand.includes(q) ||
+        bCategory.includes(q) ||
         bTitle.includes(q) ||
         bSku.includes(q);
       if (!match) return false;
@@ -706,7 +700,7 @@ onMounted(() => {
               >
                 <option value="">+ Test Scan Item...</option>
                 <option v-for="item in auditItems" :key="item.barcode" :value="item.barcode">
-                  {{ item.brand }} {{ item.varian }} ({{ item.barcode }})
+                  {{ item.productTitle || item.varian }} ({{ item.barcode }})
                 </option>
               </select>
             </div>
@@ -731,7 +725,7 @@ onMounted(() => {
                 <tr class="bg-slate-100/90 border-b border-slate-200 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
                   <th class="py-2.5 px-3 w-10 text-center">No</th>
                   <th class="py-2.5 px-3">Kode Barcode</th>
-                  <th class="py-2.5 px-3">Brand & Product Variant</th>
+                  <th class="py-2.5 px-3">Product Name</th>
                   <th class="py-2.5 px-3 text-center">ESB Stock</th>
                   <th class="py-2.5 px-3 text-center bg-teal-50/80 text-teal-900 font-bold">Physical Count</th>
                   <th class="py-2.5 px-3 text-center">Difference</th>
@@ -756,7 +750,7 @@ onMounted(() => {
                         class="w-2 h-2 rounded-full"
                         :class="item.brand === 'Kulturale' ? 'bg-amber-400' : item.brand === 'Guinness' ? 'bg-slate-800' : 'bg-teal-500'"
                       ></span>
-                      <span>{{ item.brand }} {{ item.varian }}</span>
+                      <span>{{ item.productTitle || item.varian }}</span>
                     </div>
                   </td>
                   <td class="py-2 px-3 text-center font-mono font-bold text-slate-600">
@@ -999,7 +993,6 @@ onMounted(() => {
             <tr class="bg-slate-100 border-b border-slate-300 text-[11px] font-bold text-slate-700 uppercase tracking-wider">
               <th class="py-3 px-4 w-12 text-center bg-slate-100">No</th>
               <th class="py-3 px-4 bg-slate-100">Kode Barcode</th>
-              <th class="py-3 px-4 bg-slate-100">Brand</th>
               <th class="py-3 px-4 bg-slate-100">Product Name</th>
               <th class="py-3 px-4 text-center bg-slate-200/90 text-slate-800">
                 Qty
@@ -1040,13 +1033,6 @@ onMounted(() => {
                     {{ item.barcode }}
                   </span>
                 </div>
-              </td>
-
-              <!-- Brand (Sub Category from ESB) -->
-              <td class="py-3.5 px-4">
-                <span class="inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
-                  {{ item.subCategory || item.brand }}
-                </span>
               </td>
 
               <!-- Product Name -->
@@ -1233,7 +1219,7 @@ onMounted(() => {
 
             <!-- Empty Filter State -->
             <tr v-if="filteredItems.length === 0">
-              <td colspan="9" class="py-12 text-center text-slate-400">
+              <td colspan="8" class="py-12 text-center text-slate-400">
                 <Package class="w-8 h-8 text-slate-300 mx-auto mb-2" />
                 <p class="font-medium text-slate-600">No products matching your search</p>
                 <button
