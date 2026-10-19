@@ -6,7 +6,6 @@ import { useAuth } from '../composables/useAuth.js';
 import { playScanMatchSound, playScanSuccessSound, playScanErrorSound } from '../utils/audio.js';
 import { formatDateTime } from '../utils/storage.js';
 import AddBarcodeModal from '../components/AddBarcodeModal.vue';
-import UploadStockCsvModal from '../components/UploadStockCsvModal.vue';
 
 import {
   Barcode,
@@ -108,38 +107,6 @@ async function handleUnlockConfirm() {
 const isCompleteModalOpen = ref(false);
 const isAddBarcodeModalOpen = ref(false);
 const isSessionModalOpen = ref(false);
-const isUploadStockCsvModalOpen = ref(false);
-const activeStockCsvFile = ref(null);
-
-async function loadActiveStockCsv() {
-  try {
-    const res = await fetch('/api/stock-csv/active');
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      const data = await res.json();
-      if (data.success && data.file) {
-        activeStockCsvFile.value = data.file;
-        return;
-      }
-    }
-  } catch (_) {}
-
-  // Fallback to localStorage
-  try {
-    const local = localStorage.getItem('birmas_active_stock_csv');
-    if (local) {
-      activeStockCsvFile.value = JSON.parse(local);
-    } else {
-      activeStockCsvFile.value = null;
-    }
-  } catch (_) {
-    activeStockCsvFile.value = null;
-  }
-}
-
-async function handleStockCsvUpdated() {
-  await loadActiveStockCsv();
-}
 
 const birmasSyncTab = ref('birmas'); // 'birmas' | 'curl'
 const isSyncingBirmas = ref(false);
@@ -170,7 +137,7 @@ const computedTargetUrl = computed(() => {
   if (birmasEndpointMode.value === 'none') {
     return base; // Direct URL: NO endpoint appended!
   } else if (birmasEndpointMode.value === 'wp') {
-    return `${base.replace(/\/+$/, '')}/wp-json/api/v1/product_stocks`;
+    return `${base.replace(/\/+$/, '')}/wp-json/api/v1/product_stock`;
   } else if (birmasEndpointMode.value === 'visit_purpose') {
     return `${base.replace(/\/+$/, '')}/extv1/visit-purpose`;
   } else if (birmasEndpointMode.value === 'menu') {
@@ -213,7 +180,7 @@ async function saveBirmasConfig() {
   try {
     let endpoint = '';
     if (birmasEndpointMode.value === 'none') endpoint = 'none';
-    else if (birmasEndpointMode.value === 'wp') endpoint = '/wp-json/api/v1/product_stocks';
+    else if (birmasEndpointMode.value === 'wp') endpoint = '/wp-json/api/v1/product_stock';
     else if (birmasEndpointMode.value === 'visit_purpose') endpoint = '/extv1/visit-purpose';
     else if (birmasEndpointMode.value === 'menu') endpoint = '/extv1/menu';
     else if (birmasEndpointMode.value === 'custom') endpoint = customEndpointPath.value.trim();
@@ -238,6 +205,23 @@ async function saveBirmasConfig() {
   }
 }
 
+const quickSyncMsg = ref('');
+async function handleQuickBirmasSync() {
+  isSyncingBirmas.value = true;
+  quickSyncMsg.value = 'Pulling Product Stocks from Birmas server...';
+  try {
+    const res = await syncFromBirmasServer({});
+    quickSyncMsg.value = res.success
+      ? `Synced ${res.totalSyncedProducts || 0} store stocks from Birmas server.`
+      : (res.error || res.message || 'Sync failed.');
+  } catch (err) {
+    quickSyncMsg.value = err.message;
+  } finally {
+    isSyncingBirmas.value = false;
+    setTimeout(() => { quickSyncMsg.value = ''; }, 8000);
+  }
+}
+
 async function handleBirmasServerSync() {
   isSyncingBirmas.value = true;
   sessionStatusMsg.value = '';
@@ -246,7 +230,7 @@ async function handleBirmasServerSync() {
 
     let endpoint = '';
     if (birmasEndpointMode.value === 'none') endpoint = 'none';
-    else if (birmasEndpointMode.value === 'wp') endpoint = '/wp-json/api/v1/product_stocks';
+    else if (birmasEndpointMode.value === 'wp') endpoint = '/wp-json/api/v1/product_stock';
     else if (birmasEndpointMode.value === 'visit_purpose') endpoint = '/extv1/visit-purpose';
     else if (birmasEndpointMode.value === 'menu') endpoint = '/extv1/menu';
     else if (birmasEndpointMode.value === 'custom') endpoint = customEndpointPath.value.trim();
@@ -479,7 +463,6 @@ onMounted(() => {
   if (document.documentElement) document.documentElement.scrollTop = 0;
   if (document.body) document.body.scrollTop = 0;
   loadBirmasConfig();
-  loadActiveStockCsv();
 });
 </script>
 
@@ -533,18 +516,17 @@ onMounted(() => {
           <span>Add Barcode</span>
         </button>
 
-        <!-- Upload CSV Button (ESB Stock Period Import) -->
         <button
-          @click="isUploadStockCsvModalOpen = true"
+          @click="handleQuickBirmasSync"
+          :disabled="isSyncingBirmas"
           type="button"
-          class="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-          title="Upload ESB Stock CSV to update comparison table automatically"
+          class="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+          title="Pull Product Stocks from the Birmas server"
         >
-          <UploadCloud class="w-3.5 h-3.5 text-white" />
-          <span>Upload CSV</span>
+          <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': isSyncingBirmas }" />
+          <span>{{ isSyncingBirmas ? 'Syncing...' : 'Sync from Birmas' }}</span>
         </button>
-
-
+        <span v-if="quickSyncMsg" class="text-xs font-semibold text-slate-600">{{ quickSyncMsg }}</span>
 
         <!-- Finalize Audit Button -->
         <button
@@ -556,41 +538,6 @@ onMounted(() => {
           <span>Complete Audit</span>
         </button>
       </div>
-    </div>
-
-    <!-- Active Stock CSV Information Banner -->
-    <div
-      v-if="activeStockCsvFile"
-      class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-white border border-teal-200 rounded-2xl text-xs text-slate-700 shadow-xs"
-    >
-      <div class="flex items-center gap-2.5">
-        <div class="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 shrink-0">
-          <FileSpreadsheet class="w-4 h-4 text-teal-700" />
-        </div>
-        <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span class="font-extrabold text-slate-900">Active Stock CSV:</span>
-          <span class="font-mono font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-            {{ activeStockCsvFile.filename }}
-          </span>
-          <span class="text-slate-500 font-medium">
-            Stock Date: <strong class="text-slate-900 font-mono">{{ activeStockCsvFile.stock_date || '-' }}</strong>
-          </span>
-          <span class="text-slate-500 font-medium">
-            ESB Download: <span class="text-slate-800 font-mono">{{ activeStockCsvFile.downloaded_at_esb || '-' }}</span>
-          </span>
-          <span class="text-slate-400 text-[11px]">
-            (Uploaded by {{ activeStockCsvFile.uploaded_by || 'Auditor' }})
-          </span>
-        </div>
-      </div>
-      <button
-        @click="isUploadStockCsvModalOpen = true"
-        type="button"
-        class="text-xs font-bold text-teal-700 hover:text-teal-900 hover:underline flex items-center gap-1 shrink-0 cursor-pointer self-end sm:self-center"
-      >
-        <span>Manage / Revert CSV</span>
-        <ChevronRight class="w-3.5 h-3.5" />
-      </button>
     </div>
 
     <!-- Audit Session Lock Status Banner (Superadmin approval workflow) -->
@@ -1504,7 +1451,7 @@ onMounted(() => {
                   </div>
                   <div>
                     <span class="block text-xs font-bold">Birmas Stocks API</span>
-                    <span class="block text-[10px] font-mono text-slate-500 mt-0.5">/wp-json/api/v1/product_stocks</span>
+                    <span class="block text-[10px] font-mono text-slate-500 mt-0.5">/wp-json/api/v1/product_stock</span>
                   </div>
                 </button>
 
@@ -1732,13 +1679,6 @@ onMounted(() => {
         </div>
       </div>
     </div>
-
-    <!-- Upload Stock CSV Modal -->
-    <UploadStockCsvModal
-      :is-open="isUploadStockCsvModalOpen"
-      @close="isUploadStockCsvModalOpen = false"
-      @updated="handleStockCsvUpdated"
-    />
 
     <!-- Superadmin Unlock Confirmation Modal -->
     <div

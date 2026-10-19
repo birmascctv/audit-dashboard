@@ -270,7 +270,7 @@ function exportLeaderboardCSV() {
           </div>
           <div>
             <span class="text-xs font-bold text-slate-500 block">Total Missing Units</span>
-            <span class="text-xl font-black text-rose-600 font-mono">-{{ totalChainMissing }} cans</span>
+            <span class="text-xl font-black text-rose-600 font-mono">{{ totalChainMissing > 0 ? "-" : "" }}{{ totalChainMissing }} cans</span>
             <span class="text-[11px] text-rose-700 font-semibold block mt-0.5">Discrepancy shrinkage</span>
           </div>
         </div>

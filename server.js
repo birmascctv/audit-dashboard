@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import * as db from './db.js';
+import * as salesDb from './salesDb.js';
 import * as storeAuditService from './storeAuditService.js';
 
 export function parseSafeMoney(val) {
@@ -328,7 +329,7 @@ export async function runBirmasServerSync(options = {}) {
   }
   isBirmasServerSyncing = true;
   try {
-    const rawBaseUrl = options.baseUrl || options.birmasServerUrl || process.env.BIRMAS_BACKEND_URL || db.getConfig('wp_url') || 'https://admin.birmas.id';
+    const rawBaseUrl = options.baseUrl || options.birmasServerUrl || process.env.BIRMAS_BACKEND_URL || db.getConfig('wp_url') || 'http://10.0.0.10';
     const baseUrl = String(rawBaseUrl).trim();
     const token = options.token || options.apiToken || options.birmasServerToken || process.env.BIRMAS_API_TOKEN || db.getConfig('birmas_server_token') || '';
 
@@ -368,7 +369,7 @@ export async function runBirmasServerSync(options = {}) {
         if (hasExistingRoute) {
           resolvedEndpoint = ''; // Do NOT add any endpoint! User provided a full URL!
         } else {
-          resolvedEndpoint = '/wp-json/api/v1/product_stocks';
+          resolvedEndpoint = '/wp-json/api/v1/product_stock';
         }
       }
     }
@@ -392,7 +393,8 @@ export async function runBirmasServerSync(options = {}) {
 
     // Determine pagination: single call if direct URL, ESB endpoint, or visit-purpose
     const isDirectOrEsb = resolvedEndpoint === '' || targetUrl.toLowerCase().includes('visit-purpose') || targetUrl.toLowerCase().includes('/extv1/');
-    const maxPages = isDirectOrEsb ? 1 : 20;
+    const PAGE_SIZE = 25;
+    const maxPages = isDirectOrEsb ? 1 : 100;
 
     let totalSyncedProducts = 0;
     let page = 1;
@@ -402,7 +404,7 @@ export async function runBirmasServerSync(options = {}) {
       let url = targetUrl;
       if (!isDirectOrEsb) {
         const sep = targetUrl.includes('?') ? '&' : '?';
-        url = `${targetUrl}${sep}per_page=100&page=${page}`;
+        url = `${targetUrl}${sep}per_page=${PAGE_SIZE}&page=${page}&_fields=id,location,product_variant,stock,esb_menu_id,is_exist_in_esb`;
       }
 
       let items = [];
@@ -419,7 +421,7 @@ export async function runBirmasServerSync(options = {}) {
 
         const res = await fetch(url, {
           headers,
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(120000),
         });
 
         if (!res.ok) {
@@ -614,13 +616,13 @@ export async function runBirmasServerSync(options = {}) {
         totalSyncedProducts++;
       }
 
-      if (items.length < 50 || isDirectOrEsb) {
+      if (items.length < PAGE_SIZE || isDirectOrEsb) {
         hasMore = false;
         break;
       }
 
       page++;
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 100));
     }
 
     if (totalSyncedProducts > 0) {
@@ -863,7 +865,7 @@ async function startServer() {
         const cleanName = String(s.name || '').toLowerCase().replace(/^birmas\s+/i, '').trim();
         map.set(cleanName, {
           id: s.id,
-          store_id: s.store_id || idx + 1,
+          store_id: s.store_id || null,
           name: s.name,
           locationCode: s.locationCode || s.location_code || 'BRM',
           esbBranchCode: s.esbBranchCode || s.esb_branch_code || 'BRM',
@@ -880,7 +882,7 @@ async function startServer() {
         } else {
           map.set(cleanCsName, {
             id: `birmas-${cleanCsName.replace(/[^a-z0-9]/g, '-')}`,
-            store_id: cs.store_id || idx + 1,
+            store_id: cs.store_id || null,
             name: cs.name,
             locationCode: `BRM-${cleanCsName.substring(0, 3).toUpperCase()}`,
             esbBranchCode: cleanCsName.toUpperCase(),
@@ -888,7 +890,11 @@ async function startServer() {
         }
       });
 
-      const result = Array.from(map.values()).sort((a, b) => a.store_id - b.store_id);
+      // Stores without a CCTV audit id get unique ids above the highest real one
+      const all = Array.from(map.values());
+      let nextId = Math.max(0, ...all.map((s) => Number(s.store_id) || 0)) + 1;
+      all.forEach((s) => { if (!s.store_id) s.store_id = nextId++; });
+      const result = all.sort((a, b) => a.store_id - b.store_id);
       res.json(result);
     } catch (err) {
       console.warn('[/api/stores] Fallback error:', err.message);
@@ -1264,7 +1270,7 @@ async function startServer() {
 
   app.get('/api/birmas/config', (req, res) => {
     const token = db.getConfig('birmas_server_token') || '';
-    const rawUrl = db.getConfig('wp_url') || process.env.BIRMAS_BACKEND_URL || 'https://admin.birmas.id';
+    const rawUrl = db.getConfig('wp_url') || process.env.BIRMAS_BACKEND_URL || 'http://10.0.0.10';
     const dbEndpoint = db.getConfig('birmas_server_endpoint');
     const envEndpoint = process.env.BIRMAS_ENDPOINT_PATH;
     
@@ -1288,7 +1294,7 @@ async function startServer() {
         effectiveEndpoint = '';
         isNoEndpoint = true;
       } else {
-        effectiveEndpoint = '/wp-json/api/v1/product_stocks';
+        effectiveEndpoint = '/wp-json/api/v1/product_stock';
       }
     }
 
@@ -1435,107 +1441,41 @@ async function startServer() {
     try {
       const body = req.body;
       const rawList = Array.isArray(body) ? body : (body.transactions || body.items || body.data || []);
-      const fileInfo = {
-        id: body.fileId || `sfile-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-        filename: body.filename || `Sales_Recap_${new Date().toISOString().slice(0, 10)}.csv`,
-        file_size: body.fileSize || `${(rawList.length * 0.15).toFixed(1)} KB`,
-        uploaded_at: new Date().toISOString(),
-        uploaded_by: body.uploadedBy || 'Admin',
-        file_content: body.fileContent || '',
-      };
-
       if (!Array.isArray(rawList) || rawList.length === 0) {
         return res.status(400).json({ success: false, message: 'No transactions found in request body' });
       }
 
-      console.log(`[Sales Push] Received ${rawList.length} transactions from file: ${fileInfo.filename}`);
-
-      const normalized = rawList.map((tx, idx) => {
-        const storeKey = String(tx.store_id || tx.store_name || tx.branch || tx.location || '').toLowerCase();
-        let storeId = 'birmas-kuningan';
-        let storeName = 'Birmas Kuningan';
-
-        if (storeKey.includes('sudirman')) {
-          storeId = 'birmas-sudirman';
-          storeName = 'Birmas Sudirman';
-        } else if (storeKey.includes('kwitang')) {
-          storeId = 'birmas-kwitang';
-          storeName = 'Birmas Kwitang';
-        } else if (storeKey.includes('kuningan') || storeKey.includes('kunngan')) {
-          storeId = 'birmas-kuningan';
-          storeName = 'Birmas Kuningan';
-        } else if (storeKey.includes('lebak') || storeKey.includes('bulus')) {
-          storeId = 'birmas-lebak-bulus';
-          storeName = 'Birmas Lebak Bulus';
-        } else if (storeKey.includes('gading') || storeKey.includes('kgading')) {
-          storeId = 'birmas-kelapa-gading';
-          storeName = 'Birmas Kelapa Gading';
-        } else if (storeKey.includes('tebet')) {
-          storeId = 'birmas-tebet';
-          storeName = 'Birmas Tebet';
-        } else if (storeKey.includes('nomadic') || storeKey.includes('bandung')) {
-          storeId = 'birmas-nomadic';
-          storeName = 'Birmas Nomadic';
-        } else if (storeKey.includes('nusa') || storeKey.includes('bali')) {
-          storeId = 'birmas-nusadua';
-          storeName = 'Birmas Nusa Dua';
-        } else if (tx.store_name || tx.branch) {
-          storeName = String(tx.store_name || tx.branch).trim();
-          storeId = `store-${storeName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-        }
-
-        const brandName = tx.brand || tx.menu_category_detail || tx.menuCategoryDetail || '';
-        const visitPurpose = tx.visit_purpose || tx.visitPurpose || tx.order_mode || tx.orderMode || 'DINE IN';
-        const itemName = tx.item_name || tx.menu || tx.itemName || tx.product_name || 'Retail Item';
-        const variantName = tx.variant || tx.menu || tx.product_variant || '';
-
-        return {
-          id: tx.id || `push-${tx.bill_no || tx.billNumber || Date.now()}-${idx}`,
-          bill_no: tx.bill_no || tx.billNumber || tx.bill_number || tx.invoice_no || `ESB-${Date.now()}-${idx}`,
-          date: tx.date || tx.sales_date_in || tx.salesDateIn || tx.sales_date || tx.created_at || new Date().toISOString(),
-          store_id: storeId,
-          store_name: tx.store_name || storeName,
-          item_name: itemName,
-          variant: variantName,
-          brand: brandName,
-          category: tx.category || tx.menu_category || tx.menuCategory || 'Beverage',
-          barcode: tx.barcode || '',
-          qty: Number(tx.qty || tx.quantity) || 1,
-          unit_price: parseSafeMoney(tx.unit_price || tx.price),
-          discount: parseSafeMoney(tx.discount),
-          tax: parseSafeMoney(tx.tax),
-          subtotal: parseSafeMoney(tx.subtotal) || ((Number(tx.qty) || 1) * parseSafeMoney(tx.unit_price || tx.price)),
-          total: parseSafeMoney(tx.total || tx.nett_sales || tx.nettSales) || ((Number(tx.qty) || 1) * parseSafeMoney(tx.unit_price || tx.price)),
-          payment_method: tx.payment_method || tx.paymentMethod || 'QRIS BCA',
-          visit_purpose: visitPurpose,
-          cashier: tx.cashier || tx.waiter || 'Kasir',
-          file_id: fileInfo.id,
-        };
+      const fileId = body.fileId || `sfile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const filename = body.filename || `Sales_Recap_${new Date().toISOString().slice(0, 10)}.csv`;
+      const chunkSize = Number(body.chunkSize) || 1500;
+      const sourceRowOffset = Number(body.sourceRowOffset ?? (Number(body.chunkIndex) || 0) * chunkSize);
+      const result = salesDb.insertSalesRows(salesDb.getSalesDb(), {
+        fileId,
+        filename,
+        fileSize: body.fileSize || '',
+        uploadedBy: body.uploadedBy || 'Admin',
+        sourceRowOffset,
+        rows: rawList,
       });
-
-      const saveRes = db.saveSalesFileRecord(fileInfo, normalized);
-      if (!saveRes.success) {
-        return res.status(500).json({ success: false, error: saveRes.error || 'Failed to save sales file records to database' });
-      }
-      db.setConfig('last_sales_pushed_at', new Date().toISOString());
 
       res.json({
         success: true,
-        message: `Successfully received and saved ${normalized.length} sales records!`,
-        count: normalized.length,
-        fileId: saveRes.fileId,
+        message: `Successfully received and saved ${rawList.length} sales records.`,
+        count: rawList.length,
+        rowCount: result.row_count,
+        fileId,
         receivedAt: new Date().toISOString(),
       });
     } catch (err) {
       console.error('[Sales Push Error]:', err);
-      res.status(500).json({ success: false, error: err.message });
+      res.status(400).json({ success: false, error: err.message });
     }
   });
 
-  // Sales Files History & Management Endpoints
+  // Sales import metadata and clean-data CSV downloads
   app.get('/api/sales/files', (req, res) => {
     try {
-      const files = db.getSalesFilesList();
+      const files = salesDb.getSalesFiles();
       res.json({ success: true, files });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
@@ -1544,13 +1484,13 @@ async function startServer() {
 
   app.get('/api/sales/files/:id/download', (req, res) => {
     try {
-      const file = db.getSalesFileById(req.params.id);
+      const file = salesDb.getSalesFileCsv(req.params.id);
       if (!file) {
         return res.status(404).send('Sales file not found');
       }
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
-      res.send(file.file_content || '');
+      res.send(file.content);
     } catch (err) {
       res.status(500).send(err.message);
     }
@@ -1558,12 +1498,13 @@ async function startServer() {
 
   app.delete('/api/sales/files/:id', (req, res) => {
     try {
-      const result = db.deleteSalesFileRecord(req.params.id);
+      const result = salesDb.deleteSalesFile(req.params.id);
       res.json(result);
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
   });
+
 
   // ==========================================
   // Stock Audit CSV Upload & Management Endpoints
@@ -2144,22 +2085,27 @@ async function startServer() {
   });
 
   // 14. Sales Report Endpoints (ESB report-sales-recapitulation-detail)
+  app.get('/api/sales/stores', (req, res) => {
+    try {
+      res.json({ success: true, stores: salesDb.getSalesStores() });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.get('/api/sales/report', (req, res) => {
     try {
       const filters = {
         storeId: req.query.storeId,
+        storeIds: req.query.storeIds,
         startDate: req.query.startDate,
         endDate: req.query.endDate,
         search: req.query.search,
-        category: req.query.category,
-        brand: req.query.brand,
-        visitPurpose: req.query.visitPurpose,
-        paymentMethod: req.query.paymentMethod,
-        limit: req.query.limit || 200,
-        offset: req.query.offset || 0,
+        importId: req.query.importId,
+        limit: req.query.limit,
+        offset: req.query.offset,
       };
-      const transactions = db.getSalesTransactions(filters);
-      res.json({ success: true, transactions, total: transactions.length });
+      res.json({ success: true, ...salesDb.getSalesReport(filters) });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2169,14 +2115,28 @@ async function startServer() {
     try {
       const filters = {
         storeId: req.query.storeId,
+        storeIds: req.query.storeIds,
         startDate: req.query.startDate,
         endDate: req.query.endDate,
-        visitPurpose: req.query.visitPurpose,
-        category: req.query.category,
-        paymentMethod: req.query.paymentMethod,
+        importId: req.query.importId,
       };
-      const summary = db.getSalesSummary(filters);
+      const summary = salesDb.getSalesSummary(filters);
       res.json({ success: true, summary });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/sales/time-series', (req, res) => {
+    try {
+      const filters = {
+        storeId: req.query.storeId,
+        storeIds: req.query.storeIds,
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+        importId: req.query.importId,
+      };
+      res.json({ success: true, timeSeries: salesDb.getSalesTimeSeries(filters) });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2184,7 +2144,7 @@ async function startServer() {
 
   app.delete('/api/sales/clear', (req, res) => {
     try {
-      const result = db.clearAllSalesTransactions();
+      const result = salesDb.clearSalesData();
       res.json(result);
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
@@ -2193,7 +2153,7 @@ async function startServer() {
 
   app.post('/api/sales/sync-birmas', async (req, res) => {
     try {
-      const birmasUrl = db.getConfig('wp_url', 'https://admin.birmas.id');
+      const birmasUrl = db.getConfig('wp_url', 'http://10.0.0.10');
       const salesEndpoint = `${birmasUrl.replace(/\/+$/, '')}/wp-json/api/v1/sales_report`;
       console.log(`[Sales Sync] Querying Birmas server sales bridge at: ${salesEndpoint}`);
 

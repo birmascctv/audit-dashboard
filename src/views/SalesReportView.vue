@@ -1,1176 +1,1139 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
-import { useAuth } from '../composables/useAuth.js';
-import { useAuditStore } from '../composables/useAuditStore.js';
-import {
-  TrendingUp,
-  Receipt,
-  DollarSign,
-  Package,
-  Building2,
-  Calendar,
-  Filter,
-  Search,
-  Download,
-  RefreshCw,
-  HelpCircle,
-  CreditCard,
-  CheckCircle2,
-  AlertCircle,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Layers,
-  Store,
-  ArrowUpRight,
-  Sparkles,
-  UploadCloud,
-  FileSpreadsheet,
-  Trash2,
-  FileText
-} from 'lucide-vue-next';
+import { computed, onMounted, ref, watch } from 'vue';
+import { BarChart3, Download, FileSpreadsheet, Package, RefreshCw, Store, Trash2, TrendingUp, UploadCloud } from 'lucide-vue-next';
 import UploadSalesCsvModal from '../components/UploadSalesCsvModal.vue';
+import AnalyticsPieChart, { PIE_CHART_COLORS } from '../components/AnalyticsPieChart.vue';
+import AnalyticsLineChart from '../components/AnalyticsLineChart.vue';
 
-const { currentUser, role, isSuperAdmin } = useAuth();
+const activeTab = ref('analytics');
+const period = ref('all');
+const anchorDate = ref(new Date().toLocaleDateString('en-CA'));
+const customStartDate = ref('');
+const customEndDate = ref('');
+const selectedStores = ref(null);
+const stores = ref([]);
+const summary = ref({});
+const files = ref([]);
+const rows = ref([]);
+const totalRows = ref(0);
+const page = ref(1);
+const pageSize = 100;
+const rawSearch = ref('');
+const pivotSearch = ref('');
+const pivotDropdownOpen = ref(false);
+const selectedPivotProduct = ref('');
+const productChartStores = ref(null);
+const promotionChartStores = ref(null);
+const promotionChartPromos = ref(null);
+const promotionSearch = ref('');
+const topProductStores = ref(null);
+const categoryChartStores = ref(null);
+const categoryChartCategories = ref(null);
+const categoryChartMetric = ref('sales');
+const visitPurposeChartStores = ref(null);
+const paymentBarStores = ref(null);
+const paymentBarPayments = ref(null);
+const timeRangeStart = ref('');
+const timeRangeEnd = ref('');
+const timeSelectedStores = ref(null);
+const timeSummary = ref({});
+const timeRangeError = ref('');
+const hourTooltip = ref(null);
+const loading = ref(false);
+const error = ref('');
+const uploadOpen = ref(false);
+const deletingFile = ref(null);
+const deleting = ref(false);
+let reportRequestId = 0;
+let timeRequestId = 0;
 
-// Filters
-const selectedStoreId = ref('all');
-const selectedCategory = ref('all');
-const selectedBrand = ref('all');
-const selectedVisitPurpose = ref('all');
-const selectedPayment = ref('all');
-const searchQuery = ref('');
-const datePreset = ref('all');
-const startDate = ref('');
-const endDate = ref('');
-const activeViewTab = ref('table'); // 'table' | 'files' | 'byChannel' | 'byStore' | 'byBrand' | 'topItems' | 'byPayment'
-
-// Pagination state (100 rows per page)
-const currentPage = ref(1);
-const pageSize = ref(100);
-
-// State
-const transactions = ref([]);
-const uploadedFiles = ref([]);
-const summary = ref({
-  totalBills: 0,
-  totalLineItems: 0,
-  totalUnitsSold: 0,
-  totalGrossSales: 0,
-  totalDiscounts: 0,
-  totalTax: 0,
-  totalNetSales: 0,
-  byStore: [],
-  byChannel: [],
-  byPayment: [],
-  byBrand: [],
-  topItems: [],
+const periodOptions = [
+  { id: 'day', label: 'Day' },
+  { id: 'week', label: 'Week' },
+  { id: 'month', label: 'Month' },
+  { id: 'lastMonth', label: 'Last month' },
+  { id: 'custom', label: 'Date range' },
+  { id: 'all', label: 'All time' },
+];
+const range = computed(() => {
+  if (period.value === 'all') return {};
+  if (period.value === 'custom') {
+    return {
+      ...(customStartDate.value ? { startDate: customStartDate.value } : {}),
+      ...(customEndDate.value ? { endDate: customEndDate.value } : {}),
+    };
+  }
+  const base = new Date(`${anchorDate.value}T12:00:00`);
+  const format = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  if (period.value === 'day') return { startDate: format(base), endDate: format(base) };
+  if (period.value === 'week') {
+    const start = new Date(base);
+    const mondayOffset = (start.getDay() + 6) % 7;
+    start.setDate(start.getDate() - mondayOffset);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return { startDate: format(start), endDate: format(end) };
+  }
+  if (period.value === 'lastMonth') {
+    const start = new Date(base.getFullYear(), base.getMonth() - 1, 1);
+    const end = new Date(base.getFullYear(), base.getMonth(), 0);
+    return { startDate: format(start), endDate: format(end) };
+  }
+  return {
+    startDate: format(new Date(base.getFullYear(), base.getMonth(), 1)),
+    endDate: format(new Date(base.getFullYear(), base.getMonth() + 1, 0)),
+  };
 });
-const isLoading = ref(false);
-const isLoadingFiles = ref(false);
-const isSyncing = ref(false);
-const syncMessage = ref('');
-const isUploadModalOpen = ref(false);
-const fileToDelete = ref(null);
-const isDeletingFile = ref(false);
-
-function handleCsvImported(rows) {
-  datePreset.value = 'all';
-  startDate.value = '';
-  endDate.value = '';
-  selectedStoreId.value = 'all';
-  selectedCategory.value = 'all';
-  selectedBrand.value = 'all';
-  selectedVisitPurpose.value = 'all';
-  selectedPayment.value = 'all';
-  searchQuery.value = '';
-  currentPage.value = 1;
-  loadSalesReport();
-  loadUploadedFiles();
-  syncMessage.value = `Successfully imported ${rows.length.toLocaleString()} sales records! Dashboard view updated.`;
-}
-
-// Stores list derived dynamically from uploaded sales data
-const availableStores = computed(() => {
-  const storeMap = new Map();
-  if (summary.value?.byStore?.length) {
-    summary.value.byStore.forEach((s) => {
-      if (s.store_id && s.store_name) {
-        storeMap.set(s.store_id, s.store_name);
+const chartStoreOptions = computed(() => selectedStores.value === null
+  ? stores.value
+  : stores.value.filter((store) => selectedStores.value.includes(store.name)));
+const visitPurposeStoreOptions = computed(() => [...new Set((summary.value.byStoreVisitPurpose || []).map((item) => item.branch))].sort());
+const paymentBarRows = computed(() => {
+  const totals = new Map();
+  for (const item of summary.value.storePayments || []) {
+    if (paymentBarStores.value !== null && !paymentBarStores.value.includes(item.branch)) continue;
+    if (paymentBarPayments.value !== null && !paymentBarPayments.value.includes(item.payment_method)) continue;
+    totals.set(item.branch, (totals.get(item.branch) || 0) + Number(item.sales || 0));
+  }
+  return [...totals].map(([name, sales]) => ({ name, sales }))
+    .sort((a, b) => b.sales - a.sales)
+    .map((item) => ({ ...item, details: paymentBarPayments.value === null ? 'All payment methods' : paymentBarPayments.value.join(', ') }));
+});
+const paymentBarTotal = computed(() => paymentBarRows.value.reduce((sum, item) => sum + item.sales, 0));
+const dateRangeError = computed(() => period.value === 'custom' &&
+  customStartDate.value && customEndDate.value && customStartDate.value > customEndDate.value
+  ? 'The start date must be on or before the end date.'
+  : '');
+const hourlyValues = computed(() => {
+  const byHour = new Map((timeSummary.value.hourlySales || []).map((item) => [Number(item.hour), Number(item.sales)]));
+  const byStore = new Map();
+  for (const item of timeSummary.value.hourlyByStore || []) {
+    const hour = Number(item.hour);
+    if (!byStore.has(hour)) byStore.set(hour, []);
+    byStore.get(hour).push({ name: item.branch, sales: Number(item.sales) || 0 });
+  }
+  const paymentsByHourStore = new Map();
+  for (const item of timeSummary.value.hourlyByPayment || []) {
+    const key = `${Number(item.hour)}|${item.branch}`;
+    if (!paymentsByHourStore.has(key)) paymentsByHourStore.set(key, []);
+    paymentsByHourStore.get(key).push({ name: item.payment_method, sales: Number(item.sales) || 0 });
+  }
+  const paymentsByHour = new Map();
+  for (const item of timeSummary.value.hourlyByPayment || []) {
+    const hour = Number(item.hour);
+    if (!paymentsByHour.has(hour)) paymentsByHour.set(hour, new Map());
+    const payments = paymentsByHour.get(hour);
+    payments.set(item.payment_method, (payments.get(item.payment_method) || 0) + Number(item.sales || 0));
+  }
+  return Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    sales: byHour.get(hour) || 0,
+    payments: [...(paymentsByHour.get(hour) || new Map())].map(([name, sales]) => ({ name, sales }))
+      .sort((a, b) => b.sales - a.sales),
+    stores: (byStore.get(hour) || []).filter((store) => store.sales > 0).map((store) => ({
+      ...store,
+      payments: paymentsByHourStore.get(`${hour}|${store.name}`) || [],
+    })),
+  }));
+});
+const weeklyValues = computed(() => {
+  const storesByWeek = new Map();
+  for (const item of timeSummary.value.weeklyByStore || []) {
+    if (!storesByWeek.has(item.week_start)) storesByWeek.set(item.week_start, []);
+    storesByWeek.get(item.week_start).push({ name: item.branch, sales: Number(item.sales) || 0 });
+  }
+  const paymentsByWeekStore = new Map();
+  for (const item of timeSummary.value.weeklyByPayment || []) {
+    const key = `${item.week_start}|${item.branch}`;
+    if (!paymentsByWeekStore.has(key)) paymentsByWeekStore.set(key, []);
+    paymentsByWeekStore.get(key).push({ name: item.payment_method, sales: Number(item.sales) || 0 });
+  }
+  const paymentsByWeek = new Map();
+  for (const item of timeSummary.value.weeklyByPayment || []) {
+    if (!paymentsByWeek.has(item.week_start)) paymentsByWeek.set(item.week_start, new Map());
+    const payments = paymentsByWeek.get(item.week_start);
+    payments.set(item.payment_method, (payments.get(item.payment_method) || 0) + Number(item.sales || 0));
+  }
+  return (timeSummary.value.weeklySales || []).map((item) => ({
+    key: item.week_start,
+    name: `Week of ${item.week_start}`,
+    shortName: item.week_start,
+    sales: Number(item.sales) || 0,
+    payments: [...(paymentsByWeek.get(item.week_start) || new Map())].map(([name, sales]) => ({ name, sales }))
+      .sort((a, b) => b.sales - a.sales),
+    stores: (storesByWeek.get(item.week_start) || []).filter((store) => store.sales > 0).map((store) => ({
+      ...store,
+      payments: paymentsByWeekStore.get(`${item.week_start}|${store.name}`) || [],
+    })),
+  }));
+});
+const monthlyValues = computed(() => {
+  const storesByMonth = new Map();
+  for (const item of timeSummary.value.monthlyByStore || []) {
+    if (!storesByMonth.has(item.month)) storesByMonth.set(item.month, []);
+    storesByMonth.get(item.month).push({ name: item.branch, sales: Number(item.sales) || 0 });
+  }
+  const paymentsByMonthStore = new Map();
+  for (const item of timeSummary.value.monthlyByPayment || []) {
+    const key = `${item.month}|${item.branch}`;
+    if (!paymentsByMonthStore.has(key)) paymentsByMonthStore.set(key, []);
+    paymentsByMonthStore.get(key).push({ name: item.payment_method, sales: Number(item.sales) || 0 });
+  }
+  const paymentsByMonth = new Map();
+  for (const item of timeSummary.value.monthlyByPayment || []) {
+    if (!paymentsByMonth.has(item.month)) paymentsByMonth.set(item.month, new Map());
+    const payments = paymentsByMonth.get(item.month);
+    payments.set(item.payment_method, (payments.get(item.payment_method) || 0) + Number(item.sales || 0));
+  }
+  return (timeSummary.value.monthlySales || []).map((item) => ({
+    key: item.month,
+    name: new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' }).format(new Date(`${item.month}-01T12:00:00`)),
+    sales: Number(item.sales) || 0,
+    payments: [...(paymentsByMonth.get(item.month) || new Map())].map(([name, sales]) => ({ name, sales }))
+      .sort((a, b) => b.sales - a.sales),
+    stores: (storesByMonth.get(item.month) || []).filter((store) => store.sales > 0).map((store) => ({
+      ...store,
+      payments: paymentsByMonthStore.get(`${item.month}|${store.name}`) || [],
+    })),
+  }));
+});
+const pivotPaymentMethods = computed(() => [...new Set((summary.value.variantByStorePayment || []).map((item) => item.payment_method))]);
+const allPivotRows = computed(() => {
+  const grouped = new Map();
+  for (const entry of summary.value.variantByStorePayment || []) {
+    if (productChartStores.value !== null && !productChartStores.value.includes(entry.branch)) continue;
+    if (!grouped.has(entry.item)) grouped.set(entry.item, { item: entry.item, total: 0, methods: {} });
+    const item = grouped.get(entry.item);
+    item.methods[entry.payment_method] = (item.methods[entry.payment_method] || 0) + (Number(entry.sales) || 0);
+    item.total += Number(entry.sales) || 0;
+  }
+  return [...grouped.values()].sort((a, b) => b.total - a.total);
+});
+const pivotRows = computed(() => allPivotRows.value.filter((item) =>
+  !pivotSearch.value || pivotSearch.value === 'ALL PRODUCT' || item.item.toLowerCase().includes(pivotSearch.value.toLowerCase())));
+const pages = computed(() => Math.max(1, Math.ceil(totalRows.value / pageSize)));
+const topStores = computed(() => (summary.value.byStore || []).slice(0, 3));
+const brandOptions = computed(() => [...new Set((summary.value.byStoreBrand || []).map((item) => item.name))].sort());
+const selectedBrandRows = computed(() => (summary.value.byStoreBrand || [])
+  .filter((item) => brandChartStore.value === 'all' || item.branch === brandChartStore.value)
+  .filter((item) => brandChartBrand.value === 'all' || item.name === brandChartBrand.value));
+const brandLineItems = computed(() => {
+  const selected = selectedBrandRows.value.reduce((brands, item) => {
+    const current = brands.get(item.name) || { name: item.name, sales: 0, units: 0, details: brandChartStore.value === 'all' ? 'Selected stores' : item.branch };
+    current.sales += Number(item.sales || 0);
+    current.units += Number(item.units || 0);
+    brands.set(item.name, current);
+    return brands;
+  }, new Map());
+  return [...selected.values()].sort((a, b) => b.sales - a.sales);
+});
+const visibleBrandTable = brandLineItems;
+const categoryOptions = computed(() => [...new Set((summary.value.byStoreCategory || []).map((item) => item.name))].sort());
+const categoryStoreOptions = computed(() => [...new Set((summary.value.byStoreCategory || []).map((item) => item.branch))].sort());
+const paymentMethodOptions = computed(() => [...new Set((summary.value.storePayments || []).map((item) => item.payment_method))].sort());
+const filteredCategoryChartItems = computed(() => (summary.value.byStoreCategory || [])
+  .filter((item) => categoryChartStores.value === null || categoryChartStores.value.includes(item.branch))
+  .filter((item) => categoryChartCategories.value === null || categoryChartCategories.value.includes(item.name))
+  .reduce((categories, item) => {
+    const current = categories.get(item.name) || { name: item.name, sales: 0, units: 0, details: categoryChartStores.value === null ? 'All stores' : categoryChartStores.value.join(', ') };
+    current.sales += Number(item.sales || 0);
+    current.units += Number(item.units || 0);
+    categories.set(item.name, current);
+    return categories;
+  }, new Map()));
+const visibleCategoryTable = computed(() => [...filteredCategoryChartItems.value.values()]
+  .map((item) => ({ ...item, name: item.name || 'Unspecified' }))
+  .sort((a, b) => Number(b[categoryChartMetric.value]) - Number(a[categoryChartMetric.value])));
+const visiblePromotions = computed(() => (summary.value.promotions || [])
+  .filter((item) => promotionChartStores.value === null || promotionChartStores.value.includes(item.branch))
+  .filter((item) => promotionChartPromos.value === null || promotionChartPromos.value.includes(item.name))
+  .sort((a, b) => Number(b.sales) - Number(a.sales)));
+const promotionOptions = computed(() => [...new Set((summary.value.promotions || []).map((item) => item.name))]
+  .filter((name) => name.toLowerCase().includes(promotionSearch.value.trim().toLowerCase()))
+  .sort((a, b) => a.localeCompare(b)));
+const paymentShareCharts = computed(() => {
+  const methods = new Map();
+  const selectedPaymentStores = paymentBarStores.value === null ? selectedStores.value : paymentBarStores.value;
+  const compareStores = selectedPaymentStores !== null && selectedPaymentStores.length > 1;
+  const salesByMethod = new Map();
+  const storeNames = chartStoreOptions.value.map((store) => store.name);
+  for (const item of summary.value.storePayments || []) {
+    if (paymentBarStores.value !== null && !paymentBarStores.value.includes(item.branch)) continue;
+    if (paymentBarPayments.value !== null && !paymentBarPayments.value.includes(item.payment_method)) continue;
+    if (!salesByMethod.has(item.payment_method)) salesByMethod.set(item.payment_method, new Map());
+    const methodSales = salesByMethod.get(item.payment_method);
+    methodSales.set(item.branch, (methodSales.get(item.branch) || 0) + Number(item.sales || 0));
+  }
+  if (compareStores) {
+    for (const [method, storeSales] of salesByMethod) {
+      methods.set(method, storeNames.map((name) => ({ name, sales: storeSales.get(name) || 0 })));
+    }
+  } else {
+    const methodTotals = new Map();
+    for (const [method, storeSales] of salesByMethod) {
+      methodTotals.set(method, [...storeSales.values()].reduce((sum, sales) => sum + sales, 0));
+    }
+    methods.set('Payment methods', [...methodTotals].map(([name, sales]) => ({ name, sales })));
+  }
+  return [...methods].map(([name, items]) => ({
+    name,
+    items,
+    total: items.reduce((sum, item) => sum + item.sales, 0),
+  })).filter((chart) => chart.items.length)
+    .sort((a, b) => compareStores ? a.name.localeCompare(b.name) : b.total - a.total);
+});
+const paymentShareAllStores = computed(() => {
+  const selectedPaymentStores = paymentBarStores.value === null ? selectedStores.value : paymentBarStores.value;
+  return selectedPaymentStores === null;
+});
+const paymentShareLegendItems = computed(() => (paymentShareCharts.value[0]?.items || [])
+  .map((item, index) => ({ ...item, color: PIE_CHART_COLORS[index % PIE_CHART_COLORS.length] })));
+const paymentTableRows = computed(() => {
+  const byName = new Map();
+  for (const row of summary.value.storePayments || []) {
+    byName.set(row.payment_method, (byName.get(row.payment_method) || 0) + Number(row.sales || 0));
+  }
+  return [...byName].map(([name, sales]) => ({ name, sales }))
+    .sort((a, b) => b.sales - a.sales);
+});
+const visiblePromotionChartItems = computed(() => {
+  const values = new Map();
+  const hasStoreFilter = promotionChartStores.value !== null;
+  for (const row of visiblePromotions.value) {
+    const name = hasStoreFilter ? row.name : row.branch;
+    const current = values.get(name) || { name, sales: 0, units: 0, startDate: '', endDate: '', storeSales: new Map() };
+    current.sales += Number(row.sales || 0);
+    current.units += Number(row.units || 0);
+    current.startDate = current.startDate && row.start_date
+      ? (current.startDate < row.start_date ? current.startDate : row.start_date)
+      : current.startDate || row.start_date || '';
+    current.endDate = current.endDate && row.end_date
+      ? (current.endDate > row.end_date ? current.endDate : row.end_date)
+      : current.endDate || row.end_date || '';
+    const store = current.storeSales.get(row.branch) || {
+      units: 0,
+      sales: 0,
+      startDate: row.start_date,
+      endDate: row.end_date,
+    };
+    store.units += Number(row.units || 0);
+    store.sales += Number(row.sales || 0);
+    store.startDate = store.startDate && row.start_date ? (store.startDate < row.start_date ? store.startDate : row.start_date) : store.startDate || row.start_date;
+    store.endDate = store.endDate && row.end_date ? (store.endDate > row.end_date ? store.endDate : row.end_date) : store.endDate || row.end_date;
+    current.storeSales.set(row.branch, store);
+    values.set(name, current);
+  }
+  return [...values.values()].map((item) => ({
+    ...item,
+    sortDate: item.startDate,
+    details: hasStoreFilter
+      ? [...item.storeSales].map(([store, metrics]) => promotionChartStores.value.length > 1
+        ? `${store}: ${Number(metrics.units).toLocaleString('id-ID')} units · ${formatMoney(metrics.sales)} · ${metrics.startDate} – ${metrics.endDate}`
+        : `${metrics.startDate} – ${metrics.endDate}`).join('\n')
+      : '',
+  })).sort((a, b) => a.sortDate.localeCompare(b.sortDate) || a.name.localeCompare(b.name));
+});
+const paymentChartDenominator = computed(() => {
+  const pairs = summary.value.storePayments || [];
+  if (paymentChartMode.value === 'payment') {
+    const totals = new Map();
+    for (const item of pairs) totals.set(item.payment_method, (totals.get(item.payment_method) || 0) + Number(item.sales || 0));
+    return Math.max(0, ...totals.values());
+  }
+  return pairs.reduce((sum, item) => sum + Number(item.sales || 0), 0);
+});
+const paymentChartTotal = paymentChartDenominator;
+const selectedPivotRow = computed(() => {
+  if (selectedPivotProduct.value === '__all__') {
+    return allPivotRows.value.reduce((combined, row) => {
+      combined.total += row.total;
+      for (const [method, sales] of Object.entries(row.methods)) {
+        combined.methods[method] = (combined.methods[method] || 0) + sales;
       }
-    });
+      return combined;
+    }, { item: 'ALL PRODUCT', total: 0, methods: {} });
   }
-  transactions.value.forEach((t) => {
-    if (t.store_id && t.store_name) {
-      storeMap.set(t.store_id, t.store_name);
-    }
-  });
-  return Array.from(storeMap.entries()).map(([id, name]) => ({ id, name }));
+  return allPivotRows.value.find((row) => row.item === selectedPivotProduct.value) || allPivotRows.value[0] || null;
 });
-
-// Categories list
-const categories = computed(() => {
-  const set = new Set();
-  transactions.value.forEach((t) => {
-    if (t.category) set.add(t.category);
-  });
-  return Array.from(set);
-});
-
-// Brands list
-const brands = computed(() => {
-  const set = new Set();
-  transactions.value.forEach((t) => {
-    if (t.brand) set.add(t.brand);
-  });
-  return Array.from(set);
-});
-
-// Visit Purposes list
-const visitPurposes = computed(() => {
-  const set = new Set();
-  transactions.value.forEach((t) => {
-    if (t.visit_purpose) set.add(t.visit_purpose);
-  });
-  return Array.from(set);
-});
-
-// Payment methods list
-const paymentMethods = computed(() => {
-  const set = new Set();
-  transactions.value.forEach((t) => {
-    if (t.payment_method) set.add(t.payment_method);
-  });
-  return Array.from(set);
-});
-
-// Filtered transactions for client-side search/filters
-const filteredTransactions = computed(() => {
-  let list = transactions.value;
-  if (searchQuery.value.trim()) {
-    const q = searchQuery.value.trim().toLowerCase();
-    list = list.filter(
-      (t) =>
-        (t.item_name && t.item_name.toLowerCase().includes(q)) ||
-        (t.variant && t.variant.toLowerCase().includes(q)) ||
-        (t.brand && t.brand.toLowerCase().includes(q)) ||
-        (t.store_name && t.store_name.toLowerCase().includes(q)) ||
-        (t.visit_purpose && t.visit_purpose.toLowerCase().includes(q)) ||
-        (t.payment_method && t.payment_method.toLowerCase().includes(q))
-    );
+const selectedPivotTotal = computed(() => selectedPivotRow.value?.total || 0);
+const visiblePivotRows = computed(() => pivotRows.value.slice(0, 100));
+const filteredTopProducts = computed(() => (summary.value.topProductsByStore || [])
+  .filter((item) => topProductStores.value === null || topProductStores.value.includes(item.branch)));
+const visibleTopProducts = computed(() => topProductStores.value === null
+  ? summary.value.topProductsAllStores || []
+  : filteredTopProducts.value);
+const selectedStoreLabel = computed(() => selectedStores.value === null
+  ? 'All stores'
+  : selectedStores.value.length
+    ? selectedStores.value.join(', ')
+    : 'No stores selected');
+const visitPurposeRows = computed(() => (summary.value.topVisitPurposes || [])
+  .map((item) => ({ ...item, name: item.name || 'Unspecified' })));
+const visitPurposeChartRows = computed(() => {
+  const grouped = new Map();
+  for (const item of summary.value.byStoreVisitPurpose || []) {
+    if (visitPurposeChartStores.value !== null && !visitPurposeChartStores.value.includes(item.branch)) continue;
+    const name = item.name || 'Unspecified';
+    grouped.set(name, (grouped.get(name) || 0) + Number(item.sales || 0));
   }
-  return list;
+  return [...grouped].map(([name, sales]) => ({ name, sales }))
+    .sort((a, b) => b.sales - a.sales);
 });
+const productPaymentPieItems = computed(() => selectedPivotRow.value
+  ? pivotPaymentMethods.value.map((method) => ({ name: method, sales: Number(selectedPivotRow.value.methods[method] || 0) })).filter((item) => item.sales > 0)
+  : []);
+const maxHourSales = computed(() => Math.max(1, ...hourlyValues.value.map((item) => item.sales)));
+const maxWeeklySales = computed(() => Math.max(1, ...weeklyValues.value.map((item) => item.sales)));
+const maxMonthlySales = computed(() => Math.max(1, ...monthlyValues.value.map((item) => item.sales)));
 
-// Paginated transactions (100 visible rows)
-const paginatedTransactions = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value;
-  return filteredTransactions.value.slice(start, start + pageSize.value);
-});
-
-const totalPages = computed(() => {
-  return Math.max(1, Math.ceil(filteredTransactions.value.length / pageSize.value));
-});
-
-// Format Rupiah (Preserves all zeroes and exact values)
-function formatRupiah(amount) {
-  if (amount === undefined || amount === null) return 'Rp 0';
-  const num = typeof amount === 'number' ? amount : Number(amount) || 0;
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(num);
+function formatMoney(value) {
+  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(value) || 0);
 }
+function choosePivotRow(product) {
+  selectedPivotProduct.value = product;
+  pivotSearch.value = product;
+}
+function heatmapStyle(value, maximum, lightColor, darkColor) {
+  const intensity = Math.min(1, Math.max(0, Number(value || 0) / Math.max(Number(maximum) || 0, 1)));
+  const parseColor = (hex) => hex.match(/[a-f\d]{2}/gi).map((part) => Number.parseInt(part, 16));
+  const light = parseColor(lightColor);
+  const dark = parseColor(darkColor);
+  const color = light.map((channel, index) => Math.round(channel + (dark[index] - channel) * intensity));
+  return {
+    backgroundColor: `rgb(${color.join(' ')})`,
+    color: intensity >= 0.62 ? '#ffffff' : '#0f172a',
+    borderColor: intensity >= 0.62 ? 'rgba(15, 23, 42, 0.18)' : 'rgba(148, 163, 184, 0.45)',
+  };
+}
+async function loadTimeSummary() {
+  const requestId = ++timeRequestId;
+  timeRangeError.value = timeRangeStart.value && timeRangeEnd.value && timeRangeStart.value > timeRangeEnd.value
+    ? 'The start date must be on or before the end date.'
+    : '';
+  if (timeRangeError.value) {
+    timeSummary.value = {};
+    return;
+  }
 
-// Format Date Only (Sales Date)
-function formatSalesDate(dateStr) {
-  if (!dateStr) return '-';
   try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return String(dateStr).split(' ')[0];
-    return d.toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-  } catch {
-    return String(dateStr).split(' ')[0];
+    const result = await getJson(`/api/sales/time-series?${queryString({
+      ...(timeRangeStart.value ? { startDate: timeRangeStart.value } : {}),
+      ...(timeRangeEnd.value ? { endDate: timeRangeEnd.value } : {}),
+      ...(timeSelectedStores.value !== null ? { storeIds: timeSelectedStores.value.join(',') } : {}),
+    })}`);
+    if (requestId === timeRequestId) timeSummary.value = result.timeSeries || {};
+  } catch (loadError) {
+    if (requestId === timeRequestId) {
+      timeSummary.value = {};
+      timeRangeError.value = loadError.message || 'Could not load sales time-range data.';
+    }
   }
 }
-
-// Format Date & Time (Sales Date In)
-function formatSalesDateIn(dateStr) {
-  if (!dateStr) return '-';
+function choosePivotProduct(product) {
+  pivotSearch.value = product === '__all__' ? 'ALL PRODUCT' : product;
+  selectedPivotProduct.value = product;
+  pivotDropdownOpen.value = false;
+}
+function closePivotDropdown(event) {
+  if (!event.currentTarget.contains(event.relatedTarget)) pivotDropdownOpen.value = false;
+}
+function toggleGlobalStore(storeName) {
+  toggleChecklistSelection(selectedStores, storeName, stores.value.map((store) => store.name));
+}
+function setGlobalStoresAll(event) {
+  setChecklistAll(selectedStores, event.target.checked);
+}
+function togglePaymentBarStore(storeName) {
+  toggleChecklistSelection(paymentBarStores, storeName, chartStoreOptions.value.map((store) => store.name));
+}
+function setPaymentBarStoresAll(event) {
+  setChecklistAll(paymentBarStores, event.target.checked);
+}
+function togglePaymentBarPayment(paymentName) {
+  toggleChecklistSelection(paymentBarPayments, paymentName, paymentMethodOptions.value);
+}
+function setPaymentBarPaymentsAll(event) {
+  setChecklistAll(paymentBarPayments, event.target.checked);
+}
+function toggleCategoryStore(storeName) {
+  toggleChecklistSelection(categoryChartStores, storeName, categoryStoreOptions.value);
+}
+function setCategoryStoresAll(event) {
+  setChecklistAll(categoryChartStores, event.target.checked);
+}
+function toggleCategory(categoryName) {
+  toggleChecklistSelection(categoryChartCategories, categoryName, categoryOptions.value);
+}
+function setCategoriesAll(event) {
+  setChecklistAll(categoryChartCategories, event.target.checked);
+}
+function toggleVisitPurposeStore(storeName) {
+  toggleChecklistSelection(visitPurposeChartStores, storeName, visitPurposeStoreOptions.value);
+}
+function setVisitPurposeStoresAll(event) {
+  setChecklistAll(visitPurposeChartStores, event.target.checked);
+}
+function toggleTopProductStore(storeName) {
+  toggleChecklistSelection(topProductStores, storeName, chartStoreOptions.value.map((store) => store.name));
+}
+function setTopProductStoresAll(event) {
+  setChecklistAll(topProductStores, event.target.checked);
+}
+function toggleProductChartStore(storeName) {
+  toggleChecklistSelection(productChartStores, storeName, chartStoreOptions.value.map((store) => store.name));
+}
+function setProductChartStoresAll(event) {
+  setChecklistAll(productChartStores, event.target.checked);
+}
+function toggleTimeStore(storeName) {
+  toggleChecklistSelection(timeSelectedStores, storeName, chartStoreOptions.value.map((store) => store.name));
+}
+function setTimeStoresAll(event) {
+  setChecklistAll(timeSelectedStores, event.target.checked);
+}
+function toggleChecklistSelection(selection, value, allValues) {
+  const current = selection.value === null ? [...allValues] : [...selection.value];
+  const next = current.includes(value) ? current.filter((item) => item !== value) : [...current, value];
+  selection.value = next.length === allValues.length ? null : next;
+}
+function setChecklistAll(selection, enabled) {
+  selection.value = enabled ? null : [];
+}
+function togglePromotionStore(storeName) {
+  toggleChecklistSelection(promotionChartStores, storeName, chartStoreOptions.value.map((store) => store.name));
+}
+function setPromotionStoresAll(event) {
+  setChecklistAll(promotionChartStores, event.target.checked);
+}
+function togglePromotionPromo(promoName) {
+  const names = [...new Set((summary.value.promotions || []).map((item) => item.name))];
+  toggleChecklistSelection(promotionChartPromos, promoName, names);
+}
+function setPromotionPromosAll(event) {
+  setChecklistAll(promotionChartPromos, event.target.checked);
+}
+function checklistLabel(selection, allLabel, itemLabel) {
+  return selection === null ? allLabel : `${selection.length} ${itemLabel}`;
+}
+function coordinateDropdowns(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  const current = target?.closest('details');
+  const pivotDropdown = target?.closest('[data-dropdown="pivot"]');
+  queueMicrotask(() => {
+    const openDetails = document.querySelectorAll('.sales-report details[open]');
+    openDetails.forEach((details) => { details.open = Boolean(current?.open && details === current); });
+    if (!pivotDropdown) pivotDropdownOpen.value = false;
+  });
+}
+function showTimeTooltip(event, slot) {
+  const x = Number.isFinite(event.clientX) ? event.clientX : window.innerWidth / 2;
+  const y = Number.isFinite(event.clientY) ? event.clientY : window.innerHeight / 2;
+  hourTooltip.value = {
+    hour: slot.hour !== undefined
+      ? `${String(slot.hour).padStart(2, '0')}:00–${String(slot.hour).padStart(2, '0')}:59`
+      : slot.name,
+    allStores: timeSelectedStores.value === null,
+    payments: slot.payments,
+    stores: slot.stores,
+    x: Math.max(12, Math.min(x + 14, window.innerWidth - 380)),
+    y: Math.max(12, Math.min(y + 14, window.innerHeight - 400)),
+  };
+}
+function moveTimeTooltip(event) {
+  if (!hourTooltip.value) return;
+  const x = Number.isFinite(event.clientX) ? event.clientX : window.innerWidth / 2;
+  const y = Number.isFinite(event.clientY) ? event.clientY : window.innerHeight / 2;
+  hourTooltip.value = {
+    ...hourTooltip.value,
+    x: Math.max(12, Math.min(x + 14, window.innerWidth - 380)),
+    y: Math.max(12, Math.min(y + 14, window.innerHeight - 400)),
+  };
+}
+function formatPercent(value, total) {
+  return total > 0 ? `${((value / total) * 100).toFixed(1)}%` : '0.0%';
+}
+function formatDateTime(value) {
+  if (!value) return '-';
+  return String(value).replace('T', ' ').slice(0, 16);
+}
+function filters(includeSearch = false) {
+  return {
+    ...range.value,
+    ...(selectedStores.value !== null ? { storeIds: selectedStores.value.join(',') } : {}),
+    ...(includeSearch && rawSearch.value.trim() ? { search: rawSearch.value.trim() } : {}),
+  };
+}
+function queryString(values) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && value !== null && (value !== '' || key === 'storeIds')) params.set(key, String(value));
+  }
+  return params.toString();
+}
+async function getJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const result = await response.json();
+  if (!response.ok || !result.success) throw new Error(result.error || `Request failed (HTTP ${response.status}).`);
+  return result;
+}
+async function loadReport() {
+  const requestId = ++reportRequestId;
+  if (dateRangeError.value) {
+    error.value = dateRangeError.value;
+    summary.value = {};
+    rows.value = [];
+    totalRows.value = 0;
+    loading.value = false;
+    return;
+  }
+  loading.value = true;
+  error.value = '';
   try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return dateStr;
-  }
-}
-
-function formatSimpleDate(isoString) {
-  return formatSalesDateIn(isoString);
-}
-
-// Date preset handler
-function applyDatePreset(preset) {
-  datePreset.value = preset;
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
-
-  if (preset === 'today') {
-    startDate.value = todayStr;
-    endDate.value = todayStr;
-  } else if (preset === 'yesterday') {
-    const yest = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const yestStr = yest.toISOString().slice(0, 10);
-    startDate.value = yestStr;
-    endDate.value = yestStr;
-  } else if (preset === '7d') {
-    const past7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    startDate.value = past7.toISOString().slice(0, 10);
-    endDate.value = todayStr;
-  } else if (preset === '30d') {
-    const past30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    startDate.value = past30.toISOString().slice(0, 10);
-    endDate.value = todayStr;
-  } else if (preset === 'all') {
-    startDate.value = '';
-    endDate.value = '';
-  }
-  currentPage.value = 1;
-  loadSalesReport();
-}
-
-async function loadSalesReport() {
-  isLoading.value = true;
-  try {
-    const query = new URLSearchParams();
-    if (selectedStoreId.value && selectedStoreId.value !== 'all') {
-      query.set('storeId', selectedStoreId.value);
-    }
-    if (startDate.value) query.set('startDate', startDate.value);
-    if (endDate.value) query.set('endDate', endDate.value);
-    if (searchQuery.value.trim()) query.set('search', searchQuery.value.trim());
-    if (selectedCategory.value && selectedCategory.value !== 'all') {
-      query.set('category', selectedCategory.value);
-    }
-    if (selectedBrand.value && selectedBrand.value !== 'all') {
-      query.set('brand', selectedBrand.value);
-    }
-    if (selectedVisitPurpose.value && selectedVisitPurpose.value !== 'all') {
-      query.set('visitPurpose', selectedVisitPurpose.value);
-    }
-    if (selectedPayment.value && selectedPayment.value !== 'all') {
-      query.set('paymentMethod', selectedPayment.value);
-    }
-    query.set('limit', '5000');
-
-    const [txRes, sumRes] = await Promise.all([
-      fetch(`/api/sales/report?${query.toString()}`).then((r) => r.json()),
-      fetch(`/api/sales/summary?${query.toString()}`).then((r) => r.json()),
+    const base = filters();
+    const [summaryResult, rawResult] = await Promise.all([
+      getJson(`/api/sales/summary?${queryString(base)}`),
+      activeTab.value === 'raw'
+        ? getJson(`/api/sales/report?${queryString({ ...filters(true), limit: pageSize, offset: (page.value - 1) * pageSize })}`)
+        : Promise.resolve(null),
     ]);
-
-    if (txRes.success) {
-      transactions.value = txRes.transactions || [];
+    if (requestId !== reportRequestId) return;
+    summary.value = summaryResult.summary || {};
+    if (rawResult) {
+      rows.value = rawResult.transactions || [];
+      totalRows.value = rawResult.total || 0;
     }
-    if (sumRes.success && sumRes.summary) {
-      summary.value = sumRes.summary;
-    }
-  } catch (err) {
-    console.error('Failed to load sales report:', err);
+  } catch (loadError) {
+    if (requestId === reportRequestId) error.value = loadError.message || 'Could not load sales data.';
   } finally {
-    isLoading.value = false;
+    if (requestId === reportRequestId) loading.value = false;
   }
 }
-
-async function loadUploadedFiles() {
-  isLoadingFiles.value = true;
+async function loadFiles() {
   try {
-    const res = await fetch('/api/sales/files').then((r) => r.json());
-    if (res.success && Array.isArray(res.files)) {
-      uploadedFiles.value = res.files;
-    }
-  } catch (err) {
-    console.error('Failed to load uploaded files:', err);
-  } finally {
-    isLoadingFiles.value = false;
+    const result = await getJson('/api/sales/files');
+    files.value = result.files || [];
+  } catch (loadError) {
+    error.value = loadError.message || 'Could not load imported sales files.';
   }
 }
-
-function handleDownloadFile(fileId, filename) {
-  const downloadUrl = `/api/sales/files/${fileId}/download`;
+async function loadStores() {
+  try {
+    const result = await getJson('/api/sales/stores');
+    stores.value = result.stores || [];
+  } catch (loadError) {
+    error.value = loadError.message || 'Could not load sales branches.';
+  }
+}
+function setTab(tab) {
+  activeTab.value = tab;
+  page.value = 1;
+  loadReport();
+}
+function handleImported() {
+  uploadOpen.value = false;
+  page.value = 1;
+  loadStores();
+  loadFiles();
+  loadReport();
+  loadTimeSummary();
+}
+function downloadFile(file) {
   const link = document.createElement('a');
-  link.href = downloadUrl;
-  link.setAttribute('download', filename || 'sales_report.csv');
+  link.href = `/api/sales/files/${encodeURIComponent(file.id)}/download`;
+  link.download = file.filename || 'sales_clean.csv';
   document.body.appendChild(link);
   link.click();
-  document.body.removeChild(link);
+  link.remove();
 }
-
-async function confirmDeleteFile(file) {
-  fileToDelete.value = file;
-}
-
-async function executeDeleteFile() {
-  if (!fileToDelete.value) return;
-  isDeletingFile.value = true;
+async function deleteFile() {
+  if (!deletingFile.value) return;
+  deleting.value = true;
   try {
-    const res = await fetch(`/api/sales/files/${fileToDelete.value.id}`, {
-      method: 'DELETE',
-    }).then((r) => r.json());
-
-    if (res.success) {
-      syncMessage.value = `File "${fileToDelete.value.filename}" and its associated sales records removed.`;
-      fileToDelete.value = null;
-      await Promise.all([loadUploadedFiles(), loadSalesReport()]);
-    } else {
-      alert(res.error || 'Failed to delete file');
-    }
-  } catch (err) {
-    alert('Error deleting file: ' + err.message);
+    const result = await getJson(`/api/sales/files/${encodeURIComponent(deletingFile.value.id)}`, { method: 'DELETE' });
+    if (!result.success) throw new Error('Could not delete imported sales data.');
+    deletingFile.value = null;
+    await Promise.all([loadFiles(), loadStores(), loadReport(), loadTimeSummary()]);
+  } catch (deleteError) {
+    error.value = deleteError.message || 'Could not delete imported sales data.';
   } finally {
-    isDeletingFile.value = false;
+    deleting.value = false;
   }
 }
 
-async function handleSyncFromBirmas() {
-  isSyncing.value = true;
-  syncMessage.value = '';
-  try {
-    const res = await fetch('/api/sales/sync-birmas', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    const data = await res.json();
-    if (data.success) {
-      syncMessage.value = data.message || 'Sales data updated successfully!';
-      await Promise.all([loadSalesReport(), loadUploadedFiles()]);
-    } else {
-      syncMessage.value = data.message || 'Sync response received.';
-    }
-  } catch (err) {
-    syncMessage.value = 'Sync notice: ' + err.message;
-  } finally {
-    isSyncing.value = false;
+watch([period, anchorDate, customStartDate, customEndDate, selectedStores], () => {
+  page.value = 1;
+  loadReport();
+  timeRangeStart.value = range.value.startDate || '';
+  timeRangeEnd.value = range.value.endDate || '';
+});
+watch(selectedStores, (selection) => {
+  const selected = selection === null ? null : [...selection];
+  paymentBarStores.value = selected;
+  promotionChartStores.value = selected;
+  topProductStores.value = selected;
+  categoryChartStores.value = selected;
+  visitPurposeChartStores.value = selected;
+  productChartStores.value = selected;
+  timeSelectedStores.value = selected;
+}, { deep: true });
+watch([rawSearch, page], () => {
+  if (activeTab.value === 'raw') loadReport();
+});
+watch([timeRangeStart, timeRangeEnd, timeSelectedStores], loadTimeSummary);
+watch([pivotRows, allPivotRows], ([filteredItems, allItems]) => {
+  if (selectedPivotProduct.value === '__all__') return;
+  if (!allItems.some((item) => item.item === selectedPivotProduct.value) ||
+      (pivotSearch.value && !filteredItems.some((item) => item.item === selectedPivotProduct.value))) {
+    selectedPivotProduct.value = filteredItems[0]?.item || '';
   }
-}
-
-// Watch filters to reset page to 1
-watch(
-  [selectedStoreId, selectedCategory, selectedBrand, selectedVisitPurpose, selectedPayment, searchQuery],
-  () => {
-    currentPage.value = 1;
-  }
-);
+});
 
 onMounted(() => {
-  applyDatePreset('all');
-  loadUploadedFiles();
+  loadStores();
+  loadFiles();
+  loadReport();
+  loadTimeSummary();
 });
 </script>
 
 <template>
-  <div class="space-y-6">
-    <!-- Header Section -->
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-      <div class="flex items-center gap-3.5">
-        <div class="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 shadow-xs">
-          <TrendingUp class="w-6 h-6 text-teal-700" />
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h2 class="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Audit Sales Report
-            </h2>
-            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
-              ESB Recapitulation
-            </span>
-          </div>
-          <p class="text-xs text-slate-500 mt-0.5">
-            Real sales transaction ledger, product brand breakdowns, and multi-outlet revenue analytics
-          </p>
+  <main class="sales-report flex flex-col space-y-5" @click="coordinateDropdowns">
+    <section class="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div class="flex items-center gap-3">
+        <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-teal-50 text-teal-700"><TrendingUp class="h-5 w-5" /></div>
+        <div class="min-h-[30rem]">
+          <h1 class="text-xl font-black text-slate-900">Sales Report</h1>
+          <p class="text-xs text-slate-500">Clean CSV-backed sales analytics and source columns</p>
         </div>
       </div>
-
-      <!-- Action buttons -->
-      <div class="flex items-center gap-2.5 flex-wrap">
-        <!-- Upload CSV Button -->
-        <button
-          type="button"
-          @click="isUploadModalOpen = true"
-          class="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer"
-        >
-          <UploadCloud class="w-4 h-4" />
-          <span>Upload Sales CSV</span>
-        </button>
-
-        <!-- Refresh Button -->
-        <button
-          type="button"
-          @click="loadSalesReport(); loadUploadedFiles();"
-          :disabled="isLoading"
-          class="p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
-          title="Refresh Data"
-        >
-          <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': isLoading }" />
-        </button>
-      </div>
-    </div>
-
-    <!-- Live Sync Alert / Notification Banner -->
-    <div
-      v-if="syncMessage"
-      class="p-4 rounded-2xl bg-teal-50 border border-teal-200 text-teal-900 text-xs font-semibold flex items-center justify-between gap-3 shadow-xs animate-in fade-in"
-    >
       <div class="flex items-center gap-2">
-        <CheckCircle2 class="w-4 h-4 text-teal-600 shrink-0" />
-        <span>{{ syncMessage }}</span>
+        <button type="button" class="flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-teal-800" @click="uploadOpen = true">
+          <UploadCloud class="h-4 w-4" />Upload CSV
+        </button>
+        <button type="button" class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" :disabled="loading" title="Refresh" @click="loadReport(); loadFiles(); loadStores(); loadTimeSummary()">
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
+        </button>
       </div>
-      <button
-        @click="syncMessage = ''"
-        class="text-teal-700 hover:text-teal-900 text-[11px] font-bold px-2 py-0.5 rounded-lg hover:bg-teal-100 transition-colors"
-      >
-        Dismiss
-      </button>
-    </div>
+    </section>
 
-    <!-- Executive KPI Summary Cards -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <!-- 1. Total Net Sales -->
-      <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden group">
-        <div class="flex items-center justify-between text-slate-500 mb-2">
-          <span class="text-[11px] font-bold uppercase tracking-wider">Total Net Sales</span>
-          <div class="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center">
-            <DollarSign class="w-4 h-4" />
+    <p v-if="error" class="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ error }}</p>
+
+    <nav class="flex gap-2">
+      <button v-for="tab in [{id:'analytics',label:'Analytics'},{id:'raw',label:'Raw'}]" :key="tab.id" type="button"
+        class="rounded-xl px-5 py-2.5 text-sm font-bold"
+        :class="activeTab === tab.id ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+        @click="setTab(tab.id)">{{ tab.label }}</button>
+    </nav>
+
+    <section class="flex flex-wrap items-end gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div>
+        <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Period</label>
+        <div class="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">
+          <button v-for="option in periodOptions" :key="option.id" type="button" class="rounded-lg px-3 py-1.5 text-xs font-bold"
+            :class="period === option.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'"
+            @click="period = option.id">{{ option.label }}</button>
+        </div>
+      </div>
+      <label v-if="period !== 'all'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+        {{ period === 'day' ? 'Day' : period === 'custom' ? 'Start date' : 'Reference date' }}
+        <input v-if="period === 'custom'" v-model="customStartDate" type="date" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
+        <input v-else v-model="anchorDate" type="date" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
+      </label>
+      <label v-if="period === 'custom'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+        End date
+        <input v-model="customEndDate" type="date" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
+      </label>
+      <details class="relative text-[10px] font-bold uppercase tracking-wide text-slate-500">
+        <summary class="flex min-w-40 cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
+          {{ checklistLabel(selectedStores, 'All stores', 'stores') }}<span aria-hidden="true">▾</span>
+        </summary>
+        <div class="absolute left-0 z-30 mt-1 max-h-72 w-64 overflow-auto rounded-xl border border-slate-200 bg-white p-2 normal-case shadow-xl">
+          <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="selectedStores === null" @change="setGlobalStoresAll">All stores</label>
+          <label v-for="store in stores" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="selectedStores === null || selectedStores.includes(store.name)" @change="toggleGlobalStore(store.name)">{{ store.name }}</label>
+        </div>
+      </details>
+      <p v-if="range.startDate || range.endDate" class="pb-2 text-xs text-slate-500">{{ range.startDate || 'Beginning' }} – {{ range.endDate || 'Latest' }}</p>
+    </section>
+
+    <template v-if="activeTab === 'analytics'">
+      <section class="order-1 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><TrendingUp class="h-4 w-4 text-emerald-600" />Total net sales</p>
+          <p class="mt-2 text-2xl font-black text-slate-900">{{ formatMoney(summary.totalNetSales) }}</p>
+          <p class="mt-1 text-xs text-slate-500">Customer-paid amount after bill discount</p>
+        </article>
+        <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Package class="h-4 w-4 text-teal-600" />Units sold</p>
+          <p class="mt-2 text-2xl font-black text-slate-900">{{ Number(summary.totalUnitsSold || 0).toLocaleString('id-ID') }}</p>
+          <p class="mt-1 text-xs text-slate-500">{{ Number(summary.totalLineItems || 0).toLocaleString('id-ID') }} clean sales rows</p>
+        </article>
+        <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Store class="h-4 w-4 text-blue-600" />Top Stores</p>
+          <ol class="mt-2 space-y-1.5">
+            <li v-for="(store,index) in topStores" :key="store.name" class="flex items-center justify-between gap-2 text-xs">
+              <span class="truncate font-semibold text-slate-800"><span class="mr-1 text-teal-700">{{ index + 1 }}.</span>{{ store.name }}</span>
+              <span class="whitespace-nowrap font-mono font-bold text-slate-900">{{ formatMoney(store.sales) }}</span>
+            </li>
+            <li v-if="!topStores.length" class="text-xs text-slate-400">No store sales in this period.</li>
+          </ol>
+        </article>
+      </section>
+
+      <section class="order-7 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="border-b border-slate-100 px-4 py-3"><h2 class="text-sm font-bold text-slate-900">Sales by Payment Method</h2><p class="text-[11px] text-slate-500">Amounts allocated across split tenders when a bill uses multiple methods</p></header>
+          <div class="min-h-[22rem] overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Payment method</th><th class="px-4 py-2 text-right">Sales</th><th class="px-4 py-2 text-right">Share</th></tr></thead>
+              <tbody class="sales-table-body"><tr v-for="item in summary.payments || []" :key="item.name" class="border-t border-slate-100">
+                <td class="px-4 py-2.5 font-semibold text-slate-800">{{ item.name }}</td><td class="px-4 py-2.5 text-right font-mono">{{ formatMoney(item.sales) }}</td><td class="px-4 py-2.5 text-right font-mono">{{ formatPercent(item.sales, summary.totalNetSales) }}</td>
+              </tr></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <div><h3 class="text-sm font-bold text-slate-900">Payment share chart</h3><p class="text-[11px] text-slate-500">Payment methods below 1% of the filtered chart total are hidden.</p></div>
+            <div class="flex flex-wrap gap-2">
+              <select v-model="paymentChartMode" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
+                <option value="payment">Share by payment</option><option value="store">Share by store</option>
+              </select>
+              <select v-if="paymentChartMode === 'payment'" v-model="paymentChartStore" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
+                <option value="all">All stores</option><option v-for="store in stores" :key="store.name" :value="store.name">{{ store.name }}</option>
+              </select>
+              <select v-else v-model="paymentChartMethod" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
+                <option value="all">All payment methods</option><option v-for="payment in summary.payments || []" :key="payment.name" :value="payment.name">{{ payment.name }}</option>
+              </select>
+            </div>
+          </header>
+          <AnalyticsStackedBarChart :rows="paymentChartItems" empty-label="No store payment sales for this selection." />
+        </article>
+      </section>
+
+      <section class="order-3 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="border-b border-slate-100 px-4 py-3"><h2 class="text-sm font-bold text-slate-900">Product Sales by Brand</h2></header>
+          <div class="h-[22rem] overflow-auto">
+            <table class="w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Brand</th><th class="px-4 py-2 text-right">Units</th><th class="px-4 py-2 text-right">Sales</th></tr></thead>
+              <tbody class="sales-table-body"><tr v-for="item in summary.byBrand || []" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="border-b border-slate-100 px-4 py-3"><h3 class="text-xs font-bold text-slate-700">Brand sales distribution</h3></header>
+          <AnalyticsPieChart :items="brandChartItems" :max-items="12" />
+        </article>
+      </section>
+
+      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="border-b border-slate-100 px-4 py-3"><h2 class="text-sm font-bold text-slate-900">Sales by Menu Category</h2><p class="text-[11px] text-slate-500">Includes the PROMO category.</p></header>
+          <div class="max-h-[22rem] overflow-auto">
+            <table class="w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Menu category</th><th class="px-4 py-2 text-right">Units</th><th class="px-4 py-2 text-right">Sales</th></tr></thead>
+              <tbody class="sales-table-body"><tr v-for="item in summary.byCategory || []" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="border-b border-slate-100 px-4 py-3"><h3 class="text-xs font-bold text-slate-700">Category share · percent of category sales</h3></header>
+          <AnalyticsBarChart :items="categoryChartItems" :denominator="categoryTotal" />
+        </article>
+      </section>
+
+      <section class="order-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <div><h2 class="text-sm font-bold text-slate-900">Promotion Performance</h2><p class="text-[11px] text-slate-500">Promo names come from Menu and are not treated as product brands.</p></div>
+          <div class="flex flex-wrap gap-2">
+            <details class="relative">
+              <summary class="flex min-w-32 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(promotionChartStores, 'All stores', 'stores') }}<span aria-hidden="true">▾</span></summary>
+              <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="promotionChartStores === null" @change="setPromotionStoresAll">All stores</label>
+                <label v-for="store in chartStoreOptions" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="promotionChartStores === null || promotionChartStores.includes(store.name)" @change="togglePromotionStore(store.name)">{{ store.name }}</label>
+              </div>
+            </details>
+            <details class="relative">
+              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(promotionChartPromos, 'All promotions', 'promotions') }}<span aria-hidden="true">▾</span></summary>
+              <div class="absolute right-0 z-20 mt-1 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <input v-model="promotionSearch" type="search" placeholder="Search promotions..." class="mb-2 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs" aria-label="Search promotions">
+                <div class="max-h-56 overflow-auto">
+                  <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="promotionChartPromos === null" @change="setPromotionPromosAll">All promotions</label>
+                  <label v-for="promo in promotionOptions" :key="promo" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="promotionChartPromos === null || promotionChartPromos.includes(promo)" @change="togglePromotionPromo(promo)"><span class="truncate">{{ promo }}</span></label>
+                  <p v-if="!promotionOptions.length" class="px-2 py-3 text-xs text-slate-400">No matching promotions.</p>
+                </div>
+              </div>
+            </details>
+          </div>
+        </header>
+        <div class="grid grid-cols-1 xl:grid-cols-3">
+          <div class="h-96 overflow-auto">
+            <table class="sales-data-table w-full table-fixed text-left text-xs"><colgroup><col class="w-[25%]"><col><col class="w-[12%]"><col class="w-[26%]"></colgroup><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-1 py-2">Store</th><th class="px-1 py-2">Promotion</th><th class="px-1 py-2 text-right">Units</th><th class="px-1 py-2 text-right">Sales</th></tr></thead>
+              <tbody class="sales-table-body"><tr v-for="(item,index) in visiblePromotions" :key="`${item.branch}-${item.name}-${index}`"><td class="break-words px-1 py-2 font-semibold">{{ item.branch }}</td><td class="break-words px-1 py-2">{{ item.name }}</td><td class="break-all px-1 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="break-all px-1 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr>
+                <tr v-if="!visiblePromotions.length"><td colspan="4" class="p-6 text-center text-slate-400">No promotion sales for this store and period.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="border-t border-slate-100 xl:col-span-2 xl:border-l xl:border-t-0">
+            <header class="px-4 pt-3 text-xs font-bold text-slate-700">Promotion Sales Share by Store</header>
+            <AnalyticsLineChart :items="visiblePromotionChartItems" metric="sales" :x-axis-label="promotionChartStores === null ? 'Store' : 'Promotion'" :x-axis-font-size="12" :line-color="promotionChartStores === null ? '#0f766e' : '#7c3aed'" :show-percent="false" :sort-items="false" empty-label="No promotion sales for this selection." />
           </div>
         </div>
-        <p class="text-xl sm:text-2xl font-black text-slate-900 font-mono tracking-tight">
-          {{ formatRupiah(summary.totalNetSales) }}
-        </p>
-        <div class="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
-          <span class="font-mono font-bold text-slate-700">{{ summary.totalBills }}</span>
-          <span>unique orders</span>
-        </div>
-      </div>
+      </section>
 
-      <!-- 2. Units Sold -->
-      <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden group">
-        <div class="flex items-center justify-between text-slate-500 mb-2">
-          <span class="text-[11px] font-bold uppercase tracking-wider">Physical Units Sold</span>
-          <div class="w-8 h-8 rounded-xl bg-teal-50 text-teal-700 border border-teal-200 flex items-center justify-center">
-            <Package class="w-4 h-4" />
+      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <div class="flex min-w-0 flex-col gap-2">
+            <div><h2 class="text-sm font-bold text-slate-900">Product Sales by Payment Method</h2><p class="text-[11px] text-slate-500">Click a product row to show its payment mix. ALL PRODUCT includes promotions and matches net sales.</p></div>
+            <div class="relative" data-dropdown="pivot" @focusout="closePivotDropdown">
+              <input v-model="pivotSearch" type="search" placeholder="Select or search product variant..." autocomplete="off"
+                class="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
+                aria-label="Search product variants" aria-haspopup="listbox" :aria-expanded="pivotDropdownOpen"
+                @focus="pivotDropdownOpen = true" @click="pivotDropdownOpen = true">
+              <ul v-if="pivotDropdownOpen" role="listbox" aria-label="Product variants"
+                class="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-lg border border-slate-200 bg-white p-1 shadow-xl">
+                <li role="option" :aria-selected="selectedPivotProduct === '__all__'">
+                  <button type="button" class="w-full rounded px-3 py-2 text-left text-xs font-bold hover:bg-teal-50"
+                    @mousedown.prevent @click="choosePivotProduct('__all__')">ALL PRODUCT</button>
+                </li>
+                <li v-for="item in pivotRows" :key="item.item" role="option" :aria-selected="selectedPivotRow?.item === item.item">
+                  <button type="button" class="w-full rounded px-3 py-2 text-left text-xs hover:bg-teal-50"
+                    @mousedown.prevent @click="choosePivotProduct(item.item)">{{ item.item }}</button>
+                </li>
+              </ul>
+            </div>
           </div>
+        </header>
+        <div class="max-h-[30rem] overflow-auto">
+          <table class="sales-data-table w-full min-w-[720px] text-left text-[11px]"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="sticky left-0 bg-slate-50 px-3 py-2">Product</th><th v-for="method in pivotPaymentMethods" :key="method" class="whitespace-nowrap px-3 py-2 text-right">{{ method }}</th><th class="px-3 py-2 text-right">Total</th></tr></thead>
+            <tbody class="sales-table-body"><tr v-for="item in visiblePivotRows" :key="item.item" tabindex="0" role="button" :aria-label="`Show payment mix for ${item.item}`" class="cursor-pointer border-t border-slate-100 hover:bg-teal-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-teal-600" :class="selectedPivotRow?.item === item.item ? 'outline outline-1 outline-teal-500' : ''" @click="choosePivotRow(item.item)" @keydown.enter="choosePivotRow(item.item)" @keydown.space.prevent="choosePivotRow(item.item)">
+              <th class="sticky left-0 bg-white px-3 py-2 text-left font-semibold">{{ item.item }}</th>
+              <td v-for="method in pivotPaymentMethods" :key="method" class="whitespace-nowrap px-3 py-2 text-right"><span class="block font-mono">{{ formatMoney(item.methods[method] || 0) }}</span><span class="text-[9px] text-slate-500">{{ formatPercent(item.methods[method] || 0, item.total) }}</span></td>
+              <td class="whitespace-nowrap px-3 py-2 text-right font-bold font-mono">{{ formatMoney(item.total) }}</td>
+            </tr><tr v-if="!visiblePivotRows.length"><td :colspan="pivotPaymentMethods.length + 2" class="p-8 text-center text-slate-400">No matching product sales</td></tr></tbody>
+          </table>
         </div>
-        <p class="text-xl sm:text-2xl font-black text-slate-900 font-mono tracking-tight">
-          {{ summary.totalUnitsSold }}
-        </p>
-        <div class="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
-          <span class="font-mono font-bold text-slate-700">{{ summary.totalLineItems }}</span>
-          <span>line item rows</span>
-        </div>
-      </div>
+        </article>
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+            <div class="min-w-0"><h3 class="text-xs font-bold text-slate-700">Selected Product Payment Method</h3><p v-if="selectedPivotRow" class="mt-1 break-words text-base font-extrabold text-slate-900">{{ selectedPivotRow.item }}</p><p v-if="selectedPivotRow" class="mt-1 text-[11px] font-semibold text-teal-800">Product sales: {{ formatMoney(selectedPivotTotal) }}</p></div>
+            <details class="relative">
+              <summary class="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(productChartStores, 'All stores', 'stores') }} <span aria-hidden="true">▾</span></summary>
+              <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="productChartStores === null" @change="setProductChartStoresAll">All stores</label>
+                <label v-for="store in chartStoreOptions" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="productChartStores === null || productChartStores.includes(store.name)" @change="toggleProductChartStore(store.name)">{{ store.name }}</label>
+              </div>
+            </details>
+          </header>
+          <AnalyticsPieChart :items="productPaymentPieItems" :max-items="20" show-values-on-hover empty-label="Choose a product with sales to see payment mix." />
+        </article>
+      </section>
 
-      <!-- 3. Active Stores -->
-      <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden group">
-        <div class="flex items-center justify-between text-slate-500 mb-2">
-          <span class="text-[11px] font-bold uppercase tracking-wider">Store Outlets</span>
-          <div class="w-8 h-8 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 flex items-center justify-center">
-            <Building2 class="w-4 h-4" />
+      <section class="order-8 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <div><h2 class="text-sm font-bold text-slate-900">Top Products</h2><p class="text-[11px] text-slate-500">Top ten by customer-paid sales across all stores, or for the selected store.</p></div>
+          <details class="relative">
+            <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(topProductStores, 'All stores', 'stores') }} <span aria-hidden="true">▾</span></summary>
+            <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+              <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="topProductStores === null" @change="setTopProductStoresAll">All stores</label>
+              <label v-for="store in chartStoreOptions" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="topProductStores === null || topProductStores.includes(store.name)" @change="toggleTopProductStore(store.name)">{{ store.name }}</label>
+            </div>
+          </details>
+        </header>
+        <div class="max-h-[30rem] overflow-auto">
+          <table class="sales-data-table w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Store scope</th><th class="px-4 py-2">Product</th><th class="px-4 py-2 text-right">Sales</th></tr></thead>
+            <tbody class="sales-table-body"><tr v-for="(item,index) in visibleTopProducts" :key="`${item.branch}-${item.menu}-${index}`" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.branch }}</td><td class="px-4 py-2">{{ item.menu }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr><tr v-if="!visibleTopProducts.length"><td colspan="3" class="p-6 text-center text-slate-400">No product sales for this store and period.</td></tr></tbody>
+          </table>
+        </div>
+        </article>
+      </section>
+
+      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+            <div><h2 class="text-sm font-bold text-slate-900">Sales by Visit Purpose</h2><p class="text-[11px] text-slate-500">Current store selection: {{ selectedStoreLabel }}</p></div>
+          </header>
+          <div class="overflow-x-auto">
+            <table class="sales-data-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Visit purpose</th><th class="px-4 py-2 text-right">Sales</th><th class="px-4 py-2 text-right">Share</th></tr></thead>
+              <tbody class="sales-table-body"><tr v-for="item in visitPurposeRows" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td><td class="px-4 py-2 text-right">{{ formatPercent(item.sales, summary.totalNetSales) }}</td></tr>
+                <tr v-if="!visitPurposeRows.length"><td colspan="3" class="p-6 text-center text-slate-400">No visit-purpose sales in this period.</td></tr>
+              </tbody>
+            </table>
           </div>
-        </div>
-        <p class="text-xl sm:text-2xl font-black text-slate-900 font-mono tracking-tight">
-          {{ summary.byStore?.length || availableStores.length }}
-        </p>
-        <div class="mt-2 flex items-center gap-2 text-[11px] text-slate-500 truncate">
-          <span>Top: </span>
-          <strong class="text-slate-800">{{ summary.byStore?.[0]?.store_name || 'Birmas' }}</strong>
-        </div>
-      </div>
+        </article>
+        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <h3 class="text-xs font-bold text-slate-700">Visit Purpose Sales Distribution</h3>
+            <details class="relative">
+              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(visitPurposeChartStores, 'All stores', 'stores') }} <span aria-hidden="true">▾</span></summary>
+              <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="visitPurposeChartStores === null" @change="setVisitPurposeStoresAll">All stores</label>
+                <label v-for="store in visitPurposeStoreOptions" :key="store" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="visitPurposeChartStores === null || visitPurposeChartStores.includes(store)" @change="toggleVisitPurposeStore(store)">{{ store }}</label>
+              </div>
+            </details>
+          </header>
+          <AnalyticsPieChart :items="visitPurposeChartRows" show-values-on-hover empty-label="No visit-purpose sales for this store and period." />
+        </article>
+      </section>
 
-      <!-- 4. Uploaded Files Archived -->
-      <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden group">
-        <div class="flex items-center justify-between text-slate-500 mb-2">
-          <span class="text-[11px] font-bold uppercase tracking-wider">CSV Files Archived</span>
-          <div class="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center justify-center">
-            <FileSpreadsheet class="w-4 h-4" />
+      <section class="order-9 space-y-4 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <header class="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 pb-4">
+          <div><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><BarChart3 class="h-4 w-4 text-indigo-600" />Sales by Time Range</h2><p class="text-[11px] text-slate-500">Hourly, weekly, and monthly revenue · payment-method breakdown is available on hover.</p></div>
+          <div class="flex flex-wrap items-end gap-3">
+            <label class="text-[10px] font-bold uppercase text-slate-500">From
+              <input v-model="timeRangeStart" type="date" class="mt-1 block rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-medium normal-case text-slate-800">
+            </label>
+            <label class="text-[10px] font-bold uppercase text-slate-500">To
+              <input v-model="timeRangeEnd" type="date" class="mt-1 block rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-medium normal-case text-slate-800">
+            </label>
+            <details class="relative">
+              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(timeSelectedStores, 'All stores', 'stores') }} <span aria-hidden="true">▾</span></summary>
+              <div class="absolute right-0 z-20 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="timeSelectedStores === null" @change="setTimeStoresAll">All stores</label>
+                <label v-for="store in chartStoreOptions" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="timeSelectedStores === null || timeSelectedStores.includes(store.name)" @change="toggleTimeStore(store.name)">{{ store.name }}</label>
+              </div>
+            </details>
           </div>
+          <p v-if="timeRangeError" class="w-full text-xs text-rose-700">{{ timeRangeError }}</p>
+        </header>
+
+        <div class="grid grid-cols-1 gap-4">
+          <article class="rounded-xl border border-slate-100 p-3">
+            <h3 class="mb-3 text-xs font-bold text-slate-700">Sales by Hour</h3>
+            <div class="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
+              <button v-for="slot in hourlyValues" :key="slot.hour" type="button"
+                class="rounded-lg border p-2 text-center shadow-sm transition hover:z-10 hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-teal-600"
+                :style="heatmapStyle(slot.sales, maxHourSales, '#ecfeff', '#0e7490')"
+                :aria-label="`${String(slot.hour).padStart(2,'0')}:00 sales ${formatMoney(slot.sales)}`"
+                @pointerenter="showTimeTooltip($event, slot)" @pointermove="moveTimeTooltip" @pointerleave="hourTooltip = null"
+                @focus="showTimeTooltip($event, slot)" @blur="hourTooltip = null">
+                <span class="block text-xs font-bold">{{ String(slot.hour).padStart(2, '0') }}:00</span>
+                <span class="mt-1 block truncate text-[9px]">{{ formatMoney(slot.sales) }}</span>
+              </button>
+            </div>
+          </article>
+          <article class="rounded-xl border border-slate-100 p-3">
+            <h3 class="mb-3 text-xs font-bold text-slate-700">Sales by Week</h3>
+            <div class="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">
+              <button v-for="slot in weeklyValues" :key="slot.key" type="button"
+                class="rounded-lg border p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                :style="heatmapStyle(slot.sales, maxWeeklySales, '#eef2ff', '#4338ca')"
+                :aria-label="`${slot.name} sales ${formatMoney(slot.sales)}`"
+                @pointerenter="showTimeTooltip($event, slot)" @pointermove="moveTimeTooltip" @pointerleave="hourTooltip = null"
+                @focus="showTimeTooltip($event, slot)" @blur="hourTooltip = null">
+                <span class="block text-xs font-bold">{{ slot.shortName }}</span><span class="mt-1 block text-[10px]">{{ formatMoney(slot.sales) }}</span>
+              </button>
+            </div>
+          </article>
+          <article class="rounded-xl border border-slate-100 p-3">
+            <h3 class="mb-3 text-xs font-bold text-slate-700">Sales by Month</h3>
+            <div class="grid max-h-72 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4 md:grid-cols-6">
+              <button v-for="slot in monthlyValues" :key="slot.key" type="button"
+                class="rounded-lg border p-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-600"
+                :style="heatmapStyle(slot.sales, maxMonthlySales, '#fff7ed', '#c2410c')"
+                :aria-label="`${slot.name} sales ${formatMoney(slot.sales)}`"
+                @pointerenter="showTimeTooltip($event, slot)" @pointermove="moveTimeTooltip" @pointerleave="hourTooltip = null"
+                @focus="showTimeTooltip($event, slot)" @blur="hourTooltip = null">
+                <span class="block text-xs font-bold">{{ slot.name }}</span><span class="mt-1 block truncate text-[9px]">{{ formatMoney(slot.sales) }}</span>
+              </button>
+            </div>
+          </article>
         </div>
-        <p class="text-xl sm:text-2xl font-black text-slate-900 font-mono tracking-tight">
-          {{ uploadedFiles.length }}
-        </p>
-        <div class="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
-          <button
-            @click="activeViewTab = 'files'"
-            class="text-teal-700 font-bold hover:underline flex items-center gap-1"
-          >
-            <span>Manage Files</span>
-            <ArrowUpRight class="w-3 h-3" />
-          </button>
-        </div>
+      </section>
+    </template>
+
+    <Teleport v-if="hourTooltip" to="body">
+      <div class="pointer-events-none fixed z-[100] max-h-[70vh] max-w-[22rem] overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${hourTooltip.x}px`, top: `${hourTooltip.y}px` }">
+        <p class="font-bold">{{ hourTooltip.hour }}</p><p class="text-slate-300">{{ hourTooltip.store }}</p><p class="mt-1">{{ hourTooltip.sales }} customer-paid sales</p>
       </div>
-    </div>
+    </Teleport>
 
-    <!-- Filter & Search Controls Bar -->
-    <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-      <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-        <!-- Store Branch Selector -->
-        <div class="flex items-center gap-2 flex-wrap">
-          <label class="text-xs font-extrabold text-slate-700 uppercase tracking-wider">
-            Branch:
-          </label>
-          <div class="flex items-center gap-1.5 flex-wrap">
-            <button
-              type="button"
-              @click="selectedStoreId = 'all'; loadSalesReport();"
-              class="px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
-              :class="selectedStoreId === 'all' ? 'bg-teal-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
-            >
-              All Outlets
-            </button>
-            <button
-              v-for="st in availableStores"
-              :key="st.id"
-              type="button"
-              @click="selectedStoreId = st.id; loadSalesReport();"
-              class="px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
-              :class="selectedStoreId === st.id ? 'bg-teal-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
-            >
-              {{ st.name }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Date Range Presets -->
-        <div class="flex items-center gap-1.5 bg-slate-100 p-1 rounded-2xl border border-slate-200/80">
-          <button
-            v-for="preset in [
-              { id: 'today', label: 'Today' },
-              { id: 'yesterday', label: 'Yesterday' },
-              { id: '7d', label: '7 Days' },
-              { id: '30d', label: '30 Days' },
-              { id: 'all', label: 'All Time' },
-            ]"
-            :key="preset.id"
-            type="button"
-            @click="applyDatePreset(preset.id)"
-            class="px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
-            :class="datePreset === preset.id ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'"
-          >
-            {{ preset.label }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Advanced Filter Row: Search, Category, Brand, Visit Purpose, Payment -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 pt-3 border-t border-slate-100">
-        <!-- Search -->
+    <template v-else>
+      <section class="order-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <div><h2 class="text-sm font-bold text-slate-900">Raw Clean Sales Records</h2><p class="text-[11px] text-slate-500">Showing {{ totalRows.toLocaleString() }} matching rows · up to 100 records per page</p></div>
+          <input v-model="rawSearch" type="search" placeholder="Search branch, menu, payment..." class="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs sm:w-72">
+        </header>
         <div>
-          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Search</label>
-          <div class="relative">
-            <Search class="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              v-model="searchQuery"
-              type="text"
-              placeholder="Search product variant, brand, etc..."
-              class="w-full pl-9 pr-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-xs focus:outline-none focus:border-teal-500 focus:bg-white"
-            />
-          </div>
+          <table class="w-full table-fixed text-left text-[10px] leading-tight">
+            <colgroup>
+              <col class="w-[12%]"><col class="w-[8%]"><col class="w-[9%]"><col class="w-[9%]">
+              <col class="w-[9%]"><col class="w-[10%]"><col class="w-[12%]"><col class="w-[4%]">
+              <col class="w-[8%]"><col class="w-[9%]"><col class="w-[10%]">
+            </colgroup>
+            <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr>
+              <th v-for="heading in ['Sales Date In','Branch','Visit Purpose','Payment Method','Menu Category','Menu Category Detail','Menu','Qty','Price','Subtotal','Total After Bill Discount']" :key="heading" class="break-words px-1 py-2">{{ heading }}</th>
+            </tr></thead>
+            <tbody><tr v-for="(row,index) in rows" :key="`${row.sales_date_in}-${index}`" class="border-t border-slate-100 hover:bg-slate-50/70">
+              <td class="break-all px-1 py-1.5">{{ formatDateTime(row.sales_date_in) }}</td><td class="break-words px-1 py-1.5">{{ row.branch }}</td><td class="break-words px-1 py-1.5">{{ row.visit_purpose }}</td><td class="break-words px-1 py-1.5">{{ row.payment_method }}</td><td class="break-words px-1 py-1.5">{{ row.menu_category }}</td><td class="break-words px-1 py-1.5">{{ row.menu_category_detail }}</td><td class="break-words px-1 py-1.5 font-medium text-slate-900">{{ row.menu }}</td><td class="break-all px-1 py-1.5 text-right">{{ row.qty }}</td><td class="break-all px-1 py-1.5 text-right">{{ formatMoney(row.price) }}</td><td class="break-all px-1 py-1.5 text-right">{{ formatMoney(row.subtotal) }}</td><td class="break-all px-1 py-1.5 text-right font-semibold">{{ formatMoney(row.total_after_bill_discount) }}</td>
+            </tr><tr v-if="!rows.length"><td colspan="11" class="p-10 text-center text-slate-400">No sales rows found for these filters.</td></tr></tbody>
+          </table>
         </div>
+        <footer class="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+          <span>Page {{ page }} of {{ pages }}</span><div class="flex gap-2"><button class="rounded-lg border border-slate-200 px-3 py-1.5 disabled:opacity-40" :disabled="page <= 1" @click="page--">Previous</button><button class="rounded-lg border border-slate-200 px-3 py-1.5 disabled:opacity-40" :disabled="page >= pages" @click="page++">Next</button></div>
+        </footer>
+      </section>
 
-        <!-- Brand Filter (Menu Category Detail) -->
-        <div>
-          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Brand</label>
-          <select
-            v-model="selectedBrand"
-            @change="loadSalesReport"
-            class="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-xs focus:outline-none focus:border-teal-500 focus:bg-white"
-          >
-            <option value="all">All Brands</option>
-            <option v-for="b in brands" :key="b" :value="b">{{ b }}</option>
-          </select>
-        </div>
-
-        <!-- Visit Purpose Filter -->
-        <div>
-          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Visit Purpose</label>
-          <select
-            v-model="selectedVisitPurpose"
-            @change="loadSalesReport"
-            class="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-xs focus:outline-none focus:border-teal-500 focus:bg-white"
-          >
-            <option value="all">All Purposes</option>
-            <option v-for="vp in visitPurposes" :key="vp" :value="vp">{{ vp }}</option>
-          </select>
-        </div>
-
-        <!-- Category Filter -->
-        <div>
-          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Category</label>
-          <select
-            v-model="selectedCategory"
-            @change="loadSalesReport"
-            class="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-xs focus:outline-none focus:border-teal-500 focus:bg-white"
-          >
-            <option value="all">All Categories</option>
-            <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
-          </select>
-        </div>
-
-        <!-- Payment Method Filter -->
-        <div>
-          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Payment Method</label>
-          <select
-            v-model="selectedPayment"
-            @change="loadSalesReport"
-            class="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-xs focus:outline-none focus:border-teal-500 focus:bg-white"
-          >
-            <option value="all">All Payment Methods</option>
-            <option v-for="pm in paymentMethods" :key="pm" :value="pm">{{ pm }}</option>
-          </select>
-        </div>
-      </div>
-    </div>
-
-    <!-- Navigation Tabs for Report Views -->
-    <div class="flex items-center gap-2 overflow-x-auto pb-1">
-      <button
-        v-for="tab in [
-          { id: 'table', label: 'Detailed Transactions', icon: Receipt },
-          { id: 'files', label: 'Uploaded CSV Files History', icon: FileSpreadsheet, badge: uploadedFiles.length },
-          { id: 'byChannel', label: 'Sales by Visit Purpose', icon: Layers },
-          { id: 'byStore', label: 'Sales by Store', icon: Building2 },
-          { id: 'byBrand', label: 'Sales by Brand', icon: Sparkles },
-          { id: 'topItems', label: 'Top Products', icon: Package },
-          { id: 'byPayment', label: 'Payment Methods', icon: CreditCard },
-        ]"
-        :key="tab.id"
-        type="button"
-        @click="activeViewTab = tab.id"
-        class="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer"
-        :class="
-          activeViewTab === tab.id
-            ? 'bg-slate-900 text-white shadow-sm'
-            : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200 hover:bg-slate-50'
-        "
-      >
-        <component :is="tab.icon" class="w-3.5 h-3.5" />
-        <span>{{ tab.label }}</span>
-        <span
-          v-if="tab.badge !== undefined"
-          class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono"
-          :class="activeViewTab === tab.id ? 'bg-teal-500 text-white' : 'bg-slate-100 text-slate-600'"
-        >
-          {{ tab.badge }}
-        </span>
-      </button>
-    </div>
-
-    <!-- MAIN VIEW CONTAINER -->
-    <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-      <!-- TAB 1: Detailed Transactions Table with 100 rows pagination -->
-      <div v-if="activeViewTab === 'table'" class="flex flex-col">
-        <!-- Table Header Status Bar -->
-        <div class="p-4 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-          <div class="flex items-center gap-2">
-            <span class="font-bold text-slate-800">
-              Showing {{ filteredTransactions.length === 0 ? 0 : (currentPage - 1) * pageSize + 1 }} - {{ Math.min(currentPage * pageSize, filteredTransactions.length) }}
-            </span>
-            <span class="text-slate-400">of</span>
-            <span class="font-mono font-bold text-slate-900">{{ filteredTransactions.length }}</span>
-            <span class="text-slate-500">transactions</span>
-            <span class="text-[10px] px-2 py-0.5 rounded-md bg-slate-200 text-slate-700 font-bold ml-1">
-              100 rows per page
-            </span>
-          </div>
-
-          <div class="flex items-center gap-1.5">
-            <span class="text-slate-500 mr-1">Page {{ currentPage }} of {{ totalPages }}</span>
-          </div>
-        </div>
-
-        <!-- Table Container (Narrower spacing so Unit Price and Total are fully visible) -->
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="border-b border-slate-100 px-4 py-3"><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><FileSpreadsheet class="h-4 w-4 text-teal-700" />Imported CSV batches</h2><p class="text-[11px] text-slate-500">Downloads contain the 12 clean columns, not unused original report fields.</p></header>
         <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs border-collapse">
-            <thead class="bg-slate-50 text-[10px] font-extrabold text-slate-600 uppercase tracking-wider border-b border-slate-200">
-              <tr>
-                <th class="py-2 px-2 w-10 text-center text-slate-400">#</th>
-                <th class="py-2 px-2.5 whitespace-nowrap">Sales Date</th>
-                <th class="py-2 px-2.5 whitespace-nowrap">Branch</th>
-                <th class="py-2 px-2.5 whitespace-nowrap">Visit Purpose</th>
-                <th class="py-2 px-2.5 whitespace-nowrap">Payment Method</th>
-                <th class="py-2 px-2.5">Menu</th>
-                <th class="py-2 px-2 text-center whitespace-nowrap">Qty</th>
-                <th class="py-2 px-2.5 text-right whitespace-nowrap">Price</th>
-                <th class="py-2 px-2.5 text-right whitespace-nowrap">Total</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              <tr
-                v-for="(tx, idx) in paginatedTransactions"
-                :key="tx.id || idx"
-                class="hover:bg-slate-50/80 transition-colors"
-              >
-                <td class="py-2 px-2 text-center font-mono text-slate-400 text-[11px]">
-                  {{ (currentPage - 1) * pageSize + idx + 1 }}
-                </td>
-                <!-- 1. Sales Date: date of sales -->
-                <td class="py-2 px-2.5 text-slate-700 font-mono whitespace-nowrap text-[11px] font-medium">
-                  {{ formatSalesDate(tx.sales_date || tx.date) }}
-                </td>
-                <!-- 2. Branch: store branch -->
-                <td class="py-2 px-2.5 whitespace-nowrap">
-                  <span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-800">
-                    {{ tx.store_name }}
-                  </span>
-                </td>
-                <!-- 3. Visit Purpose: product bought via -->
-                <td class="py-2 px-2.5 whitespace-nowrap">
-                  <span
-                    class="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                    :class="{
-                      'bg-blue-50 text-blue-700 border border-blue-200': tx.visit_purpose === 'DINE IN',
-                      'bg-orange-50 text-orange-700 border border-orange-200': tx.visit_purpose === 'SHOPEEFOOD',
-                      'bg-emerald-50 text-emerald-700 border border-emerald-200': tx.visit_purpose === 'GOFOOD',
-                      'bg-green-50 text-green-700 border border-green-200': tx.visit_purpose === 'GRABFOOD' || tx.visit_purpose === 'GRABMART',
-                      'bg-indigo-50 text-indigo-700 border border-indigo-200': tx.visit_purpose === 'WA ORDER',
-                      'bg-slate-100 text-slate-700': !tx.visit_purpose || tx.visit_purpose === 'TAKE AWAY' || tx.visit_purpose === 'TEMAN',
-                    }"
-                  >
-                    {{ tx.visit_purpose || 'DINE IN' }}
-                  </span>
-                </td>
-                <!-- 4. Payment method -->
-                <td class="py-2 px-2.5 whitespace-nowrap">
-                  <span class="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-50 text-slate-700 border border-slate-200">
-                    {{ tx.payment_method || 'QRIS BCA' }}
-                  </span>
-                </td>
-                <!-- 5. Menu: product variant -->
-                <td class="py-2 px-2.5 font-bold text-slate-900 text-xs min-w-[140px]">
-                  {{ tx.item_name || tx.variant }}
-                </td>
-                <!-- 6. Qty: amount of product per variant per sale -->
-                <td class="py-2 px-2 text-center font-bold text-teal-800 font-mono text-xs">
-                  {{ tx.qty }}
-                </td>
-                <!-- 7. Price: price per unit -->
-                <td class="py-2 px-2.5 text-right text-slate-700 font-mono whitespace-nowrap text-xs font-semibold">
-                  {{ formatRupiah(tx.unit_price) }}
-                </td>
-                <!-- 8. Total: total amount -->
-                <td class="py-2 px-2.5 text-right font-black text-slate-900 font-mono whitespace-nowrap text-xs">
-                  {{ formatRupiah(tx.total) }}
-                </td>
-              </tr>
-
-              <!-- Empty state -->
-              <tr v-if="filteredTransactions.length === 0 && !isLoading">
-                <td colspan="9" class="py-12 text-center">
-                  <div class="flex flex-col items-center justify-center gap-2">
-                    <FileSpreadsheet class="w-10 h-10 text-slate-300" />
-                    <p class="font-bold text-slate-700 text-sm">No transaction records found</p>
-                    <p class="text-xs text-slate-400 max-w-md">
-                      Upload your ESB Sales Recapitulation Detail CSV file to view transactions and live summaries.
-                    </p>
-                    <button
-                      type="button"
-                      @click="isUploadModalOpen = true"
-                      class="mt-2 px-4 py-2 rounded-xl bg-teal-600 text-white text-xs font-bold hover:bg-teal-700 shadow-sm"
-                    >
-                      Upload CSV Now
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
+          <table class="w-full min-w-[700px] text-left text-xs">
+            <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">File</th><th class="px-4 py-2">Uploaded</th><th class="px-4 py-2">Stores</th><th class="px-4 py-2 text-right">Rows</th><th class="px-4 py-2 text-right">Net sales</th><th class="px-4 py-2 text-right">Actions</th></tr></thead>
+            <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button class="rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50" title="Download clean CSV" @click="downloadFile(file)"><Download class="h-3.5 w-3.5" /></button><button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
+              <tr v-if="!files.length"><td colspan="6" class="p-8 text-center text-slate-400">No imported CSV batches.</td></tr></tbody>
           </table>
         </div>
+      </section>
+    </template>
 
-        <!-- Pagination Controls Bar (Bottom) -->
-        <div
-          v-if="filteredTransactions.length > 0"
-          class="p-4 border-t border-slate-100 bg-slate-50/70 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
-        >
-          <div class="text-slate-500">
-            Showing <strong class="text-slate-800 font-mono">{{ (currentPage - 1) * pageSize + 1 }}</strong> to
-            <strong class="text-slate-800 font-mono">{{ Math.min(currentPage * pageSize, filteredTransactions.length) }}</strong> of
-            <strong class="text-slate-900 font-mono">{{ filteredTransactions.length }}</strong> total records
-          </div>
-
-          <!-- Page Navigation Buttons -->
-          <div class="flex items-center gap-1.5">
-            <!-- First Page -->
-            <button
-              type="button"
-              @click="currentPage = 1"
-              :disabled="currentPage === 1"
-              class="p-2 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="First Page"
-            >
-              <ChevronsLeft class="w-3.5 h-3.5" />
-            </button>
-
-            <!-- Previous Page -->
-            <button
-              type="button"
-              @click="currentPage = Math.max(1, currentPage - 1)"
-              :disabled="currentPage === 1"
-              class="p-2 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Previous Page"
-            >
-              <ChevronLeft class="w-3.5 h-3.5" />
-            </button>
-
-            <!-- Page Indicator -->
-            <span class="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-800 font-mono">
-              Page {{ currentPage }} / {{ totalPages }}
-            </span>
-
-            <!-- Next Page -->
-            <button
-              type="button"
-              @click="currentPage = Math.min(totalPages, currentPage + 1)"
-              :disabled="currentPage === totalPages"
-              class="p-2 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Next Page"
-            >
-              <ChevronRight class="w-3.5 h-3.5" />
-            </button>
-
-            <!-- Last Page -->
-            <button
-              type="button"
-              @click="currentPage = totalPages"
-              :disabled="currentPage === totalPages"
-              class="p-2 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Last Page"
-            >
-              <ChevronsRight class="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- TAB 2: Uploaded CSV Files History Management Table -->
-      <div v-else-if="activeViewTab === 'files'" class="p-6 space-y-4">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-          <div>
-            <h4 class="text-base font-bold text-slate-900 flex items-center gap-2">
-              <FileSpreadsheet class="w-4 h-4 text-teal-600" />
-              <span>Uploaded Sales CSV Files History</span>
-            </h4>
-            <p class="text-xs text-slate-500 mt-0.5">
-              Archive of uploaded sales reports with timestamps. You can re-download original files or delete batches if incorrect.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            @click="isUploadModalOpen = true"
-            class="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer self-start sm:self-auto"
-          >
-            <UploadCloud class="w-4 h-4" />
-            <span>Upload New CSV</span>
-          </button>
-        </div>
-
-        <div class="overflow-x-auto border border-slate-200 rounded-2xl">
-          <table class="w-full text-left text-xs border-collapse">
-            <thead class="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
-              <tr>
-                <th class="py-3 px-4">File Name</th>
-                <th class="py-3 px-4 whitespace-nowrap">Uploaded At</th>
-                <th class="py-3 px-4">Uploaded By</th>
-                <th class="py-3 px-4">Stores / Branch</th>
-                <th class="py-3 px-4 text-center">Row Count</th>
-                <th class="py-3 px-4 text-right">Revenue Imported</th>
-                <th class="py-3 px-4 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              <tr v-for="file in uploadedFiles" :key="file.id" class="hover:bg-slate-50 transition-colors">
-                <td class="py-3 px-4">
-                  <div class="flex items-center gap-2.5">
-                    <FileSpreadsheet class="w-4 h-4 text-teal-600 shrink-0" />
-                    <div>
-                      <span class="font-bold text-slate-900 block">{{ file.filename }}</span>
-                      <span class="text-[10px] text-slate-400">{{ file.file_size || 'CSV File' }}</span>
-                    </div>
-                  </div>
-                </td>
-                <td class="py-3 px-4 text-slate-600 font-mono whitespace-nowrap text-[11px]">
-                  {{ formatSimpleDate(file.uploaded_at) }}
-                </td>
-                <td class="py-3 px-4">
-                  <span class="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-700">
-                    {{ file.uploaded_by || 'Admin' }}
-                  </span>
-                </td>
-                <td class="py-3 px-4 text-slate-700 font-medium">
-                  <span class="truncate block max-w-[180px]">{{ file.stores || 'All Stores' }}</span>
-                </td>
-                <td class="py-3 px-4 text-center font-bold text-teal-800 font-mono">
-                  {{ file.row_count }}
-                </td>
-                <td class="py-3 px-4 text-right font-black text-slate-900 font-mono">
-                  {{ formatRupiah(file.total_revenue) }}
-                </td>
-                <td class="py-3 px-4 text-center">
-                  <div class="flex items-center justify-center gap-1.5">
-                    <!-- Download Button -->
-                    <button
-                      type="button"
-                      @click="handleDownloadFile(file.id, file.filename)"
-                      class="p-1.5 rounded-lg bg-slate-100 hover:bg-teal-50 text-slate-600 hover:text-teal-700 border border-slate-200 transition-colors cursor-pointer"
-                      title="Download original CSV file"
-                    >
-                      <Download class="w-3.5 h-3.5" />
-                    </button>
-
-                    <!-- Delete Button -->
-                    <button
-                      type="button"
-                      @click="confirmDeleteFile(file)"
-                      class="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 transition-colors cursor-pointer"
-                      title="Delete file and associated transactions"
-                    >
-                      <Trash2 class="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-
-              <tr v-if="uploadedFiles.length === 0 && !isLoadingFiles">
-                <td colspan="7" class="py-10 text-center text-slate-500">
-                  <FileSpreadsheet class="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                  <p class="font-bold text-slate-700">No uploaded sales files recorded yet</p>
-                  <p class="text-xs text-slate-400 mt-0.5">Click "Upload Sales CSV" to import ESB sales files.</p>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- TAB 3: Sales by Visit Purpose -->
-      <div v-else-if="activeViewTab === 'byChannel'" class="p-6 space-y-4">
-        <h4 class="text-sm font-bold text-slate-900 mb-2">Revenue Breakdown by Visit Purpose</h4>
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-          <div
-            v-for="ch in summary.byChannel || []"
-            :key="ch.channel"
-            class="bg-slate-50 border border-slate-200 rounded-2xl p-5 flex flex-col justify-between"
-          >
-            <div>
-              <div class="flex items-center justify-between">
-                <span
-                  class="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider"
-                  :class="{
-                    'bg-blue-100 text-blue-800': ch.channel === 'DINE IN',
-                    'bg-orange-100 text-orange-800': ch.channel === 'SHOPEEFOOD',
-                    'bg-emerald-100 text-emerald-800': ch.channel === 'GOFOOD',
-                    'bg-green-100 text-green-800': ch.channel === 'GRABFOOD' || ch.channel === 'GRABMART',
-                    'bg-indigo-100 text-indigo-800': ch.channel === 'WA ORDER',
-                    'bg-purple-100 text-purple-800': ch.channel === 'TEMAN' || ch.channel === 'TAKE AWAY',
-                    'bg-slate-200 text-slate-800': !ch.channel,
-                  }"
-                >
-                  {{ ch.channel || 'Direct' }}
-                </span>
-                <span class="text-xs font-mono font-bold text-slate-500">{{ ch.bills }} bills</span>
-              </div>
-              <div class="mt-4">
-                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Total Revenue</span>
-                <span class="text-xl font-black text-slate-900 font-mono">{{ formatRupiah(ch.revenue) }}</span>
-              </div>
-            </div>
-            <div class="flex items-center justify-between pt-3 mt-4 border-t border-slate-200 text-xs">
-              <span class="text-slate-500">Units Sold: <strong class="text-slate-800 font-mono">{{ ch.units }}</strong></span>
-              <span class="text-slate-500">
-                Share: <strong class="text-teal-700 font-mono">{{ summary.totalNetSales > 0 ? ((ch.revenue / summary.totalNetSales) * 100).toFixed(1) : 0 }}%</strong>
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- TAB 4: Sales by Store Location -->
-      <div v-else-if="activeViewTab === 'byStore'" class="p-6 space-y-4">
-        <h4 class="text-sm font-bold text-slate-900 mb-2">Revenue Breakdown by Store Location</h4>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div
-            v-for="st in summary.byStore || []"
-            :key="st.store_id"
-            class="bg-slate-50 border border-slate-200 rounded-2xl p-5"
-          >
-            <div class="flex items-center justify-between mb-3">
-              <div class="flex items-center gap-2">
-                <Building2 class="w-4 h-4 text-teal-600" />
-                <span class="font-extrabold text-slate-900 text-sm">{{ st.store_name }}</span>
-              </div>
-              <span class="text-xs font-bold text-slate-500 font-mono">{{ st.bills }} bills</span>
-            </div>
-            <div class="flex items-baseline justify-between pt-2 border-t border-slate-200/80">
-              <div>
-                <span class="text-[11px] text-slate-500 uppercase tracking-wider block">Net Revenue</span>
-                <span class="text-lg font-black text-emerald-700 font-mono">{{ formatRupiah(st.revenue) }}</span>
-              </div>
-              <div class="text-right">
-                <span class="text-[11px] text-slate-500 uppercase tracking-wider block">Units Sold</span>
-                <span class="text-sm font-bold text-slate-900 font-mono">{{ st.units }} units</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- TAB 5: Sales by Brand (Menu Category Detail) -->
-      <div v-else-if="activeViewTab === 'byBrand'" class="p-6 space-y-4">
-        <h4 class="text-sm font-bold text-slate-900 mb-2">Top Selling Product Brands (Menu Category Detail)</h4>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs border-collapse">
-            <thead class="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
-              <tr>
-                <th class="py-3 px-4 w-12 text-center">Rank</th>
-                <th class="py-3 px-4">Brand Name</th>
-                <th class="py-3 px-4">Category</th>
-                <th class="py-3 px-4 text-center">Units Sold</th>
-                <th class="py-3 px-4 text-right">Revenue</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              <tr v-for="(b, idx) in summary.byBrand || []" :key="idx" class="hover:bg-slate-50">
-                <td class="py-3 px-4 text-center font-bold text-teal-700 font-mono">#{{ idx + 1 }}</td>
-                <td class="py-3 px-4 font-black text-slate-900">{{ b.brand }}</td>
-                <td class="py-3 px-4">
-                  <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
-                    {{ b.category || 'Beverage' }}
-                  </span>
-                </td>
-                <td class="py-3 px-4 text-center font-bold text-teal-800 font-mono">{{ b.units }}</td>
-                <td class="py-3 px-4 text-right font-black text-slate-900 font-mono">{{ formatRupiah(b.revenue) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- TAB 6: Top Selling Products -->
-      <div v-else-if="activeViewTab === 'topItems'" class="p-6 space-y-4">
-        <h4 class="text-sm font-bold text-slate-900 mb-2">Top Selling Products (Menu Variants)</h4>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs border-collapse">
-            <thead class="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200">
-              <tr>
-                <th class="py-3 px-4 w-12 text-center">Rank</th>
-                <th class="py-3 px-4">Brand</th>
-                <th class="py-3 px-4">Menu Variant</th>
-                <th class="py-3 px-4">Category</th>
-                <th class="py-3 px-4 text-center">Units Sold</th>
-                <th class="py-3 px-4 text-right">Total Revenue</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              <tr v-for="(item, idx) in summary.topItems || []" :key="idx" class="hover:bg-slate-50">
-                <td class="py-3 px-4 text-center font-bold text-teal-700 font-mono">#{{ idx + 1 }}</td>
-                <td class="py-3 px-4">
-                  <span v-if="item.brand" class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
-                    {{ item.brand }}
-                  </span>
-                  <span v-else class="text-slate-400">-</span>
-                </td>
-                <td class="py-3 px-4 font-bold text-slate-900">{{ item.item_name }}</td>
-                <td class="py-3 px-4">
-                  <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
-                    {{ item.category || 'Beverage' }}
-                  </span>
-                </td>
-                <td class="py-3 px-4 text-center font-bold text-teal-800 font-mono">{{ item.totalQty }}</td>
-                <td class="py-3 px-4 text-right font-bold text-emerald-700 font-mono">{{ formatRupiah(item.totalRevenue) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- TAB 7: Sales by Payment Method -->
-      <div v-else-if="activeViewTab === 'byPayment'" class="p-6 space-y-4">
-        <h4 class="text-sm font-bold text-slate-900 mb-2">Breakdown by Payment Method</h4>
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-          <div
-            v-for="pm in summary.byPayment || []"
-            :key="pm.payment_method"
-            class="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col justify-between"
-          >
-            <div class="flex items-center justify-between mb-2">
-              <span class="font-extrabold text-slate-900 text-xs flex items-center gap-1.5">
-                <CreditCard class="w-3.5 h-3.5 text-teal-600" />
-                {{ pm.payment_method }}
-              </span>
-              <span class="text-[11px] font-bold text-slate-500">{{ pm.count }} tx</span>
-            </div>
-            <div class="mt-2 pt-2 border-t border-slate-200">
-              <span class="text-base font-black text-slate-900 font-mono">{{ formatRupiah(pm.totalAmount) }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+    <div v-if="deletingFile" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+      <section class="w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
+        <h2 class="font-bold text-slate-900">Delete this sales import?</h2><p class="text-sm text-slate-600">This deletes {{ deletingFile.row_count }} clean sales rows from <strong>{{ deletingFile.filename }}</strong> and updates analytics.</p>
+        <div class="flex justify-end gap-2"><button class="rounded-xl px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100" :disabled="deleting" @click="deletingFile = null">Cancel</button><button class="rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50" :disabled="deleting" @click="deleteFile">{{ deleting ? 'Deleting…' : 'Delete import' }}</button></div>
+      </section>
     </div>
 
-    <!-- Delete File Confirmation Modal -->
-    <div
-      v-if="fileToDelete"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs transition-all"
-    >
-      <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
-        <div class="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center">
-          <Trash2 class="w-6 h-6" />
-        </div>
-        <div>
-          <h3 class="text-base font-bold text-slate-900">Delete Sales File Record?</h3>
-          <p class="text-xs text-slate-500 mt-1">
-            Are you sure you want to delete <strong class="text-slate-800">{{ fileToDelete.filename }}</strong>? This will remove all associated sales transactions and update the reports automatically.
-          </p>
-        </div>
-        <div class="flex items-center justify-end gap-2.5 pt-2">
-          <button
-            type="button"
-            @click="fileToDelete = null"
-            class="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            @click="executeDeleteFile"
-            :disabled="isDeletingFile"
-            class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
-          >
-            {{ isDeletingFile ? 'Deleting...' : 'Yes, Delete File' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Upload Sales CSV Modal -->
-    <UploadSalesCsvModal
-      :is-open="isUploadModalOpen"
-      :stores="availableStores"
-      @close="isUploadModalOpen = false"
-      @imported="handleCsvImported"
-    />
-  </div>
+    <UploadSalesCsvModal :is-open="uploadOpen" @close="uploadOpen = false" @imported="handleImported" />
+  </main>
 </template>
+
+<style scoped>
+.sales-report :deep(tbody tr:nth-child(even) > td),
+.sales-report :deep(tbody tr:nth-child(even) > th) {
+  background-color: #eff6ff;
+}
+
+.sales-report :deep(tbody tr:hover > td),
+.sales-report :deep(tbody tr:hover > th) {
+  background-color: #dbeafe;
+}
+</style>
+
+<style scoped>
+.sales-report :deep(tbody tr:nth-child(even) > td),
+.sales-report :deep(tbody tr:nth-child(even) > th) {
+  background-color: #eff6ff;
+}
+
+.sales-report :deep(tbody tr:hover > td),
+.sales-report :deep(tbody tr:hover > th) {
+  background-color: #dbeafe;
+}
+</style>
+
+<style scoped>
+.sales-report :deep(tbody tr:nth-child(even) > td),
+.sales-report :deep(tbody tr:nth-child(even) > th) {
+  background-color: #eff6ff;
+}
+
+.sales-report :deep(tbody tr:hover > td),
+.sales-report :deep(tbody tr:hover > th) {
+  background-color: #dbeafe;
+}
+</style>
