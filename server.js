@@ -442,10 +442,14 @@ export async function runBirmasServerSync(options = {}) {
       }
     }
 
-    // Determine pagination: single call if direct URL, ESB endpoint, or visit-purpose
-    const isDirectOrEsb = resolvedEndpoint === '' || targetUrl.toLowerCase().includes('visit-purpose') || targetUrl.toLowerCase().includes('/extv1/');
+    // Only true single-shot ESB endpoints (visit-purpose lookup, /extv1/ menu dumps) return
+    // everything in one response. A direct full URL to a WordPress product_stock(s) REST
+    // endpoint still paginates like the auto-appended endpoint does — previously any direct
+    // URL was treated as single-shot, so only the first page (e.g. ~14 products) was ever
+    // fetched and the rest of the catalog was silently ignored.
+    const isSingleShotEsbEndpoint = targetUrl.toLowerCase().includes('visit-purpose') || targetUrl.toLowerCase().includes('/extv1/');
     const PAGE_SIZE = 25;
-    const maxPages = isDirectOrEsb ? 1 : 100;
+    const maxPages = isSingleShotEsbEndpoint ? 1 : 100;
 
     let totalSyncedProducts = 0;
     let page = 1;
@@ -455,7 +459,7 @@ export async function runBirmasServerSync(options = {}) {
 
     while (hasMore && page <= maxPages) {
       let url = targetUrl;
-      if (!isDirectOrEsb) {
+      if (!isSingleShotEsbEndpoint) {
         const sep = targetUrl.includes('?') ? '&' : '?';
         url = `${targetUrl}${sep}per_page=${PAGE_SIZE}&page=${page}&_fields=id,location,product_variant,stock,esb_menu_id,is_exist_in_esb`;
       }
@@ -674,7 +678,7 @@ export async function runBirmasServerSync(options = {}) {
         totalSyncedProducts++;
       }
 
-      if (items.length < PAGE_SIZE || isDirectOrEsb) {
+      if (items.length < PAGE_SIZE || isSingleShotEsbEndpoint) {
         hasMore = false;
         break;
       }
@@ -684,7 +688,7 @@ export async function runBirmasServerSync(options = {}) {
     }
 
     // After a complete pull, drop stock rows the server no longer reports so stale imports can't linger
-    if (totalSyncedProducts > 0 && !fetchFailed && !isDirectOrEsb) {
+    if (totalSyncedProducts > 0 && !fetchFailed && !isSingleShotEsbEndpoint) {
       const pruned = db.getDb().prepare('DELETE FROM store_stocks WHERE last_synced < ?').run(syncStartedAt);
       if (pruned.changes) console.log(`[Birmas Server Sync] Removed ${pruned.changes} stale stock rows.`);
     }
