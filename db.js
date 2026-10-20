@@ -18,11 +18,17 @@ let dbInstance = null;
 export function getDb() {
   if (!dbInstance) {
     dbInstance = new DatabaseSync(DB_PATH);
-    // WAL mode lets reads and writes proceed concurrently and busy_timeout makes
-    // SQLite retry briefly instead of immediately failing when the DB is locked by
-    // another connection (reduces spurious "database is locked"/readonly errors).
+    // NOTE: a previous change here set journal_mode=WAL, which requires the
+    // "data" directory (not just the .sqlite file) to be writable so SQLite can
+    // create -wal/-shm files; WAL mode is also persisted in the file itself, so
+    // once set it keeps requiring that on every future connection/restart. On a
+    // host where the directory has restrictive permissions, that silently turned
+    // every future write into "attempt to write a readonly database" - explicitly
+    // force the classic rollback-journal mode back (a no-op if already DELETE) so
+    // writes only ever need the single .sqlite file to be writable, exactly as
+    // before. busy_timeout is a harmless per-connection setting (not persisted).
     try {
-      dbInstance.exec('PRAGMA journal_mode = WAL;');
+      dbInstance.exec('PRAGMA journal_mode = DELETE;');
       dbInstance.exec('PRAGMA busy_timeout = 5000;');
     } catch (err) {
       console.error('[DB] Failed to apply PRAGMA settings:', err.message);

@@ -61,8 +61,11 @@ export function getSalesDb() {
   if (!database) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     database = new DatabaseSync(DB_PATH);
+    // See db.js getDb() for why this is DELETE (classic rollback journal) and
+    // not WAL: WAL requires the containing directory to be writable (to create
+    // -wal/-shm files) and persists that requirement in the file itself.
     try {
-      database.exec('PRAGMA journal_mode = WAL;');
+      database.exec('PRAGMA journal_mode = DELETE;');
       database.exec('PRAGMA busy_timeout = 5000;');
     } catch (err) {
       console.error('[SalesDB] Failed to apply PRAGMA settings:', err.message);
@@ -74,18 +77,32 @@ export function getSalesDb() {
 
 function normalizeRow(row) {
   const get = (snake, camel, label) => row[snake] ?? row[camel] ?? row[label] ?? '';
-  const quantity = Number(get('qty', 'qty', 'Qty'));
-  const price = Number(get('price', 'price', 'Price'));
-  const discount = Number(get('discount', 'discount', 'Discount') || 0);
-  const total = Number(get('total_after_bill_discount', 'totalAfterBillDiscount', 'Total After Bill Discount'));
-  const salesDateIn = String(get('sales_date_in', 'salesDateIn', 'Sales Date In')).trim();
-  const branch = String(get('branch', 'branch', 'Branch')).trim();
 
-  if (!/^\d{4}-\d{2}-\d{2}/.test(salesDateIn) || !branch ||
-      !Number.isFinite(quantity) || !Number.isFinite(price) ||
-      !Number.isFinite(discount) || !Number.isFinite(total)) {
-    throw new Error('Each sales row must include a valid date, branch, quantity, price, discount, and total after bill discount.');
+  // Numeric fields: treat missing/blank/non-numeric values as 0 instead of
+  // rejecting the whole row - a row with a 0 qty/price/discount/total (e.g. a
+  // complimentary item or a promo line) is still a real transaction and should
+  // be imported as-is.
+  const toNumber = (val) => {
+    const n = Number(val);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const quantity = toNumber(get('qty', 'qty', 'Qty'));
+  const price = toNumber(get('price', 'price', 'Price'));
+  const discount = toNumber(get('discount', 'discount', 'Discount'));
+  const total = toNumber(get('total_after_bill_discount', 'totalAfterBillDiscount', 'Total After Bill Discount'));
+
+  // Sales Date In (column H in the ESB export) is the only field that genuinely
+  // needs a usable value for reporting - fall back to parsing it loosely, and
+  // only default to "now" if it truly can't be read, rather than dropping the row.
+  let salesDateIn = String(get('sales_date_in', 'salesDateIn', 'Sales Date In')).trim();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(salesDateIn)) {
+    const parsed = salesDateIn ? new Date(salesDateIn) : null;
+    salesDateIn = parsed && !isNaN(parsed.getTime())
+      ? parsed.toISOString().slice(0, 19).replace('T', ' ')
+      : new Date().toISOString().slice(0, 19).replace('T', ' ');
   }
+
+  const branch = String(get('branch', 'branch', 'Branch')).trim() || 'Unknown Branch';
 
   return {
     sales_date_in: salesDateIn,
@@ -102,6 +119,7 @@ function normalizeRow(row) {
     total_after_bill_discount: total,
   };
 }
+
 
 export function insertSalesRows(db, {
   fileId,
