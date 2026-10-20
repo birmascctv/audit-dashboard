@@ -1032,6 +1032,12 @@ export function applyStockRowsToDatabase(db, rows = []) {
 
   const now = new Date().toISOString();
 
+  // Accumulate quantities per (store, product) first. The ESB stock period export can list
+  // the same product more than once per store (e.g. separate batch/expiry/sub-category rows),
+  // so writing each row directly would overwrite earlier rows instead of summing them,
+  // silently undercounting the true stock on hand.
+  const stockTotals = new Map();
+
   for (const r of rows) {
     const rawStoreName = r.storeName || r.store || '';
     const storeId = resolveStoreIdForStock(rawStoreName);
@@ -1092,7 +1098,13 @@ export function applyStockRowsToDatabase(db, rows = []) {
     }
 
     const stockQty = Number(r.stockQty ?? r.qty ?? 0) || 0;
-    upsertStockStmt.run(storeId, productId, stockQty, now);
+    const key = `${storeId}\u0000${productId}`;
+    stockTotals.set(key, (stockTotals.get(key) || 0) + stockQty);
+  }
+
+  for (const [key, totalQty] of stockTotals) {
+    const [storeId, productId] = key.split('\u0000');
+    upsertStockStmt.run(storeId, productId, totalQty, now);
   }
 }
 

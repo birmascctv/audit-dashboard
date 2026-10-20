@@ -1005,7 +1005,7 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
         </article>
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <header class="border-b border-slate-100 px-4 py-3"><h3 class="text-xs font-bold text-slate-700">Store Sales per Month Chart</h3></header>
-          <AnalyticsBarChart :items="monthChartItems" value-axis="rupiah" :max-items="24" x-axis-label="Month" empty-label="No monthly sales yet." />
+          <AnalyticsBarChart :items="monthChartItems" value-axis="rupiah" :max-items="24" x-axis-label="Month" empty-label="No monthly sales yet." heatmap />
         </article>
       </section>
 

@@ -8,15 +8,31 @@ const props = defineProps({
   emptyLabel: { type: String, default: 'No chart data for this selection.' },
   xAxisLabel: { type: String, default: 'Item' },
   valueAxis: { type: String, default: 'percent' },
+  // When true, bars share one hue and darken with higher revenue (heatmap style)
+  // instead of each bar getting a distinct color.
+  heatmap: { type: Boolean, default: false },
 });
 const tooltip = ref(null);
 
 const colors = ['#0f766e', '#2563eb', '#7c3aed', '#ea580c', '#0891b2', '#be123c', '#4f46e5', '#65a30d', '#c026d3', '#475569', '#b45309', '#0284c7'];
-const chartItems = computed(() => props.items.slice(0, props.maxItems).map((item, index) => ({
-  ...item,
-  percent: props.denominator > 0 ? (Number(item.sales || 0) / props.denominator) * 100 : 0,
-  color: colors[index % colors.length],
-})));
+const HEATMAP_LIGHT = [191, 219, 254]; // light blue
+const HEATMAP_DARK = [23, 37, 84]; // deep navy
+
+function heatmapColor(value, maximum) {
+  const intensity = maximum > 0 ? Math.min(1, Math.max(0, Number(value || 0) / maximum)) : 0;
+  const rgb = HEATMAP_LIGHT.map((channel, index) => Math.round(channel + (HEATMAP_DARK[index] - channel) * intensity));
+  return `rgb(${rgb.join(' ')})`;
+}
+
+const chartItems = computed(() => {
+  const slice = props.items.slice(0, props.maxItems);
+  const heatmapMax = Math.max(0, ...slice.map((item) => Number(item.sales) || 0));
+  return slice.map((item, index) => ({
+    ...item,
+    percent: props.denominator > 0 ? (Number(item.sales || 0) / props.denominator) * 100 : 0,
+    color: props.heatmap ? heatmapColor(item.sales, heatmapMax) : colors[index % colors.length],
+  }));
+});
 const width = 980;
 const left = 52;
 const top = 20;
