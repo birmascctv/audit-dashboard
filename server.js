@@ -448,6 +448,8 @@ export async function runBirmasServerSync(options = {}) {
     let totalSyncedProducts = 0;
     let page = 1;
     let hasMore = true;
+    let fetchFailed = false;
+    const syncStartedAt = new Date().toISOString();
 
     while (hasMore && page <= maxPages) {
       let url = targetUrl;
@@ -507,6 +509,7 @@ export async function runBirmasServerSync(options = {}) {
         }
       } catch (fetchErr) {
         console.warn(`[Birmas Server Sync] Request notice: ${fetchErr.message}. Utilizing existing database stock.`);
+        fetchFailed = true;
         break;
       }
 
@@ -609,13 +612,17 @@ export async function runBirmasServerSync(options = {}) {
       }
 
       for (const item of items) {
-        const storeId = extractMatchedStoreId(item) || db.resolveStoreIdForStock(item.store || item.store_name || item.storeName || item.branch || item.storeId || '');
+        const branchCode = String(item.location?.[0]?.branch_code_esb || '').toLowerCase();
+        if (branchCode === 'behp') continue; // ESB test branch
+        const storeId = (branchCode && BIRMAS_STORE_KEYWORD_MAP.find((m) => m.keywords.includes(branchCode))?.storeId)
+          || extractMatchedStoreId(item) || db.resolveStoreIdForStock(item.store || item.store_name || item.storeName || item.branch || item.storeId || '');
         if (!storeId) continue;
 
         const pv = item.product_variant?.[0];
         const p = pv?.product?.[0];
 
-        const prodName = (p?.post_title || item.product_name || item.productName || item.product_title || item.name || item.varian || '').trim();
+        const variantSlug = String(pv?.post_name || '').replace(/-+/g, ' ').trim().toUpperCase();
+        const prodName = (p?.post_title || variantSlug || item.product_name || item.productName || item.product_title || item.name || item.varian || '').trim();
         if (!prodName) continue;
 
         // Skip non-retail merchandise
@@ -672,6 +679,12 @@ export async function runBirmasServerSync(options = {}) {
 
       page++;
       await new Promise((r) => setTimeout(r, 100));
+    }
+
+    // After a complete pull, drop stock rows the server no longer reports so stale imports can't linger
+    if (totalSyncedProducts > 0 && !fetchFailed && !isDirectOrEsb) {
+      const pruned = db.getDb().prepare('DELETE FROM store_stocks WHERE last_synced < ?').run(syncStartedAt);
+      if (pruned.changes) console.log(`[Birmas Server Sync] Removed ${pruned.changes} stale stock rows.`);
     }
 
     if (totalSyncedProducts > 0) {
