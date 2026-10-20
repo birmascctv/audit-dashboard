@@ -22,6 +22,7 @@ import {
 } from 'lucide-vue-next';
 import { useAuth } from '../composables/useAuth.js';
 import { useAuditStore } from '../composables/useAuditStore.js';
+import { previewStockPeriodCsv } from '../services/stockPeriodCsvApi.js';
 
 const props = defineProps({
   isOpen: {
@@ -372,6 +373,12 @@ function processFile(file) {
   selectedFile.value = file;
   fileName.value = file.name;
   fileSize.value = (file.size / 1024).toFixed(1) + ' KB';
+  validationErrors.value = [];
+  duplicateWarning.value = null;
+  parsedRows.value = [];
+  metadataDownloadedAt.value = '';
+  metadataStockDate.value = '';
+  metadataActiveStores.value = '';
 
   if (!file.name.toLowerCase().endsWith('.csv')) {
     validationErrors.value = [
@@ -387,11 +394,46 @@ function processFile(file) {
   isParsing.value = true;
   const reader = new FileReader();
 
-  reader.onload = (event) => {
-    isParsing.value = false;
-    const text = event.target.result;
-    rawFileContent.value = text;
-    validateAndParseStockCsv(text, file.name);
+  reader.onload = async (event) => {
+    rawFileContent.value = event.target.result;
+    // Validate strictly against the official ESB Stock Period List template (detects
+    // Generated date/time in B4, Stock Date in B5, and Active Stores in B6 server-side)
+    // instead of the old best-effort heuristic column detection.
+    try {
+      const parsed = await previewStockPeriodCsv(file);
+      parsedRows.value = parsed.records.map((r) => ({
+        storeName: r.store,
+        productName: r.productName,
+        category: r.category || 'Craft Beer',
+        unit: r.defaultUnit || 'Can',
+        stockQty: r.stockQty,
+      }));
+      metadataDownloadedAt.value = formatDateStr(parsed.generatedAt);
+      metadataStockDate.value = parsed.stockDate;
+      metadataActiveStores.value = (parsed.stores || []).join(', ') || 'All Stores';
+
+      const existing = historyFiles.value.find(
+        (f) => f.filename.toLowerCase() === file.name.toLowerCase()
+      );
+      if (existing) {
+        duplicateWarning.value = {
+          filename: existing.filename,
+          uploadedAt: existing.uploaded_at,
+          uploadedBy: existing.uploaded_by,
+          isActive: existing.is_active === 1,
+        };
+      }
+    } catch (err) {
+      validationErrors.value = [
+        {
+          code: 'VALIDATION_FAILED',
+          title: 'Invalid Stock Period CSV',
+          message: err.message || 'Could not validate the CSV file.',
+        },
+      ];
+    } finally {
+      isParsing.value = false;
+    }
   };
 
   reader.onerror = () => {

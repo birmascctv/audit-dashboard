@@ -13,6 +13,7 @@ import {
   Layers,
   Sparkles
 } from 'lucide-vue-next';
+import { parseSalesCsv } from '../utils/salesCsv.js';
 
 const props = defineProps({
   isOpen: {
@@ -52,303 +53,6 @@ function formatRupiah(amount) {
   }).format(num);
 }
 
-// Clean and parse numbers without ever stripping trailing zeroes (handles "25000", "25.000", "25,000.00", "Rp 25.000", etc.)
-function parseNumber(val) {
-  if (val === undefined || val === null || val === '') return 0;
-  if (typeof val === 'number') return isNaN(val) ? 0 : val;
-  let str = String(val).trim().replace(/^(Rp|IDR)\.?\s*/i, '').trim();
-  if (!str) return 0;
-
-  if (str.includes(',') && str.includes('.')) {
-    const lastComma = str.lastIndexOf(',');
-    const lastDot = str.lastIndexOf('.');
-    if (lastDot > lastComma) {
-      // US format: 1,250,000.00
-      str = str.replace(/,/g, '');
-    } else {
-      // EU/Indonesian format: 1.250.000,00
-      str = str.replace(/\./g, '').replace(',', '.');
-    }
-  } else if (str.includes(',')) {
-    const parts = str.split(',');
-    if (parts.length > 2) {
-      str = str.replace(/,/g, '');
-    } else if (parts.length === 2) {
-      if (parts[1].length === 3) {
-        str = str.replace(/,/g, '');
-      } else if (parts[1].length === 2 && parts[1] === '00') {
-        str = parts[0];
-      } else {
-        str = str.replace(',', '.');
-      }
-    }
-  } else if (str.includes('.')) {
-    const parts = str.split('.');
-    if (parts.length > 2) {
-      str = str.replace(/\./g, '');
-    } else if (parts.length === 2) {
-      if (parts[1].length === 3) {
-        str = str.replace(/\./g, '');
-      } else if (parts[1].length === 2 && parts[1] === '00') {
-        str = parts[0];
-      }
-    }
-  }
-
-  const num = parseFloat(str);
-  return isNaN(num) ? 0 : num;
-}
-
-// Dynamically extract store branch from CSV
-function detectStore(storeName) {
-  const raw = String(storeName || '').trim();
-  if (!raw) return { id: 'branch-default', name: 'Main Branch' };
-
-  const formattedName = raw === raw.toUpperCase() && raw.length > 1
-    ? raw.split(' ').map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ')
-    : raw;
-
-  const cleanId = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  return {
-    id: cleanId ? `store-${cleanId}` : 'branch-default',
-    name: formattedName,
-  };
-}
-
-// Standardize date strings (DD/MM/YYYY, YYYY-MM-DD, ISO, etc.) into consistent ISO timestamps
-function normalizeDateString(raw) {
-  if (!raw) return new Date().toISOString();
-  const str = String(raw).trim();
-  
-  // DD/MM/YYYY or DD-MM-YYYY with optional time
-  const dmyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(.*)$/);
-  if (dmyMatch) {
-    const day = dmyMatch[1].padStart(2, '0');
-    const month = dmyMatch[2].padStart(2, '0');
-    const year = dmyMatch[3];
-    const timePart = dmyMatch[4].trim() || '00:00:00';
-    return `${year}-${month}-${day} ${timePart}`.trim();
-  }
-  
-  return str;
-}
-
-// Parse CSV content into rows based on exact key column specifications:
-// Sales Date, Branch, Visit Purpose, Payment method, Menu, Qty, Price, Total
-// Parses the CSV asynchronously, yielding to the browser event loop every ROWS_PER_SLICE
-// rows so very large files (100,000+ rows) don't freeze the tab, and so the progress
-// bar can actually repaint while the file is being parsed.
-const ROWS_PER_SLICE = 4000;
-async function parseCSV(text, onProgress) {
-  if (!text || typeof text !== 'string') {
-    throw new Error('File content is empty or unreadable.');
-  }
-
-  // Strip UTF-8 BOM if present
-  let cleanText = text.replace(/^\uFEFF/, '').trim();
-  const allLines = cleanText.split(/\r\n|\n|\r/).filter((line) => line.trim().length > 0);
-  if (allLines.length < 2) {
-    throw new Error('File contains no data rows or table header.');
-  }
-
-  // Multi-keyword header row finder
-  const searchKeywords = [
-    'sales date', 'salesdate', 'date', 'tanggal', 'tgl',
-    'branch', 'cabang', 'store', 'outlet', 'lokasi',
-    'visit purpose', 'visitpurpose', 'channel', 'tujuan', 'ordermode',
-    'payment', 'pembayaran', 'metode', 'tender',
-    'menu', 'product', 'item', 'produk', 'varian', 'barang',
-    'qty', 'quantity', 'jumlah', 'kuantitas',
-    'price', 'harga', 'unit price', 'rate',
-    'total', 'net sales', 'nett sales', 'subtotal', 'amount'
-  ];
-
-  let headerLineIndex = allLines.findIndex((line) => {
-    const l = line.toLowerCase();
-    const hits = searchKeywords.filter((kw) => l.includes(kw));
-    return hits.length >= 2;
-  });
-
-  if (headerLineIndex === -1) {
-    headerLineIndex = allLines.findIndex((line) => {
-      const l = line.toLowerCase();
-      return l.includes('sales') || l.includes('branch') || l.includes('menu') || l.includes('harga') || l.includes('total');
-    });
-  }
-
-  if (headerLineIndex === -1) {
-    headerLineIndex = 0;
-  }
-
-  const headerLine = allLines[headerLineIndex];
-
-  // Auto-detect delimiter (plain substring counting avoids regex escaping pitfalls with "|")
-  const delimiters = [',', ';', '\t', '|'];
-  let delimiter = ',';
-  let maxCount = 0;
-  for (const d of delimiters) {
-    const count = headerLine.split(d).length - 1;
-    if (count > maxCount) {
-      maxCount = count;
-      delimiter = d;
-    }
-  }
-
-  const splitLine = (line) => {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"' || char === "'") {
-        if (inQuotes && line[i + 1] === char) {
-          current += char;
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (char === delimiter && !inQuotes) {
-        result.push(current.trim().replace(/^["']|["']$/g, ''));
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    result.push(current.trim().replace(/^["']|["']$/g, ''));
-    return result;
-  };
-
-  const rawHeaders = splitLine(headerLine);
-  const headers = rawHeaders.map((h) => h.toLowerCase().trim().replace(/[\s_.-]+/g, ''));
-
-  // Resolve a column by trying each candidate (exact match, then substring) in priority
-  // order, so a more specific column (e.g. "Menu Category Detail") is never shadowed by
-  // an unrelated column that merely contains a looser keyword (e.g. a standalone "Brand" column).
-  function findCol(exactCandidates, fuzzyCandidates = []) {
-    for (const candidate of exactCandidates) {
-      const idx = headers.indexOf(candidate);
-      if (idx !== -1) return idx;
-    }
-    for (const candidate of fuzzyCandidates) {
-      const idx = headers.findIndex((h) => h.includes(candidate));
-      if (idx !== -1) return idx;
-    }
-    return -1;
-  }
-
-  // Comprehensive column index matching (ESB Sales Report export layout: J=Branch,
-  // N=Visit Purpose, Y=Payment Method, Z=Menu Category, AA=Menu Category Detail,
-  // AB=Menu, AG=Qty, AH=Price, AI=Subtotal, AR=Total After Bill Discount)
-  const colIndex = {
-    salesDate: findCol(['salesdate', 'date'], ['salesdate', 'transdate', 'orderdate', 'tanggal', 'tgl']),
-    salesDateIn: findCol(['salesdatein'], ['datein', 'datetime', 'waktu']),
-    branch: findCol(['branch'], ['cabang', 'store', 'outlet', 'lokasi', 'location']),
-    visitPurpose: findCol(['visitpurpose'], ['purpose', 'ordermode', 'channel', 'tujuan', 'kunjungan']),
-    payment: findCol(['paymentmethod'], ['payment', 'metodepembayaran', 'pembayaran', 'carabayar', 'tender']),
-    menuCategory: findCol(['menucategory', 'category'], ['kategori']),
-    menuCategoryDetail: findCol(['menucategorydetail', 'categorydetail'], ['brand', 'merk']),
-    menu: findCol(['menu', 'menuvariant', 'product', 'itemname', 'item'], ['varian', 'produk', 'namamenu', 'namaproduk', 'barang', 'deskripsi']),
-    qty: findCol(['qty'], ['quantity', 'jumlah', 'kuantitas', 'banyak']),
-    price: findCol(['price'], ['harga', 'unitprice', 'rate', 'tarif', 'hargasatuan']),
-    subtotal: findCol(['subtotal']),
-    discount: findCol(['discount'], ['diskon', 'potongan']),
-    tax: findCol(['tax', 'vat'], ['pajak', 'pb1']),
-    total: findCol(['totalafterbilldiscount', 'total', 'nettsales', 'netsales'], ['totalbayar', 'totalamount', 'totalsales', 'grandtotal', 'amount']),
-    billNo: findCol(['billnumber', 'billno'], ['faktur', 'invoice', 'transno', 'nostruk']),
-  };
-
-  const parsed = [];
-  const totalDataLines = allLines.length - (headerLineIndex + 1);
-  for (let i = headerLineIndex + 1; i < allLines.length; i++) {
-    const rawLine = allLines[i].trim();
-    if (!rawLine) continue;
-
-    // Ignore footer summary rows
-    if (
-      rawLine.startsWith(',,,,,') ||
-      rawLine.startsWith(';;;;;') ||
-      /total\s*rounding/i.test(rawLine) ||
-      /platform\s*fee\s*total/i.test(rawLine) ||
-      /grand\s*total/i.test(rawLine)
-    ) {
-      continue;
-    }
-
-    const cols = splitLine(rawLine);
-    if (cols.length < 2) continue;
-
-    const rawBranch = colIndex.branch !== -1 ? cols[colIndex.branch] : 'Branch';
-    const storeInfo = detectStore(rawBranch);
-
-    const qty = parseNumber(colIndex.qty !== -1 ? cols[colIndex.qty] : 1) || 1;
-    let unitPrice = parseNumber(colIndex.price !== -1 ? cols[colIndex.price] : 0);
-    const discount = parseNumber(colIndex.discount !== -1 ? cols[colIndex.discount] : 0);
-    const tax = parseNumber(colIndex.tax !== -1 ? cols[colIndex.tax] : 0);
-
-    let subtotal = parseNumber(colIndex.subtotal !== -1 ? cols[colIndex.subtotal] : 0);
-    if (!subtotal) subtotal = qty * unitPrice;
-
-    let total = parseNumber(colIndex.total !== -1 ? cols[colIndex.total] : 0);
-    if (!total && unitPrice > 0) {
-      total = subtotal - discount + tax;
-    } else if (total > 0 && unitPrice === 0 && qty > 0) {
-      unitPrice = total / qty;
-    }
-
-    const dateVal =
-      (colIndex.salesDateIn !== -1 ? cols[colIndex.salesDateIn] : '') ||
-      (colIndex.salesDate !== -1 ? cols[colIndex.salesDate] : '') ||
-      new Date().toISOString();
-
-    const visitPurpose = (colIndex.visitPurpose !== -1 ? cols[colIndex.visitPurpose] : '') || 'DINE IN';
-    const payment = (colIndex.payment !== -1 ? cols[colIndex.payment] : '') || 'QRIS BCA';
-    const category = (colIndex.menuCategory !== -1 ? cols[colIndex.menuCategory] : '') || 'Beverage';
-    const brand = (colIndex.menuCategoryDetail !== -1 ? cols[colIndex.menuCategoryDetail] : '') || '';
-    const menuVariant = (colIndex.menu !== -1 ? cols[colIndex.menu] : '') || (cols[colIndex.price !== -1 ? Math.max(0, colIndex.price - 1) : 0] || `Product Variant #${i}`);
-    const billNo = (colIndex.billNo !== -1 ? cols[colIndex.billNo] : '') || `ESB-${Date.now()}-${i}`;
-
-    // Skip empty filler lines
-    if (!menuVariant && unitPrice === 0 && total === 0) continue;
-
-    parsed.push({
-      id: `csv-${i}-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 4)}`,
-      bill_no: billNo,
-      date: normalizeDateString(dateVal),
-      store_id: storeInfo.id,
-      store_name: storeInfo.name,
-      item_name: menuVariant,
-      variant: menuVariant,
-      brand: brand,
-      category: category,
-      barcode: '',
-      qty,
-      unit_price: unitPrice,
-      discount,
-      tax,
-      subtotal,
-      total,
-      payment_method: payment,
-      visit_purpose: visitPurpose,
-    });
-
-    // Yield control back to the browser every ROWS_PER_SLICE rows so huge files
-    // (100,000+ rows) don't block the main thread long enough to look frozen.
-    const processedSoFar = i - headerLineIndex;
-    if (processedSoFar % ROWS_PER_SLICE === 0) {
-      if (onProgress) onProgress(processedSoFar, totalDataLines);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-  }
-
-  if (parsed.length === 0) {
-    throw new Error(
-      `No transaction data rows could be parsed. Detected columns: [${rawHeaders.slice(0, 8).join(', ')}]. Please check your column names (expected Sales Date, Branch, Menu, Qty, Price, Total).`
-    );
-  }
-
-  return parsed;
-}
-
 // Handle File Selection (Strictly CSV files only)
 function handleFileSelect(e) {
   const selectedFile = e.target.files?.[0] || e.dataTransfer?.files?.[0];
@@ -375,22 +79,22 @@ function handleFileSelect(e) {
   parsingStatusText.value = 'Reading file...';
 
   const reader = new FileReader();
-  reader.onload = async (event) => {
-    try {
-      const text = event.target?.result || '';
-      rawCsvText.value = text;
-      parsingStatusText.value = 'Parsing rows...';
-      const rows = await parseCSV(text, (done, total) => {
-        parsingProgress.value = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-        parsingStatusText.value = `Parsing row ${done.toLocaleString()} of ${total.toLocaleString()}...`;
-      });
-      parsedRows.value = rows;
-      parsingProgress.value = 100;
-    } catch (err) {
-      parseErrors.value = [err.message || 'Failed to parse CSV file.'];
-    } finally {
-      isParsing.value = false;
-    }
+  reader.onload = (event) => {
+    const text = event.target?.result || '';
+    rawCsvText.value = text;
+    parsingStatusText.value = 'Parsing rows...';
+    // Defer to the next tick so the spinner can paint before the (synchronous,
+    // but fast - ~100,000 rows/~2s) shared ESB parser runs on the main thread.
+    setTimeout(() => {
+      try {
+        parsedRows.value = parseSalesCsv(text);
+        parsingProgress.value = 100;
+      } catch (err) {
+        parseErrors.value = [err.message || 'Failed to parse CSV file.'];
+      } finally {
+        isParsing.value = false;
+      }
+    }, 30);
   };
   reader.onerror = () => {
     parseErrors.value = ['Error reading CSV file from disk.'];
@@ -402,11 +106,11 @@ function handleFileSelect(e) {
 // Computed stats of parsed CSV
 const parsedStats = computed(() => {
   if (parsedRows.value.length === 0) return null;
-  const uniqueStores = new Set(parsedRows.value.map((r) => r.store_name));
-  const uniqueBrands = new Set(parsedRows.value.map((r) => r.brand).filter(Boolean));
+  const uniqueStores = new Set(parsedRows.value.map((r) => r.branch));
+  const uniqueBrands = new Set(parsedRows.value.map((r) => r.menu_category_detail).filter(Boolean));
   const totalUnits = parsedRows.value.reduce((acc, r) => acc + (r.qty || 0), 0);
   const totalGross = parsedRows.value.reduce((acc, r) => acc + (r.subtotal || 0), 0);
-  const totalNet = parsedRows.value.reduce((acc, r) => acc + (r.total || 0), 0);
+  const totalNet = parsedRows.value.reduce((acc, r) => acc + (r.total_after_bill_discount || 0), 0);
 
   return {
     rowCount: parsedRows.value.length,
@@ -442,6 +146,7 @@ async function handleImport() {
       : rawCsvText.value;
 
     let savedTotal = 0;
+    let duplicateTotal = 0;
 
     for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
       const start = chunkIdx * CHUNK_SIZE;
@@ -480,14 +185,17 @@ async function handleImport() {
         throw new Error(data.message || data.error || `Server rejected batch ${chunkIdx + 1} (HTTP ${res.status})`);
       }
 
-      savedTotal += chunkRows.length;
+      savedTotal += chunkRows.length - (data.duplicateCount || 0);
+      duplicateTotal += data.duplicateCount || 0;
     }
 
     uploadProgress.value = 100;
     uploadProgressText.value = 'Completed!';
     uploadStatus.value = {
       success: true,
-      message: `Successfully imported all ${savedTotal.toLocaleString()} sales records! File has been archived.`,
+      message: duplicateTotal > 0
+        ? `Successfully imported ${savedTotal.toLocaleString()} new sales records. ${duplicateTotal.toLocaleString()} row(s) were already in the database (same date/time and product variant) and were skipped.`
+        : `Successfully imported all ${savedTotal.toLocaleString()} sales records! File has been archived.`,
     };
 
     emit('imported', parsedRows.value);
@@ -682,11 +390,11 @@ function handleClose() {
                 <tbody class="divide-y divide-slate-100">
                   <tr v-for="(row, idx) in parsedRows.slice(0, 6)" :key="idx" class="hover:bg-slate-50/70">
                     <td class="py-2 px-3 text-[11px] text-slate-600 whitespace-nowrap">
-                      {{ row.date ? String(row.date).split(' ')[0] : '-' }}
+                      {{ row.sales_date_in ? String(row.sales_date_in).split(' ')[0] : '-' }}
                     </td>
                     <td class="py-2 px-3">
                       <span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700">
-                        {{ row.store_name }}
+                        {{ row.branch }}
                       </span>
                     </td>
                     <td class="py-2 px-3">
@@ -698,11 +406,11 @@ function handleClose() {
                       </span>
                     </td>
                     <td class="py-2 px-3 text-slate-900 font-medium">
-                      <span class="font-bold block truncate max-w-[180px]">{{ row.item_name }}</span>
+                      <span class="font-bold block truncate max-w-[180px]">{{ row.menu }}</span>
                     </td>
                     <td class="py-2 px-3 text-center font-bold text-teal-800">{{ row.qty }}</td>
-                    <td class="py-2 px-3 text-right text-slate-600 font-mono">{{ formatRupiah(row.unit_price) }}</td>
-                    <td class="py-2 px-3 text-right font-extrabold text-slate-900 font-mono">{{ formatRupiah(row.total) }}</td>
+                    <td class="py-2 px-3 text-right text-slate-600 font-mono">{{ formatRupiah(row.price) }}</td>
+                    <td class="py-2 px-3 text-right font-extrabold text-slate-900 font-mono">{{ formatRupiah(row.total_after_bill_discount) }}</td>
                     <td class="py-2 px-3 text-slate-600">
                       <span class="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 max-w-[110px] truncate block">
                         {{ row.payment_method }}

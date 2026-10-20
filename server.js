@@ -9,6 +9,8 @@ import { createServer as createViteServer } from 'vite';
 import * as db from './db.js';
 import * as salesDb from './salesDb.js';
 import * as storeAuditService from './storeAuditService.js';
+import * as stockPeriodCsv from './stockPeriodCsv.js';
+import * as stockPeriodCsvStore from './stockPeriodCsvStore.js';
 
 export function parseSafeMoney(val) {
   if (val === undefined || val === null || val === '') return 0;
@@ -1544,9 +1546,12 @@ async function startServer() {
 
       res.json({
         success: true,
-        message: `Successfully received and saved ${rawList.length} sales records.`,
+        message: result.duplicate_count > 0
+          ? `Saved ${rawList.length - result.duplicate_count} new sales record(s); skipped ${result.duplicate_count} row(s) already in the database.`
+          : `Successfully received and saved ${rawList.length} sales records.`,
         count: rawList.length,
         rowCount: result.row_count,
+        duplicateCount: result.duplicate_count,
         fileId,
         receivedAt: new Date().toISOString(),
       });
@@ -1717,6 +1722,111 @@ async function startServer() {
       res.status(404).send('Template not found');
     } catch (err) {
       res.status(500).send(err.message);
+    }
+  });
+
+  // ==========================================
+  // Stock Period CSV Upload & History (strict ESB template: product name + stock qty only)
+  // ==========================================
+
+  app.post('/api/stock-period-csv/preview', upload.single('file'), (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No CSV file was uploaded.' });
+      }
+      const text = req.file.buffer.toString('utf8');
+      const parsed = stockPeriodCsv.parseStockPeriodCsvDetails(text);
+      res.json({
+        success: true,
+        filename: req.file.originalname,
+        recordCount: parsed.records.length,
+        generatedAt: parsed.generatedAt,
+        stockDate: parsed.stockDate,
+        stores: parsed.stores,
+        records: parsed.records,
+      });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/stock-period-csv/uploads', upload.single('file'), (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No CSV file was uploaded.' });
+      }
+      const csvContent = req.file.buffer.toString('utf8');
+      const parsed = stockPeriodCsv.parseStockPeriodCsvDetails(csvContent);
+      const uploadedBy = req.body.uploadedBy || 'Auditor';
+      const saved = stockPeriodCsvStore.saveStockPeriodCsv(db.getDb(), {
+        filename: req.file.originalname,
+        uploadedBy,
+        recordCount: parsed.records.length,
+        generatedAt: parsed.generatedAt,
+        stockDate: parsed.stockDate,
+        stores: parsed.stores,
+        records: parsed.records,
+        csvContent,
+      });
+      res.json({ success: true, upload: saved });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/stock-period-csv/uploads', (req, res) => {
+    try {
+      const uploads = stockPeriodCsvStore.listStockPeriodCsvUploads(db.getDb());
+      res.json({ success: true, uploads });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/stock-period-csv/uploads/latest', (req, res) => {
+    try {
+      const upload = stockPeriodCsvStore.getLatestStockPeriodCsvUpload(db.getDb());
+      res.json({ success: true, upload: upload || null });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/stock-period-csv/uploads/:id/download', (req, res) => {
+    try {
+      const file = stockPeriodCsvStore.getStockPeriodCsvDownload(db.getDb(), req.params.id);
+      if (!file) {
+        return res.status(404).json({ success: false, error: 'Stock period CSV upload not found.' });
+      }
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+      res.send(file.csvContent);
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/stock-period-csv/uploads/:id', (req, res) => {
+    try {
+      const upload = stockPeriodCsvStore.getStockPeriodCsvUploadData(db.getDb(), req.params.id);
+      if (!upload) {
+        return res.status(404).json({ success: false, error: 'Stock period CSV upload not found.' });
+      }
+      res.json({ success: true, upload });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.delete('/api/stock-period-csv/uploads/:id', (req, res) => {
+    try {
+      const deleted = stockPeriodCsvStore.deleteStockPeriodCsvUpload(db.getDb(), req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ success: false, error: 'Stock period CSV upload not found.' });
+      }
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 

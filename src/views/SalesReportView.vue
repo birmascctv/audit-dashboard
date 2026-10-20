@@ -1089,7 +1089,7 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
               <col class="w-[8%]"><col class="w-[9%]"><col class="w-[10%]">
             </colgroup>
             <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr>
-              <th v-for="heading in ['Sales Date In','Branch','Visit Purpose','Payment Method','Menu Category','Menu Category Detail','Menu','Qty','Price','Subtotal','Total After Bill Discount']" :key="heading" class="break-words px-1 py-2">{{ heading }}</th>
+              <th v-for="heading in ['Sales Date In','Branch','Visit Purpose','Payment Method','Menu Category','Menu Category Detail','Menu','Qty','Price','Subtotal','Total']" :key="heading" class="break-words px-1 py-2">{{ heading }}</th>
             </tr></thead>
             <tbody><tr v-for="(row,index) in rows" :key="`${row.sales_date_in}-${index}`" class="border-t border-slate-100 hover:bg-slate-50/70">
               <td class="break-all px-1 py-1.5">{{ formatDateTime(row.sales_date_in) }}</td><td class="break-words px-1 py-1.5">{{ row.branch }}</td><td class="break-words px-1 py-1.5">{{ row.visit_purpose }}</td><td class="break-words px-1 py-1.5">{{ row.payment_method }}</td><td class="break-words px-1 py-1.5">{{ row.menu_category }}</td><td class="break-words px-1 py-1.5">{{ row.menu_category_detail }}</td><td class="break-words px-1 py-1.5 font-medium text-slate-900">{{ row.menu }}</td><td class="break-all px-1 py-1.5 text-right">{{ row.qty }}</td><td class="break-all px-1 py-1.5 text-right">{{ formatMoney(row.price) }}</td><td class="break-all px-1 py-1.5 text-right">{{ formatMoney(row.subtotal) }}</td><td class="break-all px-1 py-1.5 text-right font-semibold">{{ formatMoney(row.total_after_bill_discount) }}</td>

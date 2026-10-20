@@ -54,6 +54,7 @@ export function initializeSalesDatabase(db) {
     CREATE INDEX IF NOT EXISTS idx_clean_sales_date ON sales_transactions(sales_date_in);
     CREATE INDEX IF NOT EXISTS idx_clean_sales_branch ON sales_transactions(branch);
     CREATE INDEX IF NOT EXISTS idx_clean_sales_import ON sales_transactions(import_id);
+    CREATE INDEX IF NOT EXISTS idx_clean_sales_dedupe ON sales_transactions(sales_date_in, menu);
   `);
 }
 
@@ -158,15 +159,37 @@ export function insertSalesRows(db, {
       discount = excluded.discount,
       total_after_bill_discount = excluded.total_after_bill_discount
   `);
+  // A row is a duplicate of an already-imported transaction when its exact Sales
+  // Date In timestamp and Menu (product variant) match one already stored in a
+  // *different* row slot - this still lets the exact same (import_id, source_row)
+  // slot be resubmitted/updated in place via the ON CONFLICT clause above (e.g. a
+  // retried chunk), while any other matching row - from this import, an earlier
+  // chunk of it, or a previous CSV altogether - is skipped instead of duplicated.
+  const findDuplicate = db.prepare(`
+    SELECT 1 FROM sales_transactions
+    WHERE sales_date_in = ? AND menu = ? AND NOT (import_id = ? AND source_row = ?)
+    LIMIT 1
+  `);
 
+  let duplicateCount = 0;
   db.exec('BEGIN');
   try {
     insertImport.run(fileId, filename || 'sales.csv', fileSize, uploadedAt, uploadedBy);
+    const seenInBatch = new Set();
     rows.forEach((row, index) => {
       const clean = normalizeRow(row);
+      const sourceRow = sourceRowOffset + index;
+      const dedupeKey = `${clean.sales_date_in}\u0000${clean.menu}`;
+      const isDuplicate = seenInBatch.has(dedupeKey) ||
+        Boolean(findDuplicate.get(clean.sales_date_in, clean.menu, fileId, sourceRow));
+      if (isDuplicate) {
+        duplicateCount++;
+        return;
+      }
+      seenInBatch.add(dedupeKey);
       insertTransaction.run(
         fileId,
-        sourceRowOffset + index,
+        sourceRow,
         ...CSV_COLUMNS.map(([key]) => clean[key]),
       );
     });
@@ -176,10 +199,11 @@ export function insertSalesRows(db, {
     throw error;
   }
 
-  return db.prepare(`
+  const summary = db.prepare(`
     SELECT COUNT(*) AS row_count, COALESCE(SUM(total_after_bill_discount), 0) AS total_revenue
     FROM sales_transactions WHERE import_id = ?
   `).get(fileId);
+  return { ...summary, duplicate_count: duplicateCount };
 }
 
 // Idempotent live sync: replaces the rows of one rolling window under a fixed import id
