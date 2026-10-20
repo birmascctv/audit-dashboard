@@ -18,6 +18,15 @@ let dbInstance = null;
 export function getDb() {
   if (!dbInstance) {
     dbInstance = new DatabaseSync(DB_PATH);
+    // WAL mode lets reads and writes proceed concurrently and busy_timeout makes
+    // SQLite retry briefly instead of immediately failing when the DB is locked by
+    // another connection (reduces spurious "database is locked"/readonly errors).
+    try {
+      dbInstance.exec('PRAGMA journal_mode = WAL;');
+      dbInstance.exec('PRAGMA busy_timeout = 5000;');
+    } catch (err) {
+      console.error('[DB] Failed to apply PRAGMA settings:', err.message);
+    }
     initTables(dbInstance);
   }
   return dbInstance;

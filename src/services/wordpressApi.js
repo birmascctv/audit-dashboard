@@ -78,8 +78,8 @@ export async function fetchAuditState(storeId) {
   return await apiFetchAuditState(storeId);
 }
 
-export async function sendAuditScan(barcode, storeId, auditorName) {
-  return await apiSendScan(barcode, storeId, auditorName);
+export async function sendAuditScan(barcode, storeId, auditorName, productId) {
+  return await apiSendScan(barcode, storeId, auditorName, productId);
 }
 
 export async function adjustAuditCount(barcode, storeId, opts) {

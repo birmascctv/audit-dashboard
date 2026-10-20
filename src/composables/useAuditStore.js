@@ -207,6 +207,16 @@ export function useAuditStore() {
     return found || visibleStores.value[0] || stores.value[0];
   });
 
+  // Canonical identity key used to track scanned counts per product. Falls back to
+  // `id:<productId>` when a product has no barcode yet, so products without a
+  // barcode never collapse onto one shared counter (they all currently share
+  // barcode = null/''). Once a real barcode is assigned, the key switches to it.
+  function scanKeyFor(barcode, wpId) {
+    const b = (barcode || '').toString().trim();
+    if (b) return b;
+    return wpId !== undefined && wpId !== null && wpId !== '' ? `id:${wpId}` : '';
+  }
+
   // Compare Scanned Physical Count with WordPress/ESB Stock for this Store
   const auditItems = computed(() => {
     const storeId = selectedStoreId.value;
@@ -214,7 +224,8 @@ export function useAuditStore() {
     return wpProducts.value.map((prod) => {
       const rawExpected = (prod.stockByStore && prod.stockByStore[storeId]) ?? 0;
       const wpExpected = Math.round(Number(rawExpected) || 0);
-      const count = scannedCounts.value[prod.barcode] ?? 0;
+      const scanKey = scanKeyFor(prod.barcode, prod.id);
+      const count = scannedCounts.value[scanKey] ?? 0;
 
       let status = 'unscanned';
       let discrepancy = 0;
@@ -251,10 +262,11 @@ export function useAuditStore() {
         discrepancy = count - wpExpected;
       }
 
-      const lastLog = scanLogs.value.find((l) => l.barcode === prod.barcode);
+      const lastLog = scanLogs.value.find((l) => l.barcode === scanKey);
 
       return {
         barcode: prod.barcode,
+        scanKey,
         wpId: prod.id,
         brand: prod.subCategory || prod.brand || 'Birmas',
         subCategory: prod.subCategory || prod.brand || 'Birmas',
@@ -349,14 +361,19 @@ export function useAuditStore() {
     await loadStoreScans(storeId);
   }
 
-  // Register physical scan
-  async function registerAuditScan(barcode, auditorName = 'Auditor') {
+  // Register physical scan (barcode may be a real scanned code, or for the manual
+  // "+" button on a product without a barcode yet, an empty barcode + wpId so the
+  // backend can still resolve the product and keep its count independent of others)
+  async function registerAuditScan(barcode, wpId, auditorName = 'Auditor') {
     if (isSessionLocked.value) {
       return { success: false, message: 'Audit session is locked. Unlocking requires Superadmin approval.' };
     }
-    const clean = (barcode || '').trim();
+    const clean = scanKeyFor(barcode, wpId);
+    if (!clean) {
+      return { success: false, message: 'Unable to identify this product for scanning.' };
+    }
 
-    const res = await sendAuditScan(clean, selectedStoreId.value, auditorName);
+    const res = await sendAuditScan((barcode || '').trim(), selectedStoreId.value, auditorName, wpId);
 
     if (res.success && res.scannedCount !== undefined) {
       scannedCounts.value[clean] = res.scannedCount;
@@ -373,7 +390,7 @@ export function useAuditStore() {
       };
       scanLogs.value.unshift(scanEvent);
 
-      const currentItem = auditItems.value.find((i) => i.barcode === clean);
+      const currentItem = auditItems.value.find((i) => i.scanKey === clean);
 
       return {
         success: true,
@@ -391,30 +408,33 @@ export function useAuditStore() {
     }
   }
 
-  async function decrementAuditCount(barcode) {
+  async function decrementAuditCount(barcode, wpId) {
     if (isSessionLocked.value) return;
-    const clean = (barcode || '').trim();
+    const clean = scanKeyFor(barcode, wpId);
+    if (!clean) return;
     const cur = scannedCounts.value[clean] ?? 0;
     if (cur > 0) {
       scannedCounts.value[clean] = cur - 1;
-      await adjustAuditCount(clean, selectedStoreId.value, { delta: -1 });
+      await adjustAuditCount(clean, selectedStoreId.value, { delta: -1, productId: wpId });
     }
   }
 
-  async function setAuditCount(barcode, count) {
+  async function setAuditCount(barcode, wpId, count) {
     if (isSessionLocked.value) return;
-    const clean = (barcode || '').trim();
+    const clean = scanKeyFor(barcode, wpId);
+    if (!clean) return;
     const safeCount = Math.max(0, count);
     scannedCounts.value[clean] = safeCount;
-    await adjustAuditCount(clean, selectedStoreId.value, { count: safeCount });
+    await adjustAuditCount(clean, selectedStoreId.value, { count: safeCount, productId: wpId });
   }
 
-  async function addBatchAuditCount(barcode, delta) {
-    const clean = (barcode || '').trim();
+  async function addBatchAuditCount(barcode, wpId, delta) {
+    const clean = scanKeyFor(barcode, wpId);
+    if (!clean) return;
     const cur = scannedCounts.value[clean] ?? 0;
     const target = Math.max(0, cur + delta);
     scannedCounts.value[clean] = target;
-    await adjustAuditCount(clean, selectedStoreId.value, { delta });
+    await adjustAuditCount(clean, selectedStoreId.value, { delta, productId: wpId });
   }
 
   async function resetCurrentAudit() {
@@ -434,9 +454,16 @@ export function useAuditStore() {
       wpProducts.value.forEach((p) => {
         const pTitle = (p.productTitle || p.varian || '').toLowerCase().trim();
         if (p.id === payload.productId || (targetTitle && pTitle === targetTitle)) {
+          const oldKey = scanKeyFor(p.barcode, p.id);
           p.barcode = cleanNew;
           if (res.product.brand && !p.brand) p.brand = res.product.brand;
           matchedCount++;
+          // Carry over any count already scanned under the old synthetic id-based
+          // key so assigning a barcode doesn't appear to reset this product's count
+          if (cleanNew && oldKey && oldKey !== cleanNew && scannedCounts.value[oldKey] !== undefined) {
+            scannedCounts.value[cleanNew] = scannedCounts.value[oldKey];
+            delete scannedCounts.value[oldKey];
+          }
         }
       });
 

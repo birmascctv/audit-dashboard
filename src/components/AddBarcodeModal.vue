@@ -152,9 +152,11 @@ async function handleSubmit() {
             <Barcode class="w-5 h-5" />
           </div>
           <div>
-            <h3 class="text-base font-bold text-slate-900">Add New Barcode</h3>
+            <h3 class="text-base font-bold text-slate-900">
+              {{ hasRealBarcode(selectedProduct) ? 'Change Barcode' : 'Add New Barcode' }}
+            </h3>
             <p class="text-xs text-slate-500">
-              Assign scanned barcode to a product variant
+              {{ hasRealBarcode(selectedProduct) ? 'Replace the barcode currently linked to this product' : 'Assign scanned barcode to a product variant' }}
             </p>
           </div>
         </div>
@@ -243,8 +245,19 @@ async function handleSubmit() {
             </div>
             <div class="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
               <span class="text-slate-500 font-medium">Current Registered Barcode:</span>
-              <span class="font-mono text-xs font-bold" :class="hasRealBarcode(selectedProduct) ? 'text-teal-700' : 'text-slate-400 font-normal'">
-                {{ hasRealBarcode(selectedProduct) ? selectedProduct.barcode : '-' }}
+              <span class="flex items-center gap-1.5">
+                <span class="font-mono text-xs font-bold" :class="hasRealBarcode(selectedProduct) ? 'text-teal-700' : 'text-slate-400 font-normal'">
+                  {{ hasRealBarcode(selectedProduct) ? selectedProduct.barcode : '-' }}
+                </span>
+                <button
+                  v-if="hasRealBarcode(selectedProduct)"
+                  type="button"
+                  @click="barcodeInput = selectedProduct.barcode"
+                  class="text-[10px] text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 px-1.5 py-0.5 rounded font-bold"
+                  title="Fill the field above with the current barcode so you can edit it"
+                >
+                  Edit
+                </button>
               </span>
             </div>
           </div>
@@ -276,7 +289,7 @@ async function handleSubmit() {
             class="px-5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all cursor-pointer disabled:opacity-50"
           >
             <Check class="w-4 h-4" />
-            <span>{{ isSubmitting ? 'Saving Barcode...' : 'Save Barcode' }}</span>
+            <span>{{ isSubmitting ? 'Saving Barcode...' : (hasRealBarcode(selectedProduct) ? 'Save New Barcode' : 'Save Barcode') }}</span>
           </button>
         </div>
       </form>

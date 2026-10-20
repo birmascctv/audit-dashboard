@@ -61,6 +61,12 @@ export function getSalesDb() {
   if (!database) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     database = new DatabaseSync(DB_PATH);
+    try {
+      database.exec('PRAGMA journal_mode = WAL;');
+      database.exec('PRAGMA busy_timeout = 5000;');
+    } catch (err) {
+      console.error('[SalesDB] Failed to apply PRAGMA settings:', err.message);
+    }
     initializeSalesDatabase(database);
   }
   return database;

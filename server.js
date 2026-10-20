@@ -996,41 +996,61 @@ async function startServer() {
 
   // 3. Add or match new barcode
   app.post('/api/products/match-barcode', (req, res) => {
-    const payload = req.body;
-    if (!payload.barcode) {
-      return res.status(400).json({ error: 'Barcode is required' });
+    try {
+      const payload = req.body;
+      if (!payload.barcode) {
+        return res.status(400).json({ error: 'Barcode is required' });
+      }
+
+      const cleanBarcode = payload.barcode.trim();
+      const all = db.getAllProducts();
+      const targetTitle = (payload.productTitle || payload.varian || '').toLowerCase().trim();
+      const existing = (payload.productId || payload.wpId)
+        ? all.find(p => p.id === (payload.productId || payload.wpId))
+        : (targetTitle ? all.find(p => (p.productTitle && p.productTitle.toLowerCase().trim() === targetTitle) || (p.varian && p.varian.toLowerCase().trim() === targetTitle)) : null);
+
+      const productItem = {
+        id: existing ? existing.id : (payload.wpId || `prod-${Date.now()}`),
+        barcode: cleanBarcode,
+        sku: existing?.sku || payload.sku || `SKU-${Date.now().toString().slice(-4)}`,
+        brand: existing?.brand || payload.brand || 'Birmas',
+        varian: existing?.varian || payload.varian || cleanBarcode,
+        productTitle: existing?.productTitle || payload.productTitle || `${existing?.brand || payload.brand || 'Birmas'} ${existing?.varian || payload.varian || cleanBarcode}`,
+        packageType: existing?.packageType || payload.packageType || 'Kaleng',
+        volume: existing?.volume || payload.volume || 330,
+        unitVolume: existing?.unitVolume || payload.unitVolume || 'ml',
+        price: existing?.price !== undefined ? existing.price : (payload.price || 0),
+        stockByStore: existing?.stockByStore || payload.stockByStore || {},
+        wpStatus: 'publish',
+        lastUpdated: new Date().toISOString(),
+      };
+
+      db.saveProduct(productItem);
+
+      // Preserve any counts already scanned under the synthetic `id:<productId>` key
+      // (used before this product had a real barcode) by migrating them onto the
+      // newly-assigned barcode.
+      try {
+        const sqliteDb = db.getDb();
+        sqliteDb.prepare('UPDATE audit_scans SET barcode = ? WHERE barcode = ?;').run(cleanBarcode, `id:${productItem.id}`);
+      } catch (_) {}
+
+      res.json({
+        success: true,
+        message: `Barcode ${cleanBarcode} linked successfully to ${productItem.productTitle || productItem.varian}`,
+        product: productItem,
+      });
+    } catch (err) {
+      console.error('[Add/Change Barcode Error]:', err);
+      const isReadonly = /readonly database/i.test(err.message || '');
+      res.status(500).json({
+        success: false,
+        error: err.message,
+        message: isReadonly
+          ? 'Cannot save barcode: the database file or its folder is not writable by the server process. Run: ls -la data/ && whoami, then chown/chmod the "data" directory and data/birmas_audit.sqlite so the user running "node server.js" (or your process manager) can write to them.'
+          : (err.message || 'Failed to save barcode'),
+      });
     }
-
-    const cleanBarcode = payload.barcode.trim();
-    const all = db.getAllProducts();
-    const targetTitle = (payload.productTitle || payload.varian || '').toLowerCase().trim();
-    const existing = (payload.productId || payload.wpId)
-      ? all.find(p => p.id === (payload.productId || payload.wpId))
-      : (targetTitle ? all.find(p => (p.productTitle && p.productTitle.toLowerCase().trim() === targetTitle) || (p.varian && p.varian.toLowerCase().trim() === targetTitle)) : null);
-
-    const productItem = {
-      id: existing ? existing.id : (payload.wpId || `prod-${Date.now()}`),
-      barcode: cleanBarcode,
-      sku: existing?.sku || payload.sku || `SKU-${Date.now().toString().slice(-4)}`,
-      brand: existing?.brand || payload.brand || 'Birmas',
-      varian: existing?.varian || payload.varian || cleanBarcode,
-      productTitle: existing?.productTitle || payload.productTitle || `${existing?.brand || payload.brand || 'Birmas'} ${existing?.varian || payload.varian || cleanBarcode}`,
-      packageType: existing?.packageType || payload.packageType || 'Kaleng',
-      volume: existing?.volume || payload.volume || 330,
-      unitVolume: existing?.unitVolume || payload.unitVolume || 'ml',
-      price: existing?.price !== undefined ? existing.price : (payload.price || 0),
-      stockByStore: existing?.stockByStore || payload.stockByStore || {},
-      wpStatus: 'publish',
-      lastUpdated: new Date().toISOString(),
-    };
-
-    db.saveProduct(productItem);
-
-    res.json({
-      success: true,
-      message: `Barcode ${cleanBarcode} linked successfully to ${productItem.productTitle || productItem.varian}`,
-      product: productItem,
-    });
   });
 
   app.delete('/api/products/match-barcode/:barcode', (req, res) => {
@@ -1065,23 +1085,30 @@ async function startServer() {
     });
   });
 
-  // 5. Send physical scan
+  // 5. Send physical scan (also used by the per-row "+" button in the comparison
+  // table, which may not have a real barcode yet - in that case the frontend sends
+  // a synthetic `id:<productId>` key alongside productId so the product can still be
+  // matched and counted individually instead of collapsing onto a shared empty key)
   app.post('/api/audit/scan', (req, res) => {
     const stores = db.getAllStores();
-    const { barcode, storeId = (stores[0]?.id || 'birmas-sudirman'), auditorName = 'Auditor' } = req.body;
-    if (!barcode) {
+    const { barcode, productId, storeId = (stores[0]?.id || 'birmas-sudirman'), auditorName = 'Auditor' } = req.body;
+    if (!barcode && !productId) {
       return res.status(400).json({ error: 'Barcode is required' });
     }
 
-    const clean = barcode.trim();
     const products = db.getAllProducts();
-    const product = products.find((p) => p.barcode === clean);
+    let clean = (barcode || '').trim();
+    let product = clean ? products.find((p) => p.barcode === clean) : null;
+    if (!product && productId) {
+      product = products.find((p) => String(p.id) === String(productId));
+      if (product && !clean) clean = `id:${product.id}`;
+    }
 
     if (!product) {
       return res.status(404).json({
         success: false,
-        message: `Barcode ${clean} is not registered in the database.`,
-        unknownBarcode: clean,
+        message: `Barcode ${clean || barcode || ''} is not registered in the database.`,
+        unknownBarcode: clean || barcode,
       });
     }
 
@@ -1117,9 +1144,12 @@ async function startServer() {
     });
   });
 
-  // 6. Manual Adjust Count
+  // 6. Manual Adjust Count (barcode here may be a real barcode OR a synthetic
+  // `id:<productId>` key for products that don't have a barcode assigned yet -
+  // see scanKeyFor() in useAuditStore.js. Each product gets its own key so
+  // adjusting one row's count never affects any other row.)
   app.post('/api/audit/adjust', (req, res) => {
-    const { barcode, storeId = 'birmas-sudirman', count, delta } = req.body;
+    const { barcode, productId, storeId = 'birmas-sudirman', count, delta } = req.body;
     if (!barcode) return res.status(400).json({ error: 'Barcode required' });
 
     const scans = db.getScansByStore(storeId);
@@ -1136,7 +1166,8 @@ async function startServer() {
     if (targetCount > current) {
       const diff = targetCount - current;
       const products = db.getAllProducts();
-      const product = products.find(p => p.barcode === barcode);
+      const product = products.find(p => p.barcode === barcode) ||
+        (productId ? products.find(p => String(p.id) === String(productId)) : null);
       for (let i = 0; i < diff; i++) {
         db.saveScan({
           storeId,

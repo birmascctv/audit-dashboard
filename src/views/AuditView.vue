@@ -339,14 +339,14 @@ async function saveSessionFromCurl() {
   }
 }
 
-const editingBarcode = ref(null);
+const editingItemId = ref(null);
 const editCountValue = ref(0);
 
 // Hardware scanner hook for USB / Wireless Barcode Scanner
 const { scanFeedback, processBarcode } = useScanner({
   soundEnabled: true,
   onScan: async (scannedBarcode) => {
-    const result = await registerAuditScan(scannedBarcode, currentUser.value?.name || 'Auditor');
+    const result = await registerAuditScan(scannedBarcode, undefined, currentUser.value?.name || 'Auditor');
     if (result.success) {
       if (result.isMatchedNow) {
         playScanMatchSound();
@@ -409,15 +409,15 @@ function handleScanSimulate(barcode) {
 }
 
 function startEdit(item) {
-  editingBarcode.value = item.barcode;
+  editingItemId.value = item.wpId;
   editCountValue.value = item.scannedCount;
 }
 
 function saveEdit(item) {
   if (editCountValue.value >= 0) {
-    setAuditCount(item.barcode, Number(editCountValue.value));
+    setAuditCount(item.barcode, item.wpId, Number(editCountValue.value));
   }
-  editingBarcode.value = null;
+  editingItemId.value = null;
 }
 
 function handleResetAuditSession() {
@@ -759,7 +759,7 @@ onMounted(() => {
                   <td class="py-2 px-3 text-center bg-teal-50/50">
                     <div class="flex items-center justify-center gap-1.5">
                       <button
-                        @click="decrementAuditCount(item.barcode)"
+                        @click="decrementAuditCount(item.barcode, item.wpId)"
                         class="w-5 h-5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors"
                         title="Reduce 1"
                       >
@@ -769,7 +769,7 @@ onMounted(() => {
                         {{ item.scannedCount }}
                       </span>
                       <button
-                        @click="registerAuditScan(item.barcode)"
+                        @click="registerAuditScan(item.barcode, item.wpId)"
                         class="w-5 h-5 rounded bg-teal-600 hover:bg-teal-700 text-white flex items-center justify-center transition-colors shadow-sm"
                         title="Add 1"
                       >
@@ -793,7 +793,7 @@ onMounted(() => {
                   </td>
                   <td class="py-2 px-3 text-center">
                     <button
-                      @click="setAuditCount(item.barcode, 0)"
+                      @click="setAuditCount(item.barcode, item.wpId, 0)"
                       class="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                       title="Clear count for this item"
                     >
@@ -1067,7 +1067,7 @@ onMounted(() => {
 
               <!-- Scanned Count (Physical tally) -->
               <td class="py-3.5 px-4 text-center bg-teal-50/30">
-                <div v-if="editingBarcode === item.barcode" class="flex items-center justify-center gap-1">
+                <div v-if="editingItemId === item.wpId" class="flex items-center justify-center gap-1">
                   <input
                     v-model.number="editCountValue"
                     type="number"
@@ -1085,7 +1085,7 @@ onMounted(() => {
                 </div>
                 <div v-else class="flex items-center justify-center gap-1.5">
                   <button
-                    @click="decrementAuditCount(item.barcode)"
+                    @click="decrementAuditCount(item.barcode, item.wpId)"
                     :disabled="item.scannedCount <= 0 || isSessionLocked"
                     class="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 flex items-center justify-center transition-colors"
                     title="Undo 1 scan"
@@ -1112,7 +1112,7 @@ onMounted(() => {
                   </span>
 
                   <button
-                    @click="registerAuditScan(item.barcode)"
+                    @click="registerAuditScan(item.barcode, item.wpId)"
                     :disabled="isSessionLocked"
                     class="w-6 h-6 rounded bg-teal-100 hover:bg-teal-200 disabled:opacity-30 disabled:cursor-not-allowed text-teal-800 border border-teal-300 flex items-center justify-center transition-colors shadow-sm"
                     title="Scan/Count +1 bottle"
@@ -1207,7 +1207,7 @@ onMounted(() => {
               <!-- Action -->
               <td class="py-3.5 px-4 text-right">
                 <button
-                  @click="registerAuditScan(item.barcode)"
+                  @click="registerAuditScan(item.barcode, item.wpId)"
                   type="button"
                   class="px-2.5 py-1 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-sm transition-all"
                   title="Simulate 1 scan of this barcode"

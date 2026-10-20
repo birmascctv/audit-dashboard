@@ -33,6 +33,8 @@ const fileSize = ref('');
 const rawCsvText = ref('');
 const isDragging = ref(false);
 const isParsing = ref(false);
+const parsingProgress = ref(0);
+const parsingStatusText = ref('');
 const isUploading = ref(false);
 const parsedRows = ref([]);
 const parseErrors = ref([]);
@@ -133,7 +135,11 @@ function normalizeDateString(raw) {
 
 // Parse CSV content into rows based on exact key column specifications:
 // Sales Date, Branch, Visit Purpose, Payment method, Menu, Qty, Price, Total
-function parseCSV(text) {
+// Parses the CSV asynchronously, yielding to the browser event loop every ROWS_PER_SLICE
+// rows so very large files (100,000+ rows) don't freeze the tab, and so the progress
+// bar can actually repaint while the file is being parsed.
+const ROWS_PER_SLICE = 4000;
+async function parseCSV(text, onProgress) {
   if (!text || typeof text !== 'string') {
     throw new Error('File content is empty or unreadable.');
   }
@@ -252,6 +258,7 @@ function parseCSV(text) {
   };
 
   const parsed = [];
+  const totalDataLines = allLines.length - (headerLineIndex + 1);
   for (let i = headerLineIndex + 1; i < allLines.length; i++) {
     const rawLine = allLines[i].trim();
     if (!rawLine) continue;
@@ -323,6 +330,14 @@ function parseCSV(text) {
       payment_method: payment,
       visit_purpose: visitPurpose,
     });
+
+    // Yield control back to the browser every ROWS_PER_SLICE rows so huge files
+    // (100,000+ rows) don't block the main thread long enough to look frozen.
+    const processedSoFar = i - headerLineIndex;
+    if (processedSoFar % ROWS_PER_SLICE === 0) {
+      if (onProgress) onProgress(processedSoFar, totalDataLines);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   }
 
   if (parsed.length === 0) {
@@ -356,14 +371,21 @@ function handleFileSelect(e) {
   fileName.value = selectedFile.name;
   fileSize.value = (selectedFile.size / 1024).toFixed(1) + ' KB';
   isParsing.value = true;
+  parsingProgress.value = 0;
+  parsingStatusText.value = 'Reading file...';
 
   const reader = new FileReader();
-  reader.onload = (event) => {
+  reader.onload = async (event) => {
     try {
       const text = event.target?.result || '';
       rawCsvText.value = text;
-      const rows = parseCSV(text);
+      parsingStatusText.value = 'Parsing rows...';
+      const rows = await parseCSV(text, (done, total) => {
+        parsingProgress.value = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+        parsingStatusText.value = `Parsing row ${done.toLocaleString()} of ${total.toLocaleString()}...`;
+      });
       parsedRows.value = rows;
+      parsingProgress.value = 100;
     } catch (err) {
       parseErrors.value = [err.message || 'Failed to parse CSV file.'];
     } finally {
@@ -560,6 +582,21 @@ function handleClose() {
               </p>
             </div>
           </div>
+        </div>
+
+        <!-- Parsing Progress (large files can take a few seconds) -->
+        <div v-if="isParsing" class="p-4 rounded-2xl bg-teal-50 border border-teal-200 text-teal-800 text-xs space-y-2">
+          <div class="flex items-center gap-2 font-bold">
+            <Database class="w-4 h-4 text-teal-600 animate-pulse" />
+            <span>{{ parsingStatusText || 'Parsing CSV...' }}</span>
+          </div>
+          <div class="w-full h-2 rounded-full bg-teal-100 overflow-hidden">
+            <div
+              class="h-full bg-teal-600 transition-all duration-150"
+              :style="{ width: parsingProgress + '%' }"
+            ></div>
+          </div>
+          <p class="text-[11px] text-teal-700">Please keep this tab open - large files (100,000+ rows) may take a little while.</p>
         </div>
 
         <!-- Parsing Feedback / Errors -->

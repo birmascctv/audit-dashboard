@@ -81,11 +81,11 @@ export async function fetchAuditState(storeId) {
   return data;
 }
 
-export async function apiSendScan(barcode, storeId, auditorName) {
+export async function apiSendScan(barcode, storeId, auditorName, productId) {
   const { ok, data, error } = await safeFetchJson(`${API_BASE}/audit/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ barcode, storeId, auditorName }),
+    body: JSON.stringify({ barcode, storeId, auditorName, productId }),
   });
   if (data) {
     return {
