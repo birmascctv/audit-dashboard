@@ -1026,21 +1026,9 @@ async function startServer() {
 
     db.saveProduct(productItem);
 
-    // Ensure all products matching this title or variant in SQLite get this barcode updated for all stores
-    if (targetTitle) {
-      try {
-        const sqliteDb = db.getDb();
-        sqliteDb.prepare(`
-          UPDATE products
-          SET barcode = ?
-          WHERE LOWER(TRIM(product_title)) = ? OR LOWER(TRIM(varian)) = ?
-        `).run(cleanBarcode, targetTitle, targetTitle);
-      } catch (_) {}
-    }
-
     res.json({
       success: true,
-      message: `Barcode ${cleanBarcode} linked successfully to ${productItem.productTitle || productItem.varian} across all stores`,
+      message: `Barcode ${cleanBarcode} linked successfully to ${productItem.productTitle || productItem.varian}`,
       product: productItem,
     });
   });

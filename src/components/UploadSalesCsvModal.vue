@@ -176,12 +176,12 @@ function parseCSV(text) {
 
   const headerLine = allLines[headerLineIndex];
 
-  // Auto-detect delimiter
+  // Auto-detect delimiter (plain substring counting avoids regex escaping pitfalls with "|")
   const delimiters = [',', ';', '\t', '|'];
   let delimiter = ',';
   let maxCount = 0;
   for (const d of delimiters) {
-    const count = (headerLine.match(new RegExp('\\' + (d === '|' ? '\\|' : d), 'g')) || []).length;
+    const count = headerLine.split(d).length - 1;
     if (count > maxCount) {
       maxCount = count;
       delimiter = d;
@@ -215,53 +215,40 @@ function parseCSV(text) {
   const rawHeaders = splitLine(headerLine);
   const headers = rawHeaders.map((h) => h.toLowerCase().trim().replace(/[\s_.-]+/g, ''));
 
-  // Comprehensive column index matching
+  // Resolve a column by trying each candidate (exact match, then substring) in priority
+  // order, so a more specific column (e.g. "Menu Category Detail") is never shadowed by
+  // an unrelated column that merely contains a looser keyword (e.g. a standalone "Brand" column).
+  function findCol(exactCandidates, fuzzyCandidates = []) {
+    for (const candidate of exactCandidates) {
+      const idx = headers.indexOf(candidate);
+      if (idx !== -1) return idx;
+    }
+    for (const candidate of fuzzyCandidates) {
+      const idx = headers.findIndex((h) => h.includes(candidate));
+      if (idx !== -1) return idx;
+    }
+    return -1;
+  }
+
+  // Comprehensive column index matching (ESB Sales Report export layout: J=Branch,
+  // N=Visit Purpose, Y=Payment Method, Z=Menu Category, AA=Menu Category Detail,
+  // AB=Menu, AG=Qty, AH=Price, AI=Subtotal, AR=Total After Bill Discount)
   const colIndex = {
-    salesDate: headers.findIndex((h) =>
-      h === 'salesdate' || h === 'date' || h.includes('salesdate') || h.includes('transdate') || h.includes('orderdate') || h.includes('tanggal') || h.includes('tgl')
-    ),
-    salesDateIn: headers.findIndex((h) =>
-      h === 'salesdatein' || h.includes('datein') || h.includes('datetime') || h.includes('waktu')
-    ),
-    branch: headers.findIndex((h) =>
-      h === 'branch' || h.includes('cabang') || h.includes('store') || h.includes('outlet') || h.includes('lokasi') || h.includes('location')
-    ),
-    visitPurpose: headers.findIndex((h) =>
-      h === 'visitpurpose' || h.includes('purpose') || h.includes('ordermode') || h.includes('channel') || h.includes('tujuan') || h.includes('kunjungan')
-    ),
-    payment: headers.findIndex((h) =>
-      h === 'paymentmethod' || h.includes('payment') || h.includes('metodepembayaran') || h.includes('pembayaran') || h.includes('carabayar') || h.includes('tender')
-    ),
-    menuCategory: headers.findIndex((h) =>
-      h === 'menucategory' || h === 'category' || h.includes('kategori')
-    ),
-    menuCategoryDetail: headers.findIndex((h) =>
-      h === 'menucategorydetail' || h === 'categorydetail' || h === 'brand' || h.includes('merk')
-    ),
-    menu: headers.findIndex((h) =>
-      h === 'menu' || h === 'menuvariant' || h === 'product' || h === 'itemname' || h === 'item' || h.includes('varian') || h.includes('produk') || h.includes('namamenu') || h.includes('namaproduk') || h.includes('barang') || h.includes('deskripsi')
-    ),
-    qty: headers.findIndex((h) =>
-      h === 'qty' || h.includes('quantity') || h.includes('jumlah') || h.includes('kuantitas') || h.includes('banyak')
-    ),
-    price: headers.findIndex((h) =>
-      h === 'price' || h.includes('harga') || h.includes('unitprice') || h.includes('rate') || h.includes('tarif') || h.includes('hargasatuan')
-    ),
-    subtotal: headers.findIndex((h) =>
-      h === 'subtotal' || h.includes('subtotal')
-    ),
-    discount: headers.findIndex((h) =>
-      h === 'discount' || h.includes('diskon') || h.includes('potongan')
-    ),
-    tax: headers.findIndex((h) =>
-      h === 'tax' || h === 'vat' || h.includes('pajak') || h.includes('pb1')
-    ),
-    total: headers.findIndex((h) =>
-      h === 'total' || h === 'nettsales' || h === 'netsales' || h.includes('totalbayar') || h.includes('totalamount') || h.includes('totalsales') || h.includes('grandtotal') || h.includes('amount')
-    ),
-    billNo: headers.findIndex((h) =>
-      h === 'billnumber' || h === 'billno' || h.includes('faktur') || h.includes('invoice') || h.includes('transno') || h.includes('nostruk')
-    ),
+    salesDate: findCol(['salesdate', 'date'], ['salesdate', 'transdate', 'orderdate', 'tanggal', 'tgl']),
+    salesDateIn: findCol(['salesdatein'], ['datein', 'datetime', 'waktu']),
+    branch: findCol(['branch'], ['cabang', 'store', 'outlet', 'lokasi', 'location']),
+    visitPurpose: findCol(['visitpurpose'], ['purpose', 'ordermode', 'channel', 'tujuan', 'kunjungan']),
+    payment: findCol(['paymentmethod'], ['payment', 'metodepembayaran', 'pembayaran', 'carabayar', 'tender']),
+    menuCategory: findCol(['menucategory', 'category'], ['kategori']),
+    menuCategoryDetail: findCol(['menucategorydetail', 'categorydetail'], ['brand', 'merk']),
+    menu: findCol(['menu', 'menuvariant', 'product', 'itemname', 'item'], ['varian', 'produk', 'namamenu', 'namaproduk', 'barang', 'deskripsi']),
+    qty: findCol(['qty'], ['quantity', 'jumlah', 'kuantitas', 'banyak']),
+    price: findCol(['price'], ['harga', 'unitprice', 'rate', 'tarif', 'hargasatuan']),
+    subtotal: findCol(['subtotal']),
+    discount: findCol(['discount'], ['diskon', 'potongan']),
+    tax: findCol(['tax', 'vat'], ['pajak', 'pb1']),
+    total: findCol(['totalafterbilldiscount', 'total', 'nettsales', 'netsales'], ['totalbayar', 'totalamount', 'totalsales', 'grandtotal', 'amount']),
+    billNo: findCol(['billnumber', 'billno'], ['faktur', 'invoice', 'transno', 'nostruk']),
   };
 
   const parsed = [];

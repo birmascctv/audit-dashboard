@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useAuditStore } from '../composables/useAuditStore.js';
+import { useAuth } from '../composables/useAuth.js';
 import { fetchAuditHistory } from '../services/wordpressApi.js';
 import { formatDateTime, exportToCSV } from '../utils/storage.js';
 import {
@@ -29,6 +30,7 @@ import {
 } from 'lucide-vue-next';
 
 const { auditHistory, clearHistory, stores } = useAuditStore();
+const { isSuperAdmin } = useAuth();
 
 const searchQuery = ref('');
 const selectedAudit = ref(null);
@@ -212,6 +214,7 @@ function exportHistoryCSV() {
         </button>
 
         <button
+          v-if="isSuperAdmin"
           @click="handleClearHistory"
           :disabled="auditHistory.length === 0"
           type="button"
