@@ -619,7 +619,8 @@ export async function runBirmasServerSync(options = {}) {
 
       for (const item of items) {
         const branchCode = String(item.location?.[0]?.branch_code_esb || '').toLowerCase();
-        if (branchCode === 'behp') continue; // ESB test branch
+        // Records without a linked outlet (location=false) must never fall back to a default store
+        if (!branchCode || branchCode === 'behp') continue; // also skips the ESB test branch
         const storeId = (branchCode && BIRMAS_STORE_KEYWORD_MAP.find((m) => m.keywords.includes(branchCode))?.storeId)
           || extractMatchedStoreId(item) || db.resolveStoreIdForStock(item.store || item.store_name || item.storeName || item.branch || item.storeId || '');
         if (!storeId) continue;
