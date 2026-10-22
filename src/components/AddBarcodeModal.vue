@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 import { useAuditStore } from '../composables/useAuditStore.js';
 import {
   Barcode,
@@ -28,6 +28,7 @@ const emit = defineEmits(['close', 'barcodeAdded']);
 
 const { wpProducts, addNewBarcode } = useAuditStore();
 const barcodeInputEl = ref(null);
+const searchInputEl = ref(null);
 const isClearing = ref(false);
 
 async function clearBarcode() {
@@ -163,6 +164,9 @@ async function handleSubmit() {
       };
       emit('barcodeAdded', cleanBarcode);
       barcodeInput.value = '';
+      productSearchQuery.value = '';
+      await nextTick();
+      searchInputEl.value?.focus();
     } else {
       feedbackMessage.value = { type: 'error', text: res.message || 'Failed to save barcode' };
     }
@@ -249,7 +253,9 @@ async function handleSubmit() {
           <div class="relative">
             <Search class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
+              ref="searchInputEl"
               v-model="productSearchQuery"
+              @keydown.enter.prevent="selectedProductId && barcodeInputEl?.focus()"
               type="text"
               placeholder="Search product variant (e.g. Bintang, Coca Cola, Canard)..."
               class="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-teal-500"
@@ -258,6 +264,7 @@ async function handleSubmit() {
 
           <select
             v-model="selectedProductId"
+            :size="productSearchQuery.trim() && filteredProductList.length > 1 ? Math.min(filteredProductList.length, 6) : 1"
             @change="barcodeInputEl?.focus(); barcodeInputEl?.select()"
             required
             class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 text-xs font-semibold focus:outline-none focus:border-teal-500 cursor-pointer shadow-sm"
