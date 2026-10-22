@@ -211,9 +211,9 @@ async function handleSubmit() {
     v-if="isOpen"
     class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
   >
-    <div class="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden text-slate-800">
+    <div class="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full text-slate-800">
       <!-- Modal Header -->
-      <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+      <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/80 rounded-t-3xl">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center">
             <Barcode class="w-5 h-5" />
@@ -294,7 +294,7 @@ async function handleSubmit() {
             />
             <ul
               v-if="showList"
-              class="absolute z-20 left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-slate-300 rounded-xl shadow-lg text-xs"
+              class="absolute z-20 left-0 right-0 mt-1 max-h-56 overflow-y-auto overscroll-contain bg-white border border-slate-300 rounded-xl shadow-lg text-xs"
             >
               <li v-if="filteredProductList.length === 0" class="px-3 py-2 text-slate-400">No matching product</li>
               <li
@@ -302,7 +302,7 @@ async function handleSubmit() {
                 :key="p.id"
                 @mousedown.prevent="pickProduct(p)"
                 @mouseenter="highlightIdx = i"
-                class="px-3 py-2 cursor-pointer font-semibold text-slate-800"
+                class="h-8 px-3 flex items-center cursor-pointer font-semibold text-slate-800 truncate"
                 :class="i === highlightIdx ? 'bg-teal-50 text-teal-900' : ''"
               >
                 {{ p.productTitle || p.varian }}
