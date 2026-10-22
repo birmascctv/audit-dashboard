@@ -221,7 +221,12 @@ export function useAuditStore() {
   const auditItems = computed(() => {
     const storeId = selectedStoreId.value;
 
-    return wpProducts.value.map((prod) => {
+    const seenBarcodes = new Set();
+    return wpProducts.value.map((rawProd) => {
+      // One barcode belongs to one product: later duplicates fall back to their own id key
+      const b = String(rawProd.barcode || '').trim();
+      const prod = b && seenBarcodes.has(b) ? { ...rawProd, barcode: '' } : rawProd;
+      if (b) seenBarcodes.add(b);
       const rawExpected = (prod.stockByStore && prod.stockByStore[storeId]) ?? 0;
       const wpExpected = Math.round(Number(rawExpected) || 0);
       const scanKey = scanKeyFor(prod.barcode, prod.id);

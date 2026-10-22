@@ -346,6 +346,11 @@ const editCountValue = ref(0);
 const { scanFeedback, processBarcode } = useScanner({
   soundEnabled: true,
   onScan: async (scannedBarcode) => {
+    // While Add Barcode is open, a scan only fills the barcode box; it must not count
+    if (isAddBarcodeModalOpen.value) {
+      pendingUnknownBarcode.value = scannedBarcode;
+      return { success: true, message: `Barcode ${scannedBarcode} captured for linking` };
+    }
     const result = await registerAuditScan(scannedBarcode, undefined, currentUser.value?.name || 'Auditor');
     if (result.success) {
       if (result.isMatchedNow) {
