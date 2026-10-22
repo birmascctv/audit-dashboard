@@ -76,14 +76,29 @@ watch(
   { immediate: true }
 );
 
+// Keep the selection in sync with what the dropdown actually shows
 watch(
-  esbProductList,
+  filteredProductList,
   (list) => {
-    if (list && list.length > 0 && !selectedProductId.value) {
+    if (list.length > 0 && !list.some((p) => p.id === selectedProductId.value)) {
       selectedProductId.value = list[0].id;
+    } else if (list.length === 0) {
+      selectedProductId.value = '';
     }
   },
   { immediate: true }
+);
+
+watch(
+  () => props.isOpen,
+  (open) => {
+    if (open) {
+      barcodeInput.value = props.prefilledBarcode || '';
+      productSearchQuery.value = '';
+      selectedProductId.value = filteredProductList.value[0]?.id || '';
+      feedbackMessage.value = null;
+    }
+  }
 );
 
 async function handleSubmit() {
