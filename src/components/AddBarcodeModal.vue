@@ -237,7 +237,6 @@ async function handleSubmit() {
 
           <select
             v-model="selectedProductId"
-            size="7"
             required
             class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 text-xs font-semibold focus:outline-none focus:border-teal-500 cursor-pointer shadow-sm"
           >
