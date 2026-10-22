@@ -27,6 +27,25 @@ const props = defineProps({
 const emit = defineEmits(['close', 'barcodeAdded']);
 
 const { wpProducts, addNewBarcode } = useAuditStore();
+const isClearing = ref(false);
+
+async function clearBarcode() {
+  const prod = selectedProduct.value;
+  if (!prod || !hasRealBarcode(prod)) return;
+  isClearing.value = true;
+  try {
+    const res = await fetch(`/api/products/${encodeURIComponent(prod.id)}/barcode`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || 'Failed');
+    prod.barcode = '';
+    try { localStorage.setItem('birmas_products', JSON.stringify(wpProducts.value)); } catch (_) {}
+    feedbackMessage.value = { type: 'success', text: `Barcode removed from "${prod.productTitle || prod.varian}".` };
+  } catch (err) {
+    feedbackMessage.value = { type: 'error', text: err.message || 'Network error' };
+  } finally {
+    isClearing.value = false;
+  }
+}
 
 const barcodeInput = ref('');
 const selectedProductId = ref('');
@@ -273,6 +292,16 @@ async function handleSubmit() {
                   title="Fill the field above with the current barcode so you can edit it"
                 >
                   Edit
+                </button>
+                <button
+                  v-if="hasRealBarcode(selectedProduct)"
+                  type="button"
+                  :disabled="isClearing"
+                  @click="clearBarcode"
+                  class="text-[10px] text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-1.5 py-0.5 rounded font-bold"
+                  title="Remove the barcode from this product (it will be counted manually)"
+                >
+                  Remove
                 </button>
               </span>
             </div>

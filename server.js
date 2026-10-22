@@ -1156,6 +1156,18 @@ async function startServer() {
     }
   });
 
+  // Clear a product's barcode without deleting the product (some products have none)
+  app.delete('/api/products/:id/barcode', (req, res) => {
+    const sqliteDb = db.getDb();
+    const prod = db.getAllProducts().find((p) => String(p.id) === String(req.params.id));
+    if (!prod) return res.status(404).json({ success: false, message: 'Product not found' });
+    sqliteDb.prepare('UPDATE products SET barcode = NULL WHERE id = ?;').run(prod.id);
+    if (prod.barcode) {
+      sqliteDb.prepare('UPDATE audit_scans SET barcode = ? WHERE barcode = ?;').run(`id:${prod.id}`, prod.barcode);
+    }
+    res.json({ success: true, message: 'Barcode cleared' });
+  });
+
   app.delete('/api/products/match-barcode/:barcode', (req, res) => {
     const { barcode } = req.params;
     const all = db.getAllProducts();
