@@ -451,9 +451,13 @@ export function useAuditStore() {
 
       // Update ALL matching products in catalog across all store views
       let matchedCount = 0;
+      // A barcode belongs to one product; clear it from any other product locally
+      wpProducts.value.forEach((p) => {
+        if (cleanNew && p.id !== res.product.id && String(p.barcode || '').trim() === cleanNew) p.barcode = '';
+      });
       wpProducts.value.forEach((p) => {
         const pTitle = (p.productTitle || p.varian || '').toLowerCase().trim();
-        if (p.id === payload.productId || (targetTitle && pTitle === targetTitle)) {
+        if (p.id === res.product.id) {
           const oldKey = scanKeyFor(p.barcode, p.id);
           p.barcode = cleanNew;
           if (res.product.brand && !p.brand) p.brand = res.product.brand;
@@ -485,10 +489,7 @@ export function useAuditStore() {
             if (!fp.barcode) return;
             const fpTitle = (fp.productTitle || fp.varian || '').toLowerCase().trim();
             wpProducts.value.forEach((p) => {
-              const pTitle = (p.productTitle || p.varian || '').toLowerCase().trim();
-              if (p.id === fp.id || (fpTitle && pTitle === fpTitle)) {
-                p.barcode = fp.barcode;
-              }
+              if (p.id === fp.id) p.barcode = fp.barcode;
             });
           });
           localStorage.setItem('birmas_products', JSON.stringify(wpProducts.value));

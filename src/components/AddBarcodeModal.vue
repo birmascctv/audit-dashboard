@@ -203,6 +203,7 @@ async function handleSubmit() {
           </label>
           <input
             v-model="barcodeInput"
+            @keydown.enter.prevent="$event.target.form?.querySelector('input[placeholder^=Search]')?.focus()"
             type="text"
             required
             autofocus
