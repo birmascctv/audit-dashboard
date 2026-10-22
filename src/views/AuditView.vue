@@ -372,7 +372,9 @@ const { scanFeedback, processBarcode } = useScanner({
 
 // All items in catalog filtered for the main comparison table
 const filteredItems = computed(() => {
-  return auditItems.value.filter((item) => {
+  return auditItems.value.slice().sort((a, b) =>
+    String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' })
+  ).filter((item) => {
     if (brandFilter.value !== 'ALL' && (item.subCategory !== brandFilter.value && item.brand !== brandFilter.value)) {
       return false;
     }
