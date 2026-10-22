@@ -98,12 +98,21 @@ watch(
 );
 
 const showList = ref(false);
+const listEl = ref(null);
 const highlightIdx = ref(0);
 
 function onSearchInput() {
   selectedProductId.value = '';
   highlightIdx.value = 0;
   showList.value = true;
+}
+
+watch(highlightIdx, () => {
+  nextTick(() => listEl.value?.children[highlightIdx.value]?.scrollIntoView({ block: 'nearest' }));
+});
+
+function hoverIdx(i) {
+  highlightIdx.value = i;
 }
 
 function pickProduct(p) {
@@ -294,14 +303,15 @@ async function handleSubmit() {
             />
             <ul
               v-if="showList"
-              class="absolute z-20 left-0 right-0 mt-1 max-h-56 overflow-y-auto overscroll-contain bg-white border border-slate-300 rounded-xl shadow-lg text-xs"
+              ref="listEl"
+              class="absolute z-20 left-0 right-0 mt-1 max-h-40 overflow-y-auto overscroll-contain bg-white border border-slate-300 rounded-xl shadow-lg text-xs"
             >
               <li v-if="filteredProductList.length === 0" class="px-3 py-2 text-slate-400">No matching product</li>
               <li
                 v-for="(p, i) in filteredProductList"
                 :key="p.id"
                 @mousedown.prevent="pickProduct(p)"
-                @mouseenter="highlightIdx = i"
+                @mouseenter="hoverIdx(i)"
                 class="h-8 px-3 flex items-center cursor-pointer font-semibold text-slate-800 truncate"
                 :class="i === highlightIdx ? 'bg-teal-50 text-teal-900' : ''"
               >
