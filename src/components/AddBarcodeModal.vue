@@ -142,10 +142,7 @@ async function handleSubmit() {
         text: `Barcode ${cleanBarcode} linked to "${payload.productTitle}"! Future physical scans will match immediately.`,
       };
       emit('barcodeAdded', cleanBarcode);
-      setTimeout(() => {
-        emit('close');
-        feedbackMessage.value = null;
-      }, 1200);
+      barcodeInput.value = '';
     } else {
       feedbackMessage.value = { type: 'error', text: res.message || 'Failed to save barcode' };
     }
@@ -240,6 +237,7 @@ async function handleSubmit() {
 
           <select
             v-model="selectedProductId"
+            size="7"
             required
             class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 text-xs font-semibold focus:outline-none focus:border-teal-500 cursor-pointer shadow-sm"
           >
