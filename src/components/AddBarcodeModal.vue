@@ -97,18 +97,43 @@ watch(
   { immediate: true }
 );
 
-// Keep the selection in sync with what the dropdown actually shows
-watch(
-  filteredProductList,
-  (list) => {
-    if (list.length > 0 && !list.some((p) => p.id === selectedProductId.value)) {
-      selectedProductId.value = list[0].id;
-    } else if (list.length === 0) {
-      selectedProductId.value = '';
-    }
-  },
-  { immediate: true }
-);
+const showList = ref(false);
+const highlightIdx = ref(0);
+
+function onSearchInput() {
+  selectedProductId.value = '';
+  highlightIdx.value = 0;
+  showList.value = true;
+}
+
+function pickProduct(p) {
+  if (!p) return;
+  selectedProductId.value = p.id;
+  productSearchQuery.value = p.productTitle || p.varian || '';
+  showList.value = false;
+  nextTick(() => {
+    barcodeInputEl.value?.focus();
+    barcodeInputEl.value?.select();
+  });
+}
+
+function onSearchKeydown(e) {
+  const n = filteredProductList.value.length;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    showList.value = true;
+    highlightIdx.value = Math.min(highlightIdx.value + 1, n - 1);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    highlightIdx.value = Math.max(highlightIdx.value - 1, 0);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (showList.value) pickProduct(filteredProductList.value[highlightIdx.value]);
+    else if (selectedProductId.value) barcodeInputEl.value?.focus();
+  } else if (e.key === 'Escape') {
+    showList.value = false;
+  }
+}
 
 watch(
   () => props.isOpen,
@@ -116,8 +141,10 @@ watch(
     if (open) {
       barcodeInput.value = props.prefilledBarcode || '';
       productSearchQuery.value = '';
-      selectedProductId.value = filteredProductList.value[0]?.id || '';
+      selectedProductId.value = '';
+      showList.value = false;
       feedbackMessage.value = null;
+      nextTick(() => searchInputEl.value?.focus());
     } else {
       barcodeInput.value = '';
       productSearchQuery.value = '';
@@ -165,6 +192,7 @@ async function handleSubmit() {
       emit('barcodeAdded', cleanBarcode);
       barcodeInput.value = '';
       productSearchQuery.value = '';
+      selectedProductId.value = '';
       await nextTick();
       searchInputEl.value?.focus();
     } else {
@@ -249,34 +277,38 @@ async function handleSubmit() {
             </span>
           </div>
 
-          <!-- Quick Search Filter for Product Dropdown -->
+          <!-- Search + dropdown in one box -->
           <div class="relative">
             <Search class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               ref="searchInputEl"
               v-model="productSearchQuery"
-              @keydown.enter.prevent="selectedProductId && barcodeInputEl?.focus()"
+              @input="onSearchInput"
+              @focus="$event.target.select(); showList = true"
+              @blur="showList = false"
+              @keydown="onSearchKeydown"
               type="text"
-              placeholder="Search product variant (e.g. Bintang, Coca Cola, Canard)..."
-              class="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-teal-500"
+              autocomplete="off"
+              placeholder="Type to search product variant (e.g. Bintang, Coca Cola, Canard)..."
+              class="w-full pl-8 pr-3 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 placeholder-slate-400 placeholder:font-normal focus:outline-none focus:border-teal-500 shadow-sm"
             />
-          </div>
-
-          <select
-            v-model="selectedProductId"
-            :size="productSearchQuery.trim() && filteredProductList.length > 1 ? Math.min(filteredProductList.length, 6) : 1"
-            @change="barcodeInputEl?.focus(); barcodeInputEl?.select()"
-            required
-            class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 text-xs font-semibold focus:outline-none focus:border-teal-500 cursor-pointer shadow-sm"
-          >
-            <option
-              v-for="p in filteredProductList"
-              :key="p.id"
-              :value="p.id"
+            <ul
+              v-if="showList"
+              class="absolute z-20 left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-slate-300 rounded-xl shadow-lg text-xs"
             >
-              {{ p.productTitle || p.varian }}
-            </option>
-          </select>
+              <li v-if="filteredProductList.length === 0" class="px-3 py-2 text-slate-400">No matching product</li>
+              <li
+                v-for="(p, i) in filteredProductList"
+                :key="p.id"
+                @mousedown.prevent="pickProduct(p)"
+                @mouseenter="highlightIdx = i"
+                class="px-3 py-2 cursor-pointer font-semibold text-slate-800"
+                :class="i === highlightIdx ? 'bg-teal-50 text-teal-900' : ''"
+              >
+                {{ p.productTitle || p.varian }}
+              </li>
+            </ul>
+          </div>
 
           <!-- Selected Product Info Card -->
           <div v-if="selectedProduct" class="p-3 bg-white rounded-xl border border-slate-200 space-y-1.5">
