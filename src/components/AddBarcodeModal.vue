@@ -97,6 +97,9 @@ watch(
       productSearchQuery.value = '';
       selectedProductId.value = filteredProductList.value[0]?.id || '';
       feedbackMessage.value = null;
+    } else {
+      barcodeInput.value = '';
+      productSearchQuery.value = '';
     }
   }
 );
