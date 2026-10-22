@@ -273,7 +273,7 @@ function initTables(db) {
   // Purge any legacy mock barcodes from previous template versions
   db.exec(`
     DELETE FROM products WHERE id LIKE 'wp-10%';
-    DELETE FROM products WHERE category IN ('PERLENGKAPAN OUTLET', 'ASSET', 'Asset', 'NON DEPRECIATED ASSET', 'LAIN LAIN') OR product_title LIKE '%ES BATU%' OR product_title LIKE '%GELAS CUP%';
+    DELETE FROM products WHERE UPPER(category) IN ('PERLENGKAPAN OUTLET', 'LAIN-LAIN', 'LAIN LAIN', 'ELECTRONIC');
   `);
 
   // Seed default WP config if not present

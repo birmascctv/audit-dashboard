@@ -374,12 +374,106 @@ export async function runSalesSync() {
 
 let isBirmasServerSyncing = false;
 
+const EXCLUDED_ESB_CATEGORIES = new Set(['LAIN-LAIN', 'LAIN LAIN', 'PERLENGKAPAN OUTLET', 'ELECTRONIC']);
+const ESB_FEED_STORES = { BRMS: 'birmas-sudirman', BRMK: 'birmas-kuningan', BRMKW: 'birmas-kwitang' };
+
+export function isExcludedEsbProduct(name, category) {
+  const n = String(name || '').trim().toUpperCase();
+  if (n.startsWith('PROMO') && /\(?DRAFT\)?$/.test(n)) return true;
+  return EXCLUDED_ESB_CATEGORIES.has(String(category || '').trim().toUpperCase());
+}
+
+// Pulls the ESB stock list through the Birmas server feed (exact ESB names, categories and quantities)
+async function runEsbFeedSync() {
+  const key = process.env.BIRMAS_STOCK_FEED_KEY;
+  if (!key) return null;
+  const base = String(process.env.BIRMAS_BACKEND_URL || db.getConfig('wp_url') || 'http://10.0.0.10').replace(/\/+$/, '').replace(/\/wp-json.*$/, '');
+  const res = await fetch(`${base}/audit-stock-feed.php`, { headers: { 'X-Audit-Key': key, accept: 'application/json' }, signal: AbortSignal.timeout(120000) });
+  if (!res.ok) throw new Error(`ESB stock feed returned HTTP ${res.status}`);
+  const body = await res.json();
+  if (!body.success || !Array.isArray(body.rows) || body.rows.length === 0) {
+    throw new Error(`ESB stock feed incomplete: ${JSON.stringify(body.errors || {})}`);
+  }
+
+  const startedAt = new Date().toISOString();
+  const norm = (v) => String(v || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  const barcodes = new Map();
+  for (const p of db.getAllProducts()) {
+    if (p.barcode && p.productTitle) barcodes.set(norm(p.productTitle), p.barcode);
+  }
+  const usedBarcodes = new Set();
+  const barcodeFor = (name) => {
+    const n = norm(name);
+    const found = barcodes.get(n) || (() => {
+      const close = [...barcodes].filter(([k]) => k.startsWith(`${n} `) || n.startsWith(`${k} `));
+      return close.length === 1 ? close[0][1] : null;
+    })();
+    if (!found || usedBarcodes.has(found)) return found && usedBarcodes.has(found) ? undefined : null;
+    usedBarcodes.add(found);
+    return found;
+  };
+
+  let synced = 0;
+  const sqlite = db.getDb();
+  sqlite.exec('BEGIN');
+  try {
+    sqlite.prepare("UPDATE products SET barcode = NULL WHERE id LIKE 'erp-%'").run();
+    const idBarcode = new Map();
+    for (const row of body.rows) {
+      const storeId = ESB_FEED_STORES[row.branch];
+      const name = norm(row.name);
+      if (!storeId || !name || isExcludedEsbProduct(name, row.category)) continue;
+      const category = norm(row.category) || 'BEVERAGE';
+      const brand = norm(row.subCategory) || db.deriveProductBrand(name);
+      const unit = norm(row.unit) || 'BOTOL';
+      const id = `esb-${row.productId}`;
+      db.saveProduct({
+        id,
+        barcode: idBarcode.has(row.productId) ? idBarcode.get(row.productId) : (idBarcode.set(row.productId, barcodeFor(name) ?? null), idBarcode.get(row.productId)),
+        sku: `SKU-${row.productId}`,
+        brand,
+        varian: name.startsWith(brand) ? name.slice(brand.length).trim() || name : name,
+        productTitle: name,
+        category,
+        subCategory: brand,
+        defaultUnit: unit,
+        packageType: /CAN|KALENG/.test(unit) ? 'Kaleng' : 'Botol',
+        volume: parseInt((name.match(/(\d{2,4})\s*ML/) || [])[1], 10) || (name.includes('620') ? 620 : 330),
+        unitVolume: 'ml',
+        price: 0,
+        wpStatus: 'publish',
+        lastUpdated: startedAt,
+      });
+      db.setProductStock(storeId, id, Math.round(Number(row.stock) || 0));
+      synced++;
+    }
+    // Drop everything this feed no longer reports (old WP-based ids, excluded categories)
+    sqlite.prepare('DELETE FROM store_stocks WHERE last_synced < ?').run(startedAt);
+    sqlite.prepare("DELETE FROM products WHERE id NOT IN (SELECT product_id FROM store_stocks) AND (id LIKE 'erp-%' OR id LIKE 'esb-%')").run();
+    sqlite.exec('COMMIT');
+  } catch (err) {
+    sqlite.exec('ROLLBACK');
+    throw err;
+  }
+  db.setConfig('last_birmas_server_synced_at', new Date().toISOString());
+  console.log(`[ESB Feed Sync] Synced ${synced} store stocks.`);
+  return synced;
+}
+
 export async function runBirmasServerSync(options = {}) {
   if (isBirmasServerSyncing) {
     return { success: false, message: 'Birmas Central Server sync is already running in background' };
   }
   isBirmasServerSyncing = true;
   try {
+    try {
+      const feedCount = await runEsbFeedSync();
+      if (feedCount) {
+        return { success: true, message: `Synchronized ${feedCount} ESB store stocks via the Birmas server feed`, totalSyncedProducts: feedCount, source: 'esb_feed' };
+      }
+    } catch (feedErr) {
+      console.warn(`[ESB Feed Sync] ${feedErr.message}; falling back to the WordPress product_stock API.`);
+    }
     const rawBaseUrl = options.baseUrl || options.birmasServerUrl || process.env.BIRMAS_BACKEND_URL || db.getConfig('wp_url') || 'http://10.0.0.10';
     const baseUrl = String(rawBaseUrl).trim();
     const token = options.token || options.apiToken || options.birmasServerToken || process.env.BIRMAS_API_TOKEN || db.getConfig('birmas_server_token') || '';
