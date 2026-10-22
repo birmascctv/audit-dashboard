@@ -397,18 +397,25 @@ async function runEsbFeedSync() {
 
   const startedAt = new Date().toISOString();
   const norm = (v) => String(v || '').toUpperCase().replace(/\s+/g, ' ').trim();
-  const barcodes = new Map();
-  for (const p of db.getAllProducts()) {
-    if (p.barcode && p.productTitle) barcodes.set(norm(p.productTitle), p.barcode);
+  // Barcodes already on esb-* products are kept as-is; legacy erp-* barcodes are only
+  // carried over (by name) to esb products that have none, never twice.
+  const all = db.getAllProducts();
+  const ownBarcode = new Map(all.filter((p) => p.id.startsWith('esb-') && p.barcode).map((p) => [p.id, p.barcode]));
+  const usedBarcodes = new Set(ownBarcode.values());
+  const legacy = new Map();
+  const legacyIds = new Map();
+  for (const p of all) {
+    if (!p.id.startsWith('erp-')) continue;
+    legacyIds.set(norm(p.productTitle), p.id);
+    if (p.barcode && !usedBarcodes.has(p.barcode)) legacy.set(norm(p.productTitle), p.barcode);
   }
-  const usedBarcodes = new Set();
-  const barcodeFor = (name) => {
+  const legacyBarcodeFor = (name) => {
     const n = norm(name);
-    const found = barcodes.get(n) || (() => {
-      const close = [...barcodes].filter(([k]) => k.startsWith(`${n} `) || n.startsWith(`${k} `));
+    const found = legacy.get(n) || (() => {
+      const close = [...legacy].filter(([k]) => k.startsWith(`${n} `) || n.startsWith(`${k} `));
       return close.length === 1 ? close[0][1] : null;
     })();
-    if (!found || usedBarcodes.has(found)) return found && usedBarcodes.has(found) ? undefined : null;
+    if (!found || usedBarcodes.has(found)) return null;
     usedBarcodes.add(found);
     return found;
   };
@@ -419,6 +426,7 @@ async function runEsbFeedSync() {
   try {
     sqlite.prepare("UPDATE products SET barcode = NULL WHERE id LIKE 'erp-%'").run();
     const idBarcode = new Map();
+    const migrated = [];
     for (const row of body.rows) {
       const storeId = ESB_FEED_STORES[row.branch];
       const name = norm(row.name);
@@ -429,7 +437,13 @@ async function runEsbFeedSync() {
       const id = `esb-${row.productId}`;
       db.saveProduct({
         id,
-        barcode: idBarcode.has(row.productId) ? idBarcode.get(row.productId) : (idBarcode.set(row.productId, barcodeFor(name) ?? null), idBarcode.get(row.productId)),
+        barcode: (() => {
+          if (!idBarcode.has(row.productId)) {
+            idBarcode.set(row.productId, ownBarcode.has(id) ? null : legacyBarcodeFor(name));
+            if (legacyIds.has(name)) migrated.push([legacyIds.get(name), id]);
+          }
+          return idBarcode.get(row.productId);
+        })(),
         sku: `SKU-${row.productId}`,
         brand,
         varian: name.startsWith(brand) ? name.slice(brand.length).trim() || name : name,
@@ -449,6 +463,12 @@ async function runEsbFeedSync() {
     }
     // Drop everything this feed no longer reports (old WP-based ids, excluded categories)
     sqlite.prepare('DELETE FROM store_stocks WHERE last_synced < ?').run(startedAt);
+    for (const [oldId, newId] of migrated) {
+      sqlite.prepare('UPDATE OR IGNORE audit_scans SET barcode = ? WHERE barcode = ?;').run(`id:${newId}`, `id:${oldId}`);
+    }
+    // Legacy erp-* rows are duplicates of the esb-* products; one id per product for all stores
+    sqlite.prepare("DELETE FROM store_stocks WHERE product_id LIKE 'erp-%'").run();
+    sqlite.prepare("DELETE FROM products WHERE id LIKE 'erp-%'").run();
     sqlite.prepare("DELETE FROM products WHERE id NOT IN (SELECT product_id FROM store_stocks) AND (id LIKE 'erp-%' OR id LIKE 'esb-%')").run();
     sqlite.exec('COMMIT');
   } catch (err) {
