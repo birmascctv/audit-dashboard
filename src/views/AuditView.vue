@@ -633,7 +633,6 @@ onMounted(() => {
             :placeholder="isSessionLocked ? 'Audit Session is locked. Recounting requires Superadmin approval.' : 'Scan barcode with USB/Wireless scanner (aim and scan bottle)...'"
             class="w-full pl-13 pr-28 py-3.5 text-slate-900 placeholder-slate-400 text-base font-mono rounded-xl border-2 transition-all shadow-inner"
             :class="isSessionLocked ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60' : 'bg-slate-50 border-slate-300 focus:border-teal-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-teal-100'"
-            @keydown.enter.prevent="processBarcode($event.target.value); $event.target.value = ''"
           />
           <span class="absolute right-3 px-2.5 py-1 rounded bg-white border border-slate-300 text-[11px] font-mono text-teal-700 font-semibold shadow-sm">
             Auto-Enter

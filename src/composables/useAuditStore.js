@@ -174,15 +174,66 @@ async function unlockCurrentSession(user = 'Super Admin', role = 'superadmin') {
   } catch (_) {}
 }
 
+const countsCacheKey = (storeId) => `birmas_counts_${storeId}`;
+const PENDING_KEY = 'birmas_pending_scans';
+
+function persistCounts(storeId = selectedStoreId.value) {
+  try { localStorage.setItem(countsCacheKey(storeId), JSON.stringify(scannedCounts.value)); } catch (_) {}
+}
+
+function readPending() {
+  try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); } catch (_) { return []; }
+}
+function writePending(list) {
+  try { localStorage.setItem(PENDING_KEY, JSON.stringify(list)); } catch (_) {}
+}
+
+let isFlushing = false;
+// Send scans that were taken while offline; stops at the first network failure
+async function flushPendingScans() {
+  if (isFlushing) return;
+  isFlushing = true;
+  try {
+    let queue = readPending();
+    while (queue.length > 0) {
+      const item = queue[0];
+      const res = await sendAuditScan(item.barcode, item.storeId, item.auditorName, item.productId);
+      if (res.offline) break;
+      queue = queue.slice(1);
+      writePending(queue);
+    }
+  } finally {
+    isFlushing = false;
+  }
+}
+
 async function loadStoreScans(storeId) {
   try {
+    await flushPendingScans();
     const res = await fetchAuditState(storeId);
-    scannedCounts.value = res.counts || res.scannedCounts || {};
-    scanLogs.value = res.scanLogs || [];
+    if (res.failed) {
+      // Offline: fall back to the last counts saved on this device, plus unsent scans
+      const cached = JSON.parse(localStorage.getItem(countsCacheKey(storeId)) || '{}');
+      scannedCounts.value = cached;
+      scanLogs.value = [];
+    } else {
+      scannedCounts.value = res.counts || res.scannedCounts || {};
+      scanLogs.value = res.scanLogs || [];
+      const pending = readPending().filter((p) => p.storeId === storeId);
+      for (const p of pending) {
+        const k = p.barcode || `id:${p.productId}`;
+        scannedCounts.value[k] = (scannedCounts.value[k] ?? 0) + 1;
+      }
+      persistCounts(storeId);
+    }
   } catch (err) {
     console.warn('Failed to load store scans:', err);
   }
   await loadSessionLockState(storeId);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => flushPendingScans());
 }
 
 export function useAuditStore() {
@@ -378,10 +429,35 @@ export function useAuditStore() {
       return { success: false, message: 'Unable to identify this product for scanning.' };
     }
 
-    const res = await sendAuditScan((barcode || '').trim(), selectedStoreId.value, auditorName, wpId);
+    let res = await sendAuditScan((barcode || '').trim(), selectedStoreId.value, auditorName, wpId);
+
+    if (res.offline) {
+      // No connection: count locally and queue the scan so nothing is lost
+      const prod = wpProducts.value.find((p) =>
+        (barcode && String(p.barcode || '').trim() === String(barcode).trim()) ||
+        (!barcode && wpId !== undefined && String(p.id) === String(wpId))
+      );
+      if (prod) {
+        const queue = readPending();
+        queue.push({ barcode: (barcode || '').trim(), productId: prod.id, storeId: selectedStoreId.value, auditorName, ts: Date.now() });
+        writePending(queue);
+        const next = (scannedCounts.value[clean] ?? 0) + 1;
+        const expected = Math.round(Number(prod.stockByStore?.[selectedStoreId.value]) || 0);
+        res = {
+          success: true,
+          message: `${prod.brand || ''} ${prod.varian || prod.productTitle} counted (offline, will sync)`,
+          product: prod,
+          scannedCount: next,
+          discrepancy: next - expected,
+        };
+      }
+    } else if (res.success) {
+      flushPendingScans();
+    }
 
     if (res.success && res.scannedCount !== undefined) {
       scannedCounts.value[clean] = res.scannedCount;
+      persistCounts();
 
       const scanEvent = {
         id: `scan-${Date.now()}`,
@@ -420,6 +496,7 @@ export function useAuditStore() {
     const cur = scannedCounts.value[clean] ?? 0;
     if (cur > 0) {
       scannedCounts.value[clean] = cur - 1;
+      persistCounts();
       await adjustAuditCount(clean, selectedStoreId.value, { delta: -1, productId: wpId });
     }
   }
@@ -430,6 +507,7 @@ export function useAuditStore() {
     if (!clean) return;
     const safeCount = Math.max(0, count);
     scannedCounts.value[clean] = safeCount;
+    persistCounts();
     await adjustAuditCount(clean, selectedStoreId.value, { count: safeCount, productId: wpId });
   }
 
@@ -439,12 +517,15 @@ export function useAuditStore() {
     const cur = scannedCounts.value[clean] ?? 0;
     const target = Math.max(0, cur + delta);
     scannedCounts.value[clean] = target;
+    persistCounts();
     await adjustAuditCount(clean, selectedStoreId.value, { delta, productId: wpId });
   }
 
   async function resetCurrentAudit() {
     scannedCounts.value = {};
     scanLogs.value = [];
+    writePending(readPending().filter((p) => p.storeId !== selectedStoreId.value));
+    persistCounts();
     await resetAuditSession(selectedStoreId.value);
   }
 

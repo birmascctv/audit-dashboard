@@ -77,12 +77,12 @@ export async function apiMatchBarcode(payload) {
 
 export async function fetchAuditState(storeId) {
   const { ok, data } = await safeFetchJson(`${API_BASE}/audit/state?storeId=${encodeURIComponent(storeId)}`);
-  if (!ok || !data) return { scannedCounts: {}, scanLogs: [] };
+  if (!ok || !data) return { scannedCounts: {}, scanLogs: [], failed: true };
   return data;
 }
 
 export async function apiSendScan(barcode, storeId, auditorName, productId) {
-  const { ok, data, error } = await safeFetchJson(`${API_BASE}/audit/scan`, {
+  const { ok, data, error, status } = await safeFetchJson(`${API_BASE}/audit/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ barcode, storeId, auditorName, productId }),
@@ -95,6 +95,7 @@ export async function apiSendScan(barcode, storeId, auditorName, productId) {
   }
   return {
     success: false,
+    offline: status === 0 || status >= 502,
     message: error || 'Scan error (offline or server error)',
     unknownBarcode: barcode,
   };

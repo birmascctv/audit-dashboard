@@ -15,10 +15,16 @@ export function useScanner(options = {}) {
   // Internal buffer for rapid scanner keystrokes
   let buffer = '';
   let lastKeyTime = 0;
+  let lastProcessed = { code: '', at: 0 };
 
   function processBarcode(barcodeToProcess) {
     const cleaned = (barcodeToProcess || '').trim();
     if (!cleaned) return;
+
+    // One physical scan must count once, even if two key handlers see the same Enter
+    const now = Date.now();
+    if (cleaned === lastProcessed.code && now - lastProcessed.at < 400) return;
+    lastProcessed = { code: cleaned, at: now };
 
     lastScannedBarcode.value = cleaned;
     const result = options.onScan ? options.onScan(cleaned) : true;
