@@ -1126,6 +1126,8 @@ async function startServer() {
         lastUpdated: new Date().toISOString(),
       };
 
+      // A barcode can belong to only one product; moving it clears the old owner.
+      db.getDb().prepare('UPDATE products SET barcode = NULL WHERE barcode = ? AND id <> ?;').run(cleanBarcode, productItem.id);
       db.saveProduct(productItem);
 
       // Preserve any counts already scanned under the synthetic `id:<productId>` key
