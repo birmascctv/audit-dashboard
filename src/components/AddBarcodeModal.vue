@@ -27,6 +27,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'barcodeAdded']);
 
 const { wpProducts, addNewBarcode } = useAuditStore();
+const barcodeInputEl = ref(null);
 const isClearing = ref(false);
 
 async function clearBarcode() {
@@ -218,6 +219,7 @@ async function handleSubmit() {
             </span>
           </label>
           <input
+            ref="barcodeInputEl"
             v-model="barcodeInput"
             @keydown.enter.prevent="$event.target.form?.querySelector('input[placeholder^=Search]')?.focus()"
             type="text"
@@ -256,6 +258,7 @@ async function handleSubmit() {
 
           <select
             v-model="selectedProductId"
+            @change="barcodeInputEl?.focus(); barcodeInputEl?.select()"
             required
             class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 text-xs font-semibold focus:outline-none focus:border-teal-500 cursor-pointer shadow-sm"
           >
