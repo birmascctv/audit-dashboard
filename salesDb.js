@@ -412,6 +412,7 @@ export function getSalesSummary(filters = {}) {
   const topProductsAllStores = aggregateRows(db, `
     SELECT 'All stores' AS branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales
     FROM sales_transactions ${productWhere.sql} AND menu <> ''
+      AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
     GROUP BY menu ORDER BY sales DESC LIMIT 10
   `, productWhere.values);
   const byStoreBrand = aggregateRows(db, `
@@ -450,6 +451,7 @@ export function getSalesSummary(filters = {}) {
       SELECT branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
         ROW_NUMBER() OVER (PARTITION BY branch ORDER BY SUM(total_after_bill_discount) DESC) AS rank
       FROM sales_transactions ${productWhere.sql} AND menu <> ''
+        AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
       GROUP BY branch, menu
     ) WHERE rank <= 10 ORDER BY branch, rank
   `, productWhere.values);
@@ -467,15 +469,14 @@ export function getSalesSummary(filters = {}) {
       storeId: filters.storeId, storeIds: filters.storeIds, startDate, endDate,
     });
     return aggregateRows(db, `
-      SELECT branch, menu, qty, sales, rank FROM (
-        SELECT branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
-          ROW_NUMBER() OVER (PARTITION BY branch ORDER BY SUM(qty) DESC, SUM(total_after_bill_discount) DESC, menu) AS rank
-        FROM sales_transactions ${rangeWhere.sql}
-          ${rangeWhere.sql ? 'AND' : 'WHERE'} UPPER(menu_category) NOT LIKE '%PROMO%'
-          AND UPPER(menu_category_detail) NOT LIKE '%PROMO%' AND menu <> ''
-          AND ${RANKING_CATEGORY_SQL}
-        GROUP BY branch, menu
-      ) WHERE rank <= 5 ORDER BY branch, rank
+      SELECT branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales
+      FROM sales_transactions ${rangeWhere.sql}
+        ${rangeWhere.sql ? 'AND' : 'WHERE'} UPPER(menu_category) NOT LIKE '%PROMO%'
+        AND UPPER(menu_category_detail) NOT LIKE '%PROMO%' AND menu <> ''
+        AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
+        AND ${RANKING_CATEGORY_SQL}
+      GROUP BY branch, menu
+      ORDER BY branch, SUM(qty) DESC, SUM(total_after_bill_discount) DESC
     `, rangeWhere.values);
   };
   const topProductsLastWeek = getTopProducts(lastWeekDate, today);
@@ -562,7 +563,9 @@ export function getSalesTimeSeries(filters = {}) {
       SELECT CAST(strftime('%w', ${dayExpr}) AS INTEGER) AS weekday, menu,
         SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
         ROW_NUMBER() OVER (PARTITION BY CAST(strftime('%w', ${dayExpr}) AS INTEGER) ORDER BY SUM(qty) DESC, SUM(total_after_bill_discount) DESC) AS rank
-      FROM sales_transactions ${where.sql} ${where.sql ? 'AND' : 'WHERE'} menu <> '' AND ${RANKING_CATEGORY_SQL}
+      FROM sales_transactions ${where.sql} ${where.sql ? 'AND' : 'WHERE'} menu <> ''
+        AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
+        AND ${RANKING_CATEGORY_SQL}
       GROUP BY weekday, menu
     ) WHERE rank <= 10 ORDER BY weekday, rank
   `).all(...where.values);
