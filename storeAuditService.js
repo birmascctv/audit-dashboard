@@ -87,7 +87,8 @@ export function getCctvStores() {
   }
 }
 
-export function getDashboardStoreData() {
+export function getDashboardStoreData(year = 2026) {
+  year = Number(year) === 2025 ? 2025 : 2026;
   const db = getStoreAuditDb();
   if (!db) return { stores: [], recentStoreIds: [], latestDataMonth: null };
   try {
@@ -108,27 +109,29 @@ export function getDashboardStoreData() {
       JOIN (
         SELECT store_id
         FROM data_audits
-        WHERE year IN (2025, 2026)
+        WHERE year = ?
         GROUP BY store_id
-        HAVING COUNT(DISTINCT year) = 2
       ) eligible ON eligible.store_id = s.store_id
       ORDER BY s.name
-    `).all();
+    `).all(year);
+    if (year === 2025) return { stores, recentStoreIds: null, latestDataMonth: null };
     const latest = db.prepare(`${dataAudits}
-      SELECT MAX(year * 12 + month) AS month_index FROM data_audits
-    `).get()?.month_index;
+      SELECT MAX(year * 12 + month) AS month_index FROM data_audits WHERE year = ?
+    `).get(year)?.month_index;
     if (latest === null || latest === undefined) {
       return { stores, recentStoreIds: [], latestDataMonth: null };
     }
     const latestDataMonth = db.prepare(`${dataAudits}
       SELECT year, month FROM data_audits
-      WHERE year * 12 + month = ?
+      WHERE year = ? AND year * 12 + month = ?
       LIMIT 1
-    `).get(latest);
+    `).get(year, latest);
+    const now = new Date();
+    const currentMonthIndex = now.getFullYear() * 12 + now.getMonth() + 1;
     const recentStoreIds = db.prepare(`${dataAudits}
       SELECT DISTINCT store_id FROM data_audits
-      WHERE year * 12 + month BETWEEN ? AND ?
-    `).all(latest - 2, latest).map((row) => row.store_id);
+      WHERE year = ? AND year * 12 + month BETWEEN ? AND ?
+    `).all(year, currentMonthIndex - 2, currentMonthIndex).map((row) => row.store_id);
     return {
       stores,
       recentStoreIds,

@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue';
+import { getAuthToken, setAuthToken } from '../services/authFetch.js';
 
 const AUTH_STORAGE_KEY = 'birmas_audit_session_v4';
 
@@ -78,6 +79,7 @@ export function useAuth() {
         currentUser.value = data.user;
         if (typeof window !== 'undefined') {
           sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(data.user));
+          setAuthToken(data.token || '');
         }
         return { success: true, message: data.message || 'Login successful', user: data.user };
       } else {
@@ -102,6 +104,7 @@ export function useAuth() {
         currentUser.value = matched;
         if (typeof window !== 'undefined') {
           sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(matched));
+          setAuthToken('');
         }
         return { success: true, message: 'Logged in successfully', user: matched };
       }
@@ -110,6 +113,11 @@ export function useAuth() {
   }
 
   function logout() {
+    const token = getAuthToken();
+    if (token) {
+      fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+    }
+    setAuthToken('');
     currentUser.value = null;
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(AUTH_STORAGE_KEY);

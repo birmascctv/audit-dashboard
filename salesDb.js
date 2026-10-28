@@ -23,6 +23,8 @@ const CSV_COLUMNS = [
 
 let database;
 
+// Categories excluded from qty-based product rankings (tolerates 'LAIN-LAIN' / 'LAIN LAIN').
+const RANKING_CATEGORY_SQL = "REPLACE(UPPER(TRIM(menu_category)), '-', ' ') NOT IN ('LAIN LAIN', 'MIXER', 'SNACK')";
 const BUSINESS_DATE_SQL = "date(sales_date_in, '-6 hours')";
 function jakartaToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -408,7 +410,7 @@ export function getSalesSummary(filters = {}) {
     GROUP BY menu_category_detail ORDER BY sales DESC
   `, productWhere.values);
   const topProductsAllStores = aggregateRows(db, `
-    SELECT 'All stores' AS branch, menu, SUM(total_after_bill_discount) AS sales
+    SELECT 'All stores' AS branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales
     FROM sales_transactions ${productWhere.sql} AND menu <> ''
     GROUP BY menu ORDER BY sales DESC LIMIT 10
   `, productWhere.values);
@@ -444,8 +446,8 @@ export function getSalesSummary(filters = {}) {
   `, where.values);
   const storePayments = allocatePaymentSales(storePaymentRows, ['branch']);
   const topProductsByStore = aggregateRows(db, `
-    SELECT branch, menu, sales FROM (
-      SELECT branch, menu, SUM(total_after_bill_discount) AS sales,
+    SELECT branch, menu, qty, sales FROM (
+      SELECT branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
         ROW_NUMBER() OVER (PARTITION BY branch ORDER BY SUM(total_after_bill_discount) DESC) AS rank
       FROM sales_transactions ${productWhere.sql} AND menu <> ''
       GROUP BY branch, menu
@@ -456,7 +458,7 @@ export function getSalesSummary(filters = {}) {
   const latestDataDate = db.prepare(`SELECT MAX(${BUSINESS_DATE_SQL}) AS d FROM sales_transactions ${storeOnlyWhere.sql}`).get(...storeOnlyWhere.values)?.d;
   const today = jakartaToday();
   const latestBusinessDate = latestDataDate && latestDataDate < today ? latestDataDate : today;
-  const lastWeekStart = new Date(`${latestBusinessDate}T00:00:00Z`);
+  const lastWeekStart = new Date(`${today}T00:00:00Z`);
   lastWeekStart.setUTCDate(lastWeekStart.getUTCDate() - 6);
   const lastWeekDate = lastWeekStart.toISOString().slice(0, 10);
   const monthStart = `${today.slice(0, 7)}-01`;
@@ -471,11 +473,12 @@ export function getSalesSummary(filters = {}) {
         FROM sales_transactions ${rangeWhere.sql}
           ${rangeWhere.sql ? 'AND' : 'WHERE'} UPPER(menu_category) NOT LIKE '%PROMO%'
           AND UPPER(menu_category_detail) NOT LIKE '%PROMO%' AND menu <> ''
+          AND ${RANKING_CATEGORY_SQL}
         GROUP BY branch, menu
       ) WHERE rank <= 5 ORDER BY branch, rank
     `, rangeWhere.values);
   };
-  const topProductsLastWeek = getTopProducts(lastWeekDate, latestBusinessDate);
+  const topProductsLastWeek = getTopProducts(lastWeekDate, today);
   const topProductsThisMonth = getTopProducts(monthStart, today);
 
   return {
@@ -559,7 +562,7 @@ export function getSalesTimeSeries(filters = {}) {
       SELECT CAST(strftime('%w', ${dayExpr}) AS INTEGER) AS weekday, menu,
         SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
         ROW_NUMBER() OVER (PARTITION BY CAST(strftime('%w', ${dayExpr}) AS INTEGER) ORDER BY SUM(qty) DESC, SUM(total_after_bill_discount) DESC) AS rank
-      FROM sales_transactions ${where.sql} ${where.sql ? 'AND' : 'WHERE'} menu <> ''
+      FROM sales_transactions ${where.sql} ${where.sql ? 'AND' : 'WHERE'} menu <> '' AND ${RANKING_CATEGORY_SQL}
       GROUP BY weekday, menu
     ) WHERE rank <= 10 ORDER BY weekday, rank
   `).all(...where.values);

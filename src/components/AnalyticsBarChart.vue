@@ -105,12 +105,20 @@ function moveTooltip(event) {
       <g v-for="(item,index) in chartItems" :key="item.name">
         <rect
           :x="barX(index) - (hoveredName === item.name ? barWidth * 0.07 : 0)"
-          :y="baseline - barHeight(item) - (hoveredName === item.name ? Math.max(2, barHeight(item) * 0.025) : 0)"
+          :y="baseline - barHeight(item) - (hoveredName === item.name ? 3 : 0)"
           :width="barWidth * (hoveredName === item.name ? 1.14 : 1)"
-          :height="barHeight(item) * (hoveredName === item.name ? 1.05 : 1)"
+          :height="barHeight(item) + (hoveredName === item.name ? 3 : 0)"
           :fill="item.color"
+          :stroke="item.color"
+          :stroke-width="hoveredName === item.name ? 2 : 0"
+          :opacity="hoveredName && hoveredName !== item.name ? 0.7 : 1"
           rx="3"
-          style="transition: x 300ms ease, y 300ms ease, width 300ms ease, height 300ms ease;"
+          pointer-events="none"
+          style="transition: x 200ms ease, y 200ms ease, width 200ms ease, height 200ms ease, opacity 200ms ease;"
+        />
+        <rect
+          :x="barX(index)" :y="baseline - Math.max(barHeight(item), 4)" :width="barWidth" :height="Math.max(barHeight(item), 4)"
+          fill="transparent"
           tabindex="0"
           :aria-label="`${item.name}: ${percent(item.percent)}, ${money(item.sales)}`"
           @pointerenter="hoveredName = item.name; showTooltip($event, item)"
@@ -118,8 +126,7 @@ function moveTooltip(event) {
           @pointerleave="hoveredName = null; tooltip = null"
           @focus="hoveredName = item.name; showTooltip($event, item)"
           @blur="hoveredName = null; tooltip = null"
-        >
-        </rect>
+        />
         <text :transform="`translate(${barX(index) + 4},${baseline + 10}) rotate(-45)`" text-anchor="end" fill="#334155" font-size="10">{{ item.name }}</text>
       </g>
       <text :x="left + plotWidth / 2" y="292" text-anchor="middle" fill="#334155" font-size="10">{{ xAxisLabel }}</text>

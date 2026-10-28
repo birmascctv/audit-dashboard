@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useAuditStore } from '../composables/useAuditStore.js';
 import { useAuth } from '../composables/useAuth.js';
+import { authFetchJson } from '../services/authFetch.js';
 import { fetchAuditHistory } from '../services/wordpressApi.js';
 import { formatDateTime, exportToCSV } from '../utils/storage.js';
 import {
@@ -31,7 +32,7 @@ import {
 } from 'lucide-vue-next';
 
 const { auditHistory, clearHistory, stores } = useAuditStore();
-const { isSuperAdmin, role } = useAuth();
+const { isSuperAdmin } = useAuth();
 
 const searchQuery = ref('');
 const expandedId = ref(null);
@@ -83,21 +84,16 @@ function toLocalInput(iso) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-async function updateAuditRecord(id, body, userRole) {
-  const res = await fetch(`/api/audit/history/${encodeURIComponent(id)}`, {
+async function updateAuditRecord(id, body) {
+  return await authFetchJson(`/api/audit/history/${encodeURIComponent(id)}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', 'x-user-role': userRole },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return await res.json();
 }
 
-async function deleteAuditRecord(id, userRole) {
-  const res = await fetch(`/api/audit/history/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    headers: { 'x-user-role': userRole },
-  });
-  return await res.json();
+async function deleteAuditRecord(id) {
+  return await authFetchJson(`/api/audit/history/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 onMounted(async () => {
@@ -247,7 +243,7 @@ async function saveEdit() {
       auditorName: editForm.value.auditorName.trim(),
       notes: editForm.value.notes,
       completedAt: editForm.value.date ? new Date(editForm.value.date).toISOString() : undefined,
-    }, role.value);
+    });
     if (!res.success) throw new Error(res.error || 'Update failed');
     const idx = auditHistory.value.findIndex((a) => a.id === editForm.value.id);
     if (idx >= 0 && res.audit) auditHistory.value[idx] = res.audit;
@@ -264,7 +260,7 @@ async function confirmDelete() {
   if (!target) return;
   isSaving.value = true;
   try {
-    const res = await deleteAuditRecord(target.id, role.value);
+    const res = await deleteAuditRecord(target.id);
     if (!res.success) throw new Error(res.error || 'Delete failed');
     auditHistory.value = auditHistory.value.filter((a) => a.id !== target.id);
     if (expandedId.value === target.id) expandedId.value = null;
@@ -677,39 +673,69 @@ function exportHistoryCSV() {
                       <div class="px-3 py-1.5 bg-rose-50 text-rose-800 font-bold text-[11px] uppercase">
                         Discrepancies ({{ discrepancyItems(audit).length }})
                       </div>
-                      <ul class="divide-y divide-slate-100 max-h-64 overflow-y-auto">
-                        <li v-for="(item, k) in discrepancyItems(audit)" :key="`d-${k}-${item.barcode}`" class="px-3 py-1.5 flex items-start justify-between gap-2">
-                          <div class="min-w-0">
-                            <span class="font-semibold text-slate-900 block break-words">{{ item.productTitle || item.varian }}</span>
-                            <span class="text-[10px] font-mono text-slate-400">{{ item.barcode }} · exp {{ item.wpExpectedQty }} / phys {{ item.scannedCount }}</span>
-                            <span v-if="item.note" class="block text-[11px] text-slate-600 italic break-words">Note: {{ item.note }}</span>
-                          </div>
-                          <span class="font-mono font-bold shrink-0" :class="num(item.discrepancy) < 0 ? 'text-rose-600' : 'text-amber-600'">
-                            {{ num(item.discrepancy) > 0 ? `+${item.discrepancy}` : item.discrepancy }}
-                          </span>
-                        </li>
-                        <li v-if="discrepancyItems(audit).length === 0" class="px-3 py-3 text-slate-400 italic">
-                          {{ sessionItems(audit).length ? 'No discrepancies' : 'No item details stored for this session' }}
-                        </li>
-                      </ul>
+                      <div class="max-h-64 overflow-y-auto">
+                        <table class="w-full text-left">
+                          <thead class="bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0">
+                            <tr>
+                              <th class="py-1 px-3">Product</th>
+                              <th class="py-1 px-2 text-center w-20">Qty</th>
+                              <th class="py-1 px-3 w-[34%]">Notes</th>
+                            </tr>
+                          </thead>
+                          <tbody class="divide-y divide-slate-100">
+                            <tr v-for="(item, k) in discrepancyItems(audit)" :key="`d-${k}-${item.barcode}`" class="align-top">
+                              <td class="py-1.5 px-3 min-w-0">
+                                <span class="font-semibold text-slate-900 block break-words">{{ item.productTitle || item.varian }}</span>
+                                <span class="text-[10px] font-mono text-slate-400">{{ item.barcode }}</span>
+                              </td>
+                              <td class="py-1.5 px-2 text-center font-mono">
+                                <span class="font-bold text-slate-900">{{ item.scannedCount ?? 0 }}</span>
+                                <span class="block text-[10px] text-slate-400">exp {{ item.wpExpectedQty ?? 0 }}<template v-if="num(item.discrepancy) !== 0"> · <span :class="num(item.discrepancy) < 0 ? 'text-rose-600' : 'text-amber-600'">{{ num(item.discrepancy) > 0 ? `+${item.discrepancy}` : item.discrepancy }}</span></template></span>
+                              </td>
+                              <td class="py-1.5 px-3 text-[11px] text-slate-600 break-words">{{ item.note || '-' }}</td>
+                            </tr>
+                            <tr v-if="discrepancyItems(audit).length === 0">
+                              <td colspan="3" class="px-3 py-3 text-slate-400 italic">
+                                {{ sessionItems(audit).length ? 'No discrepancies' : 'No item details stored for this session' }}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                     <div class="border border-emerald-200 rounded-xl bg-white overflow-hidden">
                       <div class="px-3 py-1.5 bg-emerald-50 text-emerald-800 font-bold text-[11px] uppercase">
                         Matched ({{ matchedItems(audit).length }})
                       </div>
-                      <ul class="divide-y divide-slate-100 max-h-64 overflow-y-auto">
-                        <li v-for="(item, k) in matchedItems(audit)" :key="`m-${k}-${item.barcode}`" class="px-3 py-1.5 flex items-start justify-between gap-2">
-                          <div class="min-w-0">
-                            <span class="font-semibold text-slate-900 block break-words">{{ item.productTitle || item.varian }}</span>
-                            <span class="text-[10px] font-mono text-slate-400">{{ item.barcode }}</span>
-                            <span v-if="item.note" class="block text-[11px] text-slate-600 italic break-words">Note: {{ item.note }}</span>
-                          </div>
-                          <span class="font-mono font-bold text-emerald-700 shrink-0">{{ item.scannedCount }}</span>
-                        </li>
-                        <li v-if="matchedItems(audit).length === 0" class="px-3 py-3 text-slate-400 italic">
-                          {{ sessionItems(audit).length ? 'No matched products' : 'No item details stored for this session' }}
-                        </li>
-                      </ul>
+                      <div class="max-h-64 overflow-y-auto">
+                        <table class="w-full text-left">
+                          <thead class="bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0">
+                            <tr>
+                              <th class="py-1 px-3">Product</th>
+                              <th class="py-1 px-2 text-center w-20">Qty</th>
+                              <th class="py-1 px-3 w-[34%]">Notes</th>
+                            </tr>
+                          </thead>
+                          <tbody class="divide-y divide-slate-100">
+                            <tr v-for="(item, k) in matchedItems(audit)" :key="`m-${k}-${item.barcode}`" class="align-top">
+                              <td class="py-1.5 px-3 min-w-0">
+                                <span class="font-semibold text-slate-900 block break-words">{{ item.productTitle || item.varian }}</span>
+                                <span class="text-[10px] font-mono text-slate-400">{{ item.barcode }}</span>
+                              </td>
+                              <td class="py-1.5 px-2 text-center font-mono">
+                                <span class="font-bold text-emerald-700">{{ item.scannedCount ?? 0 }}</span>
+                                <span class="block text-[10px] text-slate-400">exp {{ item.wpExpectedQty ?? 0 }}<template v-if="num(item.discrepancy) !== 0"> · <span :class="num(item.discrepancy) < 0 ? 'text-rose-600' : 'text-amber-600'">{{ num(item.discrepancy) > 0 ? `+${item.discrepancy}` : item.discrepancy }}</span></template></span>
+                              </td>
+                              <td class="py-1.5 px-3 text-[11px] text-slate-600 break-words">{{ item.note || '-' }}</td>
+                            </tr>
+                            <tr v-if="matchedItems(audit).length === 0">
+                              <td colspan="3" class="px-3 py-3 text-slate-400 italic">
+                                {{ sessionItems(audit).length ? 'No matched products' : 'No item details stored for this session' }}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
                 </td>

@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue';
+import { authFetchJson } from '../services/authFetch.js';
 import {
   DEFAULT_STORES,
   DEFAULT_WP_PRODUCTS,
@@ -156,13 +157,11 @@ async function unlockCurrentSession(user = 'Super Admin', role = 'superadmin') {
     throw new Error('Only Superadmin can approve unlocking this audit session.');
   }
 
-  try {
-    await fetch(`/api/audit/session/${encodeURIComponent(storeId)}/unlock`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user, role }),
-    });
-  } catch (_) {}
+  await authFetchJson(`/api/audit/session/${encodeURIComponent(storeId)}/unlock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
 
   isSessionLocked.value = false;
   sessionLockInfo.value = {

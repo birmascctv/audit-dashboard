@@ -1440,18 +1440,22 @@ async function startServer() {
     res.json(db.getAllAuditHistory());
   });
 
-  // No server-side sessions exist: role comes from the client (header x-user-role or body.role), same trust model as session unlock
-  const requireSuperadmin = (req, res) => {
-    const role = req.headers['x-user-role'] || req.body?.role || '';
-    if (role !== 'superadmin') {
-      res.status(403).json({ success: false, error: 'Only Superadmin can modify audit records.' });
-      return false;
+  // Role is taken from the DB-backed session behind the Bearer token, never from client input
+  const requireRole = (requiredRole) => (req, res, next) => {
+    const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '');
+    const session = match ? db.getAuthSession(match[1]) : null;
+    if (!session) {
+      return res.status(401).json({ success: false, error: 'Session expired - please log out and log in again to edit or remove.' });
     }
-    return true;
+    if (session.role !== requiredRole) {
+      return res.status(403).json({ success: false, error: `Only ${requiredRole === 'superadmin' ? 'Superadmin' : requiredRole} can perform this action.` });
+    }
+    req.authUser = session;
+    next();
   };
+  const requireSuperadmin = requireRole('superadmin');
 
-  app.patch('/api/audit/history/:id', (req, res) => {
-    if (!requireSuperadmin(req, res)) return;
+  app.patch('/api/audit/history/:id', requireSuperadmin, (req, res) => {
     const { auditorName, notes, completedAt } = req.body || {};
     if (completedAt && Number.isNaN(new Date(completedAt).getTime())) {
       return res.status(400).json({ success: false, error: 'Invalid date' });
@@ -1468,8 +1472,7 @@ async function startServer() {
     res.json({ success: true, audit: db.getAllAuditHistory().find((a) => a.id === req.params.id) });
   });
 
-  app.delete('/api/audit/history/:id', (req, res) => {
-    if (!requireSuperadmin(req, res)) return;
+  app.delete('/api/audit/history/:id', requireSuperadmin, (req, res) => {
     const ok = db.deleteAuditHistoryRecord(req.params.id);
     if (!ok) return res.status(404).json({ success: false, error: 'Audit record not found' });
     res.json({ success: true });
@@ -1949,13 +1952,9 @@ async function startServer() {
     }
   });
 
-  app.post('/api/audit/session/:storeId/unlock', (req, res) => {
+  app.post('/api/audit/session/:storeId/unlock', requireSuperadmin, (req, res) => {
     try {
-      const role = req.body?.role || '';
-      const user = req.body?.user || 'Super Admin';
-      if (role !== 'superadmin') {
-        return res.status(403).json({ success: false, error: 'Only Superadmin can approve unlocking an audit session.' });
-      }
+      const user = req.authUser.name || 'Super Admin';
       const result = db.setSessionLockState(req.params.storeId, false, user);
       res.json(result);
     } catch (err) {
@@ -1966,7 +1965,7 @@ async function startServer() {
   // Store Audit API Endpoints
   app.get('/api/store-audit/dashboard-stores', (req, res) => {
     try {
-      res.json(storeAuditService.getDashboardStoreData());
+      res.json(storeAuditService.getDashboardStoreData(req.query.year));
     } catch (err) {
       res.status(500).json({ stores: [], recentStoreIds: [], latestDataMonth: null });
     }
@@ -2382,7 +2381,14 @@ async function startServer() {
     }
 
     const safeUser = { id: user.id, username: user.username, name: user.name, email: user.email, role: user.role };
-    res.json({ success: true, message: `Welcome back, ${user.name}`, user: safeUser });
+    const token = db.createAuthSession(user);
+    res.json({ success: true, message: `Welcome back, ${user.name}`, user: safeUser, token });
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '');
+    if (match) db.deleteAuthSession(match[1]);
+    res.json({ success: true });
   });
 
   // 14. Sales Report Endpoints (ESB report-sales-recapitulation-detail)

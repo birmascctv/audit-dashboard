@@ -31,13 +31,11 @@ const slices = computed(() => {
     const end = point(next, 90);
     const innerStart = point(angle, 52);
     const innerEnd = point(next, 52);
-    const middle = angle + (next - angle) / 2;
-    const offset = hoveredName.value === item.name ? point(middle, 7) : { x: 0, y: 0 };
     const path = share >= 0.99999
       ? 'M 110 20 A 90 90 0 1 1 110 200 A 90 90 0 1 1 110 20 Z M 110 58 A 52 52 0 1 0 110 162 A 52 52 0 1 0 110 58 Z'
       : `M ${start.x} ${start.y} A 90 90 0 ${largeArc} 1 ${end.x} ${end.y} L ${innerEnd.x} ${innerEnd.y} A 52 52 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y} Z`;
     angle = next;
-    return { ...item, percent: share * 100, color: PIE_CHART_COLORS[index % PIE_CHART_COLORS.length], path, offset };
+    return { ...item, percent: share * 100, color: PIE_CHART_COLORS[index % PIE_CHART_COLORS.length], path };
   });
 });
 const totalSales = computed(() => slices.value.reduce((sum, item) => sum + item.sales, 0));
@@ -79,9 +77,12 @@ function moveTooltip(event) {
   <div v-if="slices.length && totalSales > 0" class="flex flex-col items-center"
     :class="[compact ? 'min-h-0 gap-2 p-2' : compactSpacing ? 'min-h-0 gap-0 p-0' : 'min-h-[18rem] gap-2 p-4 sm:flex-row sm:items-start sm:gap-4', alignChartLeft ? 'sm:flex-row sm:items-center sm:justify-start' : '']">
     <svg :class="compact ? 'h-36 w-36' : 'h-56 w-56'" class="shrink-0" viewBox="0 0 220 220" role="img" aria-label="Sales share doughnut chart">
-      <path v-for="item in slices" :key="item.name" :d="item.path" :fill="item.color" fill-rule="evenodd" stroke="rgba(255,255,255,0.45)" stroke-width="0.6" class="transition-transform duration-300 hover:opacity-85 focus:outline-none"
-        tabindex="0"
-        :transform="`translate(${item.offset.x} ${item.offset.y})`" :aria-label="showValuesOnHover ? `${item.name}: ${item.percent.toFixed(1)}%, ${money(item.sales)}` : item.name"
+      <path v-for="item in slices" :key="`v-${item.name}`" :d="item.path" :fill="item.color" fill-rule="evenodd" stroke="rgba(255,255,255,0.45)" stroke-width="0.6" pointer-events="none"
+        :opacity="hoveredName && hoveredName !== item.name ? 0.75 : 1"
+        :transform="hoveredName === item.name ? 'translate(110 110) scale(1.06) translate(-110 -110)' : undefined"
+        style="transition: transform 200ms ease, opacity 200ms ease" />
+      <path v-for="item in slices" :key="`h-${item.name}`" :d="item.path" fill="transparent" fill-rule="evenodd" class="focus:outline-none"
+        tabindex="0" :aria-label="showValuesOnHover ? `${item.name}: ${item.percent.toFixed(1)}%, ${money(item.sales)}` : item.name"
         @pointerenter="hoveredName = item.name; showTooltip($event, item)" @pointermove="moveTooltip" @pointerleave="hoveredName = null; tooltip = null"
         @focus="hoveredName = item.name; showTooltip($event, item)" @blur="hoveredName = null; tooltip = null" />
       <text x="110" y="105" text-anchor="middle" fill="#475569" :font-size="compact ? 8 : 9" font-weight="700">TOTAL SALES</text>

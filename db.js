@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { createHash, randomBytes } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -137,6 +138,16 @@ function initTables(db) {
       password TEXT NOT NULL,
       name TEXT,
       role TEXT
+    );
+  `);
+
+  // 6b. Auth sessions (only the sha256 of the bearer token is stored)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      expires_at TEXT NOT NULL
     );
   `);
 
@@ -622,6 +633,32 @@ export function getAllUsers() {
 export function getUserByUsername(username) {
   const db = getDb();
   return db.prepare('SELECT * FROM users WHERE username = ?;').get(username);
+}
+
+const AUTH_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const hashToken = (token) => createHash('sha256').update(String(token)).digest('hex');
+
+export function createAuthSession(user) {
+  const db = getDb();
+  const token = randomBytes(32).toString('hex');
+  db.prepare('DELETE FROM auth_sessions WHERE expires_at < ?;').run(new Date().toISOString());
+  db.prepare('INSERT INTO auth_sessions (token_hash, user_id, role, expires_at) VALUES (?, ?, ?, ?);')
+    .run(hashToken(token), user.id, user.role || '', new Date(Date.now() + AUTH_SESSION_TTL_MS).toISOString());
+  return token;
+}
+
+export function getAuthSession(token) {
+  if (!token || typeof token !== 'string') return null;
+  const row = getDb().prepare(
+    'SELECT s.user_id AS userId, u.role AS role, u.name AS name, s.expires_at AS expiresAt FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?;'
+  ).get(hashToken(token));
+  if (!row || new Date(row.expiresAt).getTime() <= Date.now()) return null;
+  return row;
+}
+
+export function deleteAuthSession(token) {
+  if (!token || typeof token !== 'string') return;
+  getDb().prepare('DELETE FROM auth_sessions WHERE token_hash = ?;').run(hashToken(token));
 }
 
 // App Config Queries

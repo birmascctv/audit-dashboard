@@ -149,7 +149,7 @@ const hourlyValues = computed(() => {
       ...store,
       payments: paymentsByHourStore.get(`${hour}|${store.name}`) || [],
     })),
-  })).sort((a, b) => ((a.hour + 13) % 24) - ((b.hour + 13) % 24));
+  }));
 });
 const weeklyValues = computed(() => {
   const storesByWeek = new Map();
@@ -163,7 +163,6 @@ const weeklyValues = computed(() => {
     month: item.month || item.week_start.slice(0, 7),
     shortName: item.week_start,
     sales: Number(item.sales) || 0,
-    revenueOnly: true,
     stores: (storesByWeek.get(item.week_start) || []).filter((store) => store.sales > 0),
   }));
 });
@@ -191,8 +190,8 @@ const weekdayValues = computed(() => {
 });
 const maxWeekdaySales = computed(() => Math.max(1, ...weekdayValues.value.map((item) => item.sales)));
 const topProductWindows = computed(() => [
-  { title: 'Last 7 days', key: 'topProductsLastWeek' },
-  { title: 'This month', key: 'topProductsThisMonth' },
+  { title: 'Last 7 Days', key: 'topProductsLastWeek' },
+  { title: 'This Month', key: 'topProductsThisMonth' },
 ].map((window) => {
   const byStore = new Map();
   for (const item of summary.value[window.key] || []) {
@@ -230,6 +229,15 @@ const monthlyValues = computed(() => {
       payments: paymentsByMonthStore.get(`${item.month}|${store.name}`) || [],
     })),
   }));
+});
+const monthlyYearRows = computed(() => {
+  const years = new Map();
+  for (const month of monthlyValues.value) {
+    const year = month.key.slice(0, 4);
+    if (!years.has(year)) years.set(year, []);
+    years.get(year).push(month);
+  }
+  return [...years].map(([year, months]) => ({ year, months }));
 });
 const pivotPaymentMethods = computed(() => [...new Set((summary.value.variantByStorePayment || []).map((item) => item.payment_method))]);
 const allPivotRows = computed(() => {
@@ -447,6 +455,23 @@ function heatmapStyle(value, maximum, lightColor, darkColor) {
     borderColor: intensity >= 0.62 ? 'rgba(15, 23, 42, 0.18)' : 'rgba(148, 163, 184, 0.45)',
   };
 }
+const HEAT_STOPS = [[254, 249, 195], [250, 204, 21], [249, 115, 22], [185, 28, 28]];
+function heatColor(value, maximum) {
+  const t = Math.min(1, Math.max(0, Number(value || 0) / Math.max(Number(maximum) || 0, 1)));
+  const scaled = t * (HEAT_STOPS.length - 1);
+  const index = Math.min(HEAT_STOPS.length - 2, Math.floor(scaled));
+  const mix = scaled - index;
+  const rgb = HEAT_STOPS[index].map((channel, i) => Math.round(channel + (HEAT_STOPS[index + 1][i] - channel) * mix));
+  return { t, rgb };
+}
+function yellowRedStyle(value, maximum) {
+  const { t, rgb } = heatColor(value, maximum);
+  return {
+    backgroundColor: `rgb(${rgb.join(' ')})`,
+    color: t >= 0.55 ? '#ffffff' : '#0f172a',
+    borderColor: 'rgba(15, 23, 42, 0.15)',
+  };
+}
 async function loadTimeSummary() {
   const requestId = ++timeRequestId;
   timeRangeError.value = timeRangeStart.value && timeRangeEnd.value && timeRangeStart.value > timeRangeEnd.value
@@ -475,6 +500,13 @@ function choosePivotProduct(product) {
   pivotSearch.value = product === '__all__' ? 'ALL PRODUCT' : product;
   selectedPivotProduct.value = product;
   pivotDropdownOpen.value = false;
+}
+function openPivotDropdown() {
+  if (selectedPivotProduct.value && pivotSearch.value && (pivotSearch.value === 'ALL PRODUCT' || pivotSearch.value === selectedPivotProduct.value)) {
+    pivotSearch.value = '';
+    selectedPivotProduct.value = '__all__';
+  }
+  pivotDropdownOpen.value = true;
 }
 function closePivotDropdown(event) {
   if (!event.currentTarget.contains(event.relatedTarget)) pivotDropdownOpen.value = false;
@@ -810,17 +842,21 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
       </section>
       <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <article v-for="window in topProductWindows" :key="window.key" class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 class="mb-3 text-sm font-bold text-slate-900">Top 5 products per store · {{ window.title }}</h2>
-          <div v-if="window.stores.length" class="grid gap-3 sm:grid-cols-2">
-            <div v-for="store in window.stores" :key="store.name" class="rounded-xl bg-slate-50 p-3">
-              <h3 class="mb-2 truncate text-xs font-bold text-slate-700">{{ store.name }}</h3>
-              <ol class="space-y-1.5">
-                <li v-for="product in store.products" :key="product.menu" class="flex items-start justify-between gap-2 text-[11px]">
-                  <span class="min-w-0"><span class="mr-1 font-bold text-teal-700">{{ product.rank }}.</span><span class="font-medium text-slate-800">{{ product.menu }}</span><span class="ml-1 text-slate-500">×{{ Number(product.qty).toLocaleString('id-ID') }}</span></span>
-                  <span class="shrink-0 font-mono text-slate-600">{{ formatMoney(product.sales) }}</span>
-                </li>
-              </ol>
-            </div>
+          <h2 class="mb-1 text-sm font-bold text-slate-900">Top 5 Products per Store · {{ window.title }}</h2>
+          <p class="mb-3 text-[11px] text-slate-500">Ranked by quantity sold. Excludes Lain-Lain, Mixer and Snack.</p>
+          <div v-if="window.stores.length" class="max-h-[26rem] overflow-auto rounded-xl border border-slate-100">
+            <table class="w-full table-fixed text-xs">
+              <colgroup><col><col class="w-16"><col class="w-32"></colgroup>
+              <thead class="sticky top-0 z-10 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-3 py-2 text-left">Product</th><th class="px-3 py-2 text-right">Qty</th><th class="px-3 py-2 text-right">Revenue</th></tr></thead>
+              <tbody v-for="store in window.stores" :key="store.name">
+                <tr class="bg-teal-50"><th colspan="3" class="truncate px-3 py-1.5 text-left text-[11px] font-bold text-teal-900">{{ store.name }}</th></tr>
+                <tr v-for="product in store.products" :key="product.menu" class="border-t border-slate-100">
+                  <td class="truncate px-3 py-1.5 font-medium text-slate-800" :title="product.menu">{{ product.menu }}</td>
+                  <td class="px-3 py-1.5 text-right font-mono">{{ Number(product.qty).toLocaleString('id-ID') }}</td>
+                  <td class="whitespace-nowrap px-3 py-1.5 text-right font-mono text-slate-700">{{ formatMoney(product.sales) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
           <p v-else class="text-xs text-slate-400">No product sales in this period for the selected stores.</p>
         </article>
@@ -993,7 +1029,7 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
               <input v-model="pivotSearch" type="search" placeholder="Select or search product variant..." autocomplete="off"
                 class="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"
                 aria-label="Search product variants" aria-haspopup="listbox" :aria-expanded="pivotDropdownOpen"
-                @focus="pivotDropdownOpen = true" @click="pivotDropdownOpen = true">
+                @focus="openPivotDropdown" @click="openPivotDropdown">
               <ul v-if="pivotDropdownOpen" role="listbox" aria-label="Product variants"
                 class="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-lg border border-slate-200 bg-white p-1 shadow-xl">
                 <li role="option" :aria-selected="selectedPivotProduct === '__all__'">
@@ -1046,8 +1082,8 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
           </details>
         </header>
         <div class="max-h-[30rem] overflow-auto">
-          <table class="sales-data-table w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Store scope</th><th class="px-4 py-2">Product</th><th class="px-4 py-2 text-right">Sales</th></tr></thead>
-            <tbody class="sales-table-body"><tr v-for="(item,index) in visibleTopProducts" :key="`${item.branch}-${item.menu}-${index}`" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.branch }}</td><td class="px-4 py-2">{{ item.menu }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr><tr v-if="!visibleTopProducts.length"><td colspan="3" class="p-6 text-center text-slate-400">No product sales for this store and period.</td></tr></tbody>
+          <table class="sales-data-table w-full table-fixed text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="w-[22%] px-4 py-2 text-center">Store Scope</th><th class="px-4 py-2 text-center">Product</th><th class="w-[12%] px-4 py-2 text-center">Qty</th><th class="w-[22%] px-4 py-2 text-center">Sales</th></tr></thead>
+            <tbody class="sales-table-body"><tr v-for="(item,index) in visibleTopProducts" :key="`${item.branch}-${item.menu}-${index}`" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.branch }}</td><td class="px-4 py-2">{{ item.menu }}</td><td class="px-4 py-2 text-right font-mono">{{ Number(item.qty || 0).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr><tr v-if="!visibleTopProducts.length"><td colspan="4" class="p-6 text-center text-slate-400">No product sales for this store and period.</td></tr></tbody>
           </table>
         </div>
         </article>
@@ -1113,7 +1149,7 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
             <div class="grid grid-cols-7 gap-1.5">
               <button v-for="slot in weekdayValues" :key="slot.weekday" type="button"
                 class="min-w-0 rounded-lg border p-2 text-center shadow-sm transition hover:z-10 hover:scale-[1.03] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-cyan-600"
-                :style="heatmapStyle(slot.sales, maxWeekdaySales, '#ecfeff', '#0e7490')"
+                :style="yellowRedStyle(slot.sales, maxWeekdaySales)"
                 :aria-label="`${slot.name}: ${formatMoney(slot.sales)}`"
                 @pointerenter="showTimeTooltip($event, slot)" @pointermove="moveTimeTooltip" @pointerleave="hourTooltip = null"
                 @focus="showTimeTooltip($event, slot)" @blur="hourTooltip = null">
@@ -1140,15 +1176,21 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
           </article>
           <article class="rounded-xl border border-slate-100 p-3">
             <h3 class="mb-3 text-xs font-bold text-slate-700">Sales by Month</h3>
-            <div class="grid max-h-72 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4 md:grid-cols-6">
-              <button v-for="slot in monthlyValues" :key="slot.key" type="button"
-                class="rounded-lg border p-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-600"
-                :style="heatmapStyle(slot.sales, maxMonthlySales, '#fff7ed', '#c2410c')"
-                :aria-label="`${slot.name} sales ${formatMoney(slot.sales)}`"
-                @pointerenter="showTimeTooltip($event, slot)" @pointermove="moveTimeTooltip" @pointerleave="hourTooltip = null"
-                @focus="showTimeTooltip($event, slot)" @blur="hourTooltip = null">
-                <span class="block text-xs font-bold">{{ slot.name }}</span><span class="mt-1 block truncate text-[9px]">{{ formatMoney(slot.sales) }}</span>
-              </button>
+            <div class="max-h-72 space-y-3 overflow-y-auto">
+              <div v-for="yearRow in monthlyYearRows" :key="yearRow.year" class="rounded-lg bg-slate-50 p-2">
+                <h4 class="mb-2 text-xs font-bold text-slate-700">{{ yearRow.year }}</h4>
+                <div class="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+                  <button v-for="slot in yearRow.months" :key="slot.key" type="button"
+                    class="rounded-lg border p-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-600"
+                    :style="heatmapStyle(slot.sales, maxMonthlySales, '#fff7ed', '#c2410c')"
+                    :aria-label="`${slot.name} sales ${formatMoney(slot.sales)}`"
+                    @pointerenter="showTimeTooltip($event, slot)" @pointermove="moveTimeTooltip" @pointerleave="hourTooltip = null"
+                    @focus="showTimeTooltip($event, slot)" @blur="hourTooltip = null">
+                    <span class="block text-xs font-bold">{{ slot.name.split(' ')[0] }}</span><span class="mt-1 block truncate text-[9px]">{{ formatMoney(slot.sales) }}</span>
+                  </button>
+                </div>
+              </div>
+              <p v-if="!monthlyYearRows.length" class="p-4 text-center text-xs text-slate-400">No monthly sales yet.</p>
             </div>
           </article>
         </div>

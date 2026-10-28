@@ -298,7 +298,7 @@
   </div>
   <div v-else class="max-w-[1560px] mx-auto px-4 sm:px-8 lg:px-16 py-12">
     <div class="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600 shadow-sm">
-      {{ lookupsLoaded ? 'No stores have audit data in both 2025 and 2026.' : 'Loading store audit data…' }}
+      {{ lookupsLoaded ? 'No stores have audit data for 2025.' : 'Loading store audit data…' }}
     </div>
   </div>
 </template>
@@ -331,7 +331,7 @@ const props = defineProps({
 const criteria = ref([])
 const categories = ref([])
 const stores = ref([])
-const recentStoreIds = ref([])
+const recentStoreIds = ref(null)
 const latestDataMonth = ref(null)
 const lookupsLoaded = ref(false)
 const selectedStores = ref([])
@@ -402,7 +402,7 @@ async function loadLookups() {
     const [critRes, catRes, storeDataRes] = await Promise.all([
       fetch('/api/criteria?year=2025'),
       fetch('/api/categories'),
-      fetch('/api/store-audit/dashboard-stores')
+      fetch('/api/store-audit/dashboard-stores?year=2025')
     ])
     try {
       const rawCrit = await critRes.json()
@@ -415,18 +415,18 @@ async function loadLookups() {
     try {
       const storeData = await storeDataRes.json()
       stores.value = Array.isArray(storeData?.stores) ? storeData.stores : []
-      recentStoreIds.value = Array.isArray(storeData?.recentStoreIds) ? storeData.recentStoreIds : []
+      recentStoreIds.value = Array.isArray(storeData?.recentStoreIds) ? storeData.recentStoreIds : null
       latestDataMonth.value = storeData?.latestDataMonth || null
     } catch (e) {
       stores.value = []
-      recentStoreIds.value = []
+      recentStoreIds.value = null
       latestDataMonth.value = null
     }
   } catch (e) {
     criteria.value = []
     categories.value = []
     stores.value = []
-    recentStoreIds.value = []
+    recentStoreIds.value = null
     latestDataMonth.value = null
   } finally {
     lookupsLoaded.value = true
