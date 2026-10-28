@@ -13,6 +13,7 @@ const props = defineProps({
   heatmap: { type: Boolean, default: false },
 });
 const tooltip = ref(null);
+const hoveredName = ref(null);
 
 const colors = ['#0f766e', '#2563eb', '#7c3aed', '#ea580c', '#0891b2', '#be123c', '#4f46e5', '#65a30d', '#c026d3', '#475569', '#b45309', '#0284c7'];
 const HEATMAP_LIGHT = [191, 219, 254]; // light blue
@@ -103,19 +104,20 @@ function moveTooltip(event) {
       <text x="12" :y="top + plotHeight / 2" text-anchor="middle" fill="#334155" font-size="10" transform="rotate(-90 12 105)">{{ rupiahMode ? 'Revenue (Rp)' : 'Sales share (%)' }}</text>
       <g v-for="(item,index) in chartItems" :key="item.name">
         <rect
-          :x="barX(index)"
-          :y="baseline - barHeight(item)"
-          :width="barWidth"
-          :height="barHeight(item)"
+          :x="barX(index) - (hoveredName === item.name ? barWidth * 0.07 : 0)"
+          :y="baseline - barHeight(item) - (hoveredName === item.name ? Math.max(2, barHeight(item) * 0.025) : 0)"
+          :width="barWidth * (hoveredName === item.name ? 1.14 : 1)"
+          :height="barHeight(item) * (hoveredName === item.name ? 1.05 : 1)"
           :fill="item.color"
           rx="3"
+          style="transition: x 300ms ease, y 300ms ease, width 300ms ease, height 300ms ease;"
           tabindex="0"
           :aria-label="`${item.name}: ${percent(item.percent)}, ${money(item.sales)}`"
-          @pointerenter="showTooltip($event, item)"
+          @pointerenter="hoveredName = item.name; showTooltip($event, item)"
           @pointermove="moveTooltip"
-          @pointerleave="tooltip = null"
-          @focus="showTooltip($event, item)"
-          @blur="tooltip = null"
+          @pointerleave="hoveredName = null; tooltip = null"
+          @focus="hoveredName = item.name; showTooltip($event, item)"
+          @blur="hoveredName = null; tooltip = null"
         >
         </rect>
         <text :transform="`translate(${barX(index) + 4},${baseline + 10}) rotate(-45)`" text-anchor="end" fill="#334155" font-size="10">{{ item.name }}</text>

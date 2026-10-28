@@ -8,7 +8,8 @@ import AnalyticsBarChart from '../components/AnalyticsBarChart.vue';
 
 const activeTab = ref('analytics');
 const period = ref('all');
-const anchorDate = ref(new Date().toLocaleDateString('en-CA'));
+const jakartaToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+const anchorDate = ref(jakartaToday());
 const customStartDate = ref('');
 const customEndDate = ref('');
 const selectedStores = ref(null);
@@ -41,6 +42,12 @@ const timeRangeEnd = ref('');
 const timeSelectedStores = ref(null);
 const timeSummary = ref({});
 const timeRangeError = ref('');
+const weekdayTooltip = ref(null);
+const stockCompareStore = ref('');
+const stockCompareDate = ref(jakartaToday());
+const stockCompare = ref({ rows: [], needsSnapshots: true, collectingSince: null });
+const stockCompareError = ref('');
+const stockCompareLoading = ref(false);
 const hourTooltip = ref(null);
 const loading = ref(false);
 const error = ref('');
@@ -142,7 +149,7 @@ const hourlyValues = computed(() => {
       ...store,
       payments: paymentsByHourStore.get(`${hour}|${store.name}`) || [],
     })),
-  }));
+  })).sort((a, b) => ((a.hour + 13) % 24) - ((b.hour + 13) % 24));
 });
 const weeklyValues = computed(() => {
   const storesByWeek = new Map();
@@ -150,31 +157,50 @@ const weeklyValues = computed(() => {
     if (!storesByWeek.has(item.week_start)) storesByWeek.set(item.week_start, []);
     storesByWeek.get(item.week_start).push({ name: item.branch, sales: Number(item.sales) || 0 });
   }
-  const paymentsByWeekStore = new Map();
-  for (const item of timeSummary.value.weeklyByPayment || []) {
-    const key = `${item.week_start}|${item.branch}`;
-    if (!paymentsByWeekStore.has(key)) paymentsByWeekStore.set(key, []);
-    paymentsByWeekStore.get(key).push({ name: item.payment_method, sales: Number(item.sales) || 0 });
-  }
-  const paymentsByWeek = new Map();
-  for (const item of timeSummary.value.weeklyByPayment || []) {
-    if (!paymentsByWeek.has(item.week_start)) paymentsByWeek.set(item.week_start, new Map());
-    const payments = paymentsByWeek.get(item.week_start);
-    payments.set(item.payment_method, (payments.get(item.payment_method) || 0) + Number(item.sales || 0));
-  }
   return (timeSummary.value.weeklySales || []).map((item) => ({
     key: item.week_start,
     name: `Week of ${item.week_start}`,
+    month: item.month || item.week_start.slice(0, 7),
     shortName: item.week_start,
     sales: Number(item.sales) || 0,
-    payments: [...(paymentsByWeek.get(item.week_start) || new Map())].map(([name, sales]) => ({ name, sales }))
-      .sort((a, b) => b.sales - a.sales),
-    stores: (storesByWeek.get(item.week_start) || []).filter((store) => store.sales > 0).map((store) => ({
-      ...store,
-      payments: paymentsByWeekStore.get(`${item.week_start}|${store.name}`) || [],
-    })),
+    revenueOnly: true,
+    stores: (storesByWeek.get(item.week_start) || []).filter((store) => store.sales > 0),
   }));
 });
+const weeklyMonthRows = computed(() => {
+  const months = new Map();
+  for (const week of weeklyValues.value) {
+    if (!months.has(week.month)) months.set(week.month, []);
+    months.get(week.month).push(week);
+  }
+  return [...months].map(([month, weeks]) => ({
+    month: new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' }).format(new Date(`${month}-01T12:00:00`)),
+    weeks,
+  }));
+});
+const weekdayValues = computed(() => {
+  const revenue = new Map((timeSummary.value.weekdaySales || []).map((item) => [Number(item.weekday), Number(item.sales) || 0]));
+  const products = new Map();
+  for (const item of timeSummary.value.weekdayTopProducts || []) {
+    if (!products.has(Number(item.weekday))) products.set(Number(item.weekday), []);
+    products.get(Number(item.weekday)).push({ name: item.menu, qty: Number(item.qty) || 0, sales: Number(item.sales) || 0 });
+  }
+  return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((name, weekday) => ({
+    name, weekday, sales: revenue.get(weekday) || 0, topProducts: products.get(weekday) || [],
+  }));
+});
+const maxWeekdaySales = computed(() => Math.max(1, ...weekdayValues.value.map((item) => item.sales)));
+const topProductWindows = computed(() => [
+  { title: 'Last 7 days', key: 'topProductsLastWeek' },
+  { title: 'This month', key: 'topProductsThisMonth' },
+].map((window) => {
+  const byStore = new Map();
+  for (const item of summary.value[window.key] || []) {
+    if (!byStore.has(item.branch)) byStore.set(item.branch, []);
+    byStore.get(item.branch).push(item);
+  }
+  return { ...window, stores: [...byStore].map(([name, products]) => ({ name, products })) };
+}));
 const monthlyValues = computed(() => {
   const storesByMonth = new Map();
   for (const item of timeSummary.value.monthlyByStore || []) {
@@ -550,7 +576,9 @@ function showTimeTooltip(event, slot) {
       : slot.name,
     allStores: timeSelectedStores.value === null,
     payments: slot.payments,
-    stores: slot.stores,
+    stores: slot.revenueOnly ? [] : slot.stores,
+    sales: slot.sales,
+    topProducts: slot.topProducts,
     x: Math.max(12, Math.min(x + 14, window.innerWidth - 380)),
     y: Math.max(12, Math.min(y + 14, window.innerHeight - 400)),
   };
@@ -624,6 +652,19 @@ async function loadReport() {
     if (requestId === reportRequestId) loading.value = false;
   }
 }
+async function loadStockCompare() {
+  if (!stockCompareStore.value || !stockCompareDate.value) return;
+  stockCompareLoading.value = true;
+  stockCompareError.value = '';
+  try {
+    const result = await getJson(`/api/sales/stock-compare?${queryString({ store: stockCompareStore.value, date: stockCompareDate.value })}`);
+    stockCompare.value = result;
+  } catch (loadError) {
+    stockCompareError.value = loadError.message || 'Could not load stock comparison.';
+  } finally {
+    stockCompareLoading.value = false;
+  }
+}
 async function loadFiles() {
   try {
     const result = await getJson('/api/sales/files');
@@ -636,6 +677,7 @@ async function loadStores() {
   try {
     const result = await getJson('/api/sales/stores');
     stores.value = result.stores || [];
+    if (!stockCompareStore.value) stockCompareStore.value = stores.value[0]?.name || '';
   } catch (loadError) {
     error.value = loadError.message || 'Could not load sales branches.';
   }
@@ -696,6 +738,8 @@ watch([rawSearch, page], () => {
   if (activeTab.value === 'raw') loadReport();
 });
 watch([timeRangeStart, timeRangeEnd, timeSelectedStores], loadTimeSummary);
+watch([stockCompareStore, stockCompareDate], loadStockCompare);
+watch(() => summary.value.latestBusinessDate, (date) => { if (date && !stockCompareDate.value) stockCompareDate.value = date; });
 watch([pivotRows, allPivotRows], ([filteredItems, allItems]) => {
   if (selectedPivotProduct.value === '__all__') return;
   if (!allItems.some((item) => item.item === selectedPivotProduct.value) ||
@@ -709,10 +753,12 @@ onMounted(() => {
   loadFiles();
   loadReport();
   loadTimeSummary();
+  loadStockCompare();
   autoRefreshTimer = setInterval(() => {
     if (document.hidden || loading.value || uploadOpen.value) return;
     loadReport();
     loadTimeSummary();
+    loadStockCompare();
   }, 60000);
 });
 onBeforeUnmount(() => clearInterval(autoRefreshTimer));
@@ -732,7 +778,7 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
         <button type="button" class="flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-teal-800" @click="uploadOpen = true">
           <UploadCloud class="h-4 w-4" />Upload CSV
         </button>
-        <button type="button" class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" :disabled="loading" title="Refresh" @click="loadReport(); loadFiles(); loadStores(); loadTimeSummary()">
+        <button type="button" class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" :disabled="loading" title="Refresh" @click="loadReport(); loadFiles(); loadStores(); loadTimeSummary(); loadStockCompare()">
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
         </button>
       </div>
@@ -760,6 +806,23 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
             </li>
             <li v-if="!topStores.length" class="text-xs text-slate-400">No store sales in this period.</li>
           </ol>
+        </article>
+      </section>
+      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <article v-for="window in topProductWindows" :key="window.key" class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 class="mb-3 text-sm font-bold text-slate-900">Top 5 products per store · {{ window.title }}</h2>
+          <div v-if="window.stores.length" class="grid gap-3 sm:grid-cols-2">
+            <div v-for="store in window.stores" :key="store.name" class="rounded-xl bg-slate-50 p-3">
+              <h3 class="mb-2 truncate text-xs font-bold text-slate-700">{{ store.name }}</h3>
+              <ol class="space-y-1.5">
+                <li v-for="product in store.products" :key="product.menu" class="flex items-start justify-between gap-2 text-[11px]">
+                  <span class="min-w-0"><span class="mr-1 font-bold text-teal-700">{{ product.rank }}.</span><span class="font-medium text-slate-800">{{ product.menu }}</span><span class="ml-1 text-slate-500">×{{ Number(product.qty).toLocaleString('id-ID') }}</span></span>
+                  <span class="shrink-0 font-mono text-slate-600">{{ formatMoney(product.sales) }}</span>
+                </li>
+              </ol>
+            </div>
+          </div>
+          <p v-else class="text-xs text-slate-400">No product sales in this period for the selected stores.</p>
         </article>
       </section>
     </template>
@@ -1011,7 +1074,7 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
 
       <section class="space-y-4 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <header class="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 pb-4">
-          <div><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><BarChart3 class="h-4 w-4 text-indigo-600" />Sales by Time Range</h2><p class="text-[11px] text-slate-500">Hourly, weekly, and monthly revenue · payment-method breakdown is available on hover.</p></div>
+          <div><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><BarChart3 class="h-4 w-4 text-indigo-600" />Sales by Time Range</h2><p class="text-[11px] text-slate-500">Hourly, weekday, weekly, and monthly revenue · business dates run 06:00–05:59 Jakarta time.</p></div>
           <div class="flex flex-wrap items-end gap-3">
             <label class="text-[10px] font-bold uppercase text-slate-500">From
               <input v-model="timeRangeStart" type="date" class="mt-1 block rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-medium normal-case text-slate-800">
@@ -1046,16 +1109,33 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
             </div>
           </article>
           <article class="rounded-xl border border-slate-100 p-3">
-            <h3 class="mb-3 text-xs font-bold text-slate-700">Sales by Week</h3>
-            <div class="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">
-              <button v-for="slot in weeklyValues" :key="slot.key" type="button"
-                class="rounded-lg border p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                :style="heatmapStyle(slot.sales, maxWeeklySales, '#eef2ff', '#4338ca')"
-                :aria-label="`${slot.name} sales ${formatMoney(slot.sales)}`"
+            <h3 class="mb-3 text-xs font-bold text-slate-700">Sales by Day</h3>
+            <div class="grid grid-cols-7 gap-1.5">
+              <button v-for="slot in weekdayValues" :key="slot.weekday" type="button"
+                class="min-w-0 rounded-lg border p-2 text-center shadow-sm transition hover:z-10 hover:scale-[1.03] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-cyan-600"
+                :style="heatmapStyle(slot.sales, maxWeekdaySales, '#ecfeff', '#0e7490')"
+                :aria-label="`${slot.name}: ${formatMoney(slot.sales)}`"
                 @pointerenter="showTimeTooltip($event, slot)" @pointermove="moveTimeTooltip" @pointerleave="hourTooltip = null"
                 @focus="showTimeTooltip($event, slot)" @blur="hourTooltip = null">
-                <span class="block text-xs font-bold">{{ slot.shortName }}</span><span class="mt-1 block text-[10px]">{{ formatMoney(slot.sales) }}</span>
+                <span class="block truncate text-[10px] font-bold sm:text-xs">{{ slot.name.slice(0, 3) }}</span><span class="mt-1 block truncate text-[8px] sm:text-[10px]">{{ formatMoney(slot.sales) }}</span>
               </button>
+            </div>
+          </article>
+          <article class="rounded-xl border border-slate-100 p-3">
+            <h3 class="mb-3 text-xs font-bold text-slate-700">Sales by Week</h3>
+            <div class="max-h-80 space-y-2 overflow-x-auto overflow-y-auto">
+              <div v-for="month in weeklyMonthRows" :key="month.month" class="flex min-w-max items-center gap-2 rounded-lg bg-slate-50 p-2">
+                <span class="w-24 shrink-0 text-xs font-bold text-slate-700">{{ month.month }}</span>
+                <button v-for="slot in month.weeks" :key="slot.key" type="button"
+                  class="min-w-28 rounded-lg border p-2 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  :style="heatmapStyle(slot.sales, maxWeeklySales, '#eef2ff', '#4338ca')"
+                  :aria-label="`${slot.name} sales ${formatMoney(slot.sales)}`"
+                  @pointerenter="showTimeTooltip($event, slot)" @pointermove="moveTimeTooltip" @pointerleave="hourTooltip = null"
+                  @focus="showTimeTooltip($event, slot)" @blur="hourTooltip = null">
+                  <span class="block text-xs font-bold">Week of {{ slot.shortName }}</span><span class="mt-1 block text-[10px]">{{ formatMoney(slot.sales) }}</span>
+                </button>
+              </div>
+              <p v-if="!weeklyMonthRows.length" class="p-4 text-center text-xs text-slate-400">No weekly sales yet.</p>
             </div>
           </article>
           <article class="rounded-xl border border-slate-100 p-3">
@@ -1072,6 +1152,23 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
             </div>
           </article>
         </div>
+        <section class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <header class="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div><h3 class="text-sm font-bold text-slate-900">Stock vs Sold</h3><p class="text-[11px] text-slate-500">Opening snapshot before 06:00, sales in the business day, and next-morning closing snapshot.</p></div>
+            <div class="flex flex-wrap gap-2">
+              <label class="text-[10px] font-bold uppercase text-slate-500">Store<select v-model="stockCompareStore" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800"><option v-for="store in stores" :key="store.name" :value="store.name">{{ store.name }}</option></select></label>
+              <label class="text-[10px] font-bold uppercase text-slate-500">Business date<input v-model="stockCompareDate" type="date" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800"></label>
+            </div>
+          </header>
+          <p v-if="stockCompareError" class="text-xs text-rose-700">{{ stockCompareError }}</p>
+          <p v-else-if="stockCompareLoading" class="text-xs text-slate-500">Loading stock comparison…</p>
+          <p v-else-if="stockCompare.needsSnapshots" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Needs stock snapshots from two consecutive mornings ({{ stockCompare.requiredDates?.join(' and ') || 'selected date and following day' }}); collecting since {{ stockCompare.collectingSince || 'the next successful inventory sync' }}.</p>
+          <div v-else class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+            <table class="w-full min-w-[760px] text-left text-xs"><thead class="bg-slate-100 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-3 py-2">Product (sales / stock)</th><th class="px-3 py-2 text-right">Opening</th><th class="px-3 py-2 text-right">Sold</th><th class="px-3 py-2 text-right">Expected closing</th><th class="px-3 py-2 text-right">Actual closing</th><th class="px-3 py-2 text-right">Difference</th><th class="px-3 py-2">Status</th></tr></thead>
+              <tbody><tr v-for="(row,index) in stockCompare.rows" :key="`${row.product}-${index}`" class="border-t border-slate-100"><td class="px-3 py-2 font-medium">{{ row.product }}<span v-if="row.stockProduct && row.stockProduct !== row.product" class="block text-[10px] text-slate-500">Matched stock: {{ row.stockProduct }}</span></td><td class="px-3 py-2 text-right">{{ row.opening ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.sold ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.expectedClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.actualClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.difference ?? '—' }}</td><td class="px-3 py-2"><span :class="row.status === 'matched' ? 'text-emerald-700' : row.status === 'mismatch' ? 'text-amber-700' : 'text-slate-500'">{{ row.status }}</span></td></tr>
+                <tr v-if="!stockCompare.rows.length"><td colspan="7" class="p-5 text-center text-slate-400">No stock or sales products found for this store and date.</td></tr></tbody></table>
+          </div>
+        </section>
       </section>
     </template>
 
@@ -1106,6 +1203,11 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
     <Teleport v-if="hourTooltip" to="body">
       <div class="pointer-events-none fixed z-[100] max-h-[70vh] max-w-[22rem] overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${hourTooltip.x}px`, top: `${hourTooltip.y}px` }">
         <p class="font-bold">{{ hourTooltip.hour }}</p>
+        <p v-if="hourTooltip.sales !== undefined" class="mt-1 font-mono">{{ formatMoney(hourTooltip.sales) }}</p>
+        <template v-if="hourTooltip.topProducts?.length">
+          <p class="mt-1 text-[10px] font-bold uppercase text-slate-400">Top products · qty · revenue</p>
+          <p v-for="product in hourTooltip.topProducts" :key="product.name" class="flex justify-between gap-3"><span class="truncate">{{ product.name }} · {{ product.qty }}</span><span class="shrink-0 font-mono">{{ formatMoney(product.sales) }}</span></p>
+        </template>
         <template v-if="hourTooltip.stores?.length">
           <p class="mt-1 text-[10px] font-bold uppercase text-slate-400">Revenue per store</p>
           <p v-for="store in hourTooltip.stores" :key="store.name" class="flex justify-between gap-4"><span>{{ store.name }}</span><span class="font-mono">{{ formatMoney(store.sales) }}</span></p>

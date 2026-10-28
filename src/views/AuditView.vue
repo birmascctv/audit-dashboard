@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useAuditStore } from '../composables/useAuditStore.js';
 import { useScanner } from '../composables/useScanner.js';
 import { useAuth } from '../composables/useAuth.js';
@@ -65,6 +65,8 @@ const {
   registerAuditScan,
   decrementAuditCount,
   setAuditCount,
+  setProductNote,
+  refreshProductsSilently,
   resetCurrentAudit,
   selectStore,
   syncFromWordPress,
@@ -202,23 +204,6 @@ async function saveBirmasConfig() {
     console.error('Failed to save Birmas config:', err);
   } finally {
     isSavingBirmasConfig.value = false;
-  }
-}
-
-const quickSyncMsg = ref('');
-async function handleQuickBirmasSync() {
-  isSyncingBirmas.value = true;
-  quickSyncMsg.value = 'Pulling Product Stocks from Birmas server...';
-  try {
-    const res = await syncFromBirmasServer({});
-    quickSyncMsg.value = res.success
-      ? `Synced ${res.totalSyncedProducts || 0} store stocks from Birmas server.`
-      : (res.error || res.message || 'Sync failed.');
-  } catch (err) {
-    quickSyncMsg.value = err.message;
-  } finally {
-    isSyncingBirmas.value = false;
-    setTimeout(() => { quickSyncMsg.value = ''; }, 8000);
   }
 }
 
@@ -443,7 +428,8 @@ async function handleFinalizeAudit() {
     );
     isCompleteModalOpen.value = false;
     auditNotes.value = '';
-    alert('Audit successfully signed off and stored in backend history!');
+    showAuditSuccess.value = true;
+    setTimeout(() => { showAuditSuccess.value = false; }, 2600);
   } catch (err) {
     alert('Failed to finalize audit: ' + err.message);
   } finally {
@@ -464,7 +450,16 @@ onMounted(() => {
   if (document.documentElement) document.documentElement.scrollTop = 0;
   if (document.body) document.body.scrollTop = 0;
   loadBirmasConfig();
+  // Keep stock fresh without any button: the server syncs from ESB, the page just re-reads it
+  silentRefreshTimer = setInterval(() => {
+    if (!document.hidden) refreshProductsSilently();
+  }, 60000);
 });
+
+let silentRefreshTimer = null;
+onUnmounted(() => clearInterval(silentRefreshTimer));
+
+const showAuditSuccess = ref(false);
 </script>
 
 <template>
@@ -516,18 +511,6 @@ onMounted(() => {
           <Plus class="w-3.5 h-3.5 text-teal-700" />
           <span>Add Barcode</span>
         </button>
-
-        <button
-          @click="handleQuickBirmasSync"
-          :disabled="isSyncingBirmas"
-          type="button"
-          class="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-          title="Pull Product Stocks from the Birmas server"
-        >
-          <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': isSyncingBirmas }" />
-          <span>{{ isSyncingBirmas ? 'Syncing...' : 'Sync from Birmas' }}</span>
-        </button>
-        <span v-if="quickSyncMsg" class="text-xs font-semibold text-slate-600">{{ quickSyncMsg }}</span>
 
         <!-- Finalize Audit Button -->
         <button
@@ -1008,6 +991,7 @@ onMounted(() => {
               </th>
               <th class="py-3 px-4 text-center bg-slate-100">Discrepancy</th>
               <th class="py-3 px-4 text-center bg-slate-100">Audit Status</th>
+              <th class="py-3 px-4 bg-slate-100 min-w-[180px]">Notes</th>
               <th class="py-3 px-4 text-right bg-slate-100">Action</th>
             </tr>
           </thead>
@@ -1210,6 +1194,20 @@ onMounted(() => {
                 </span>
               </td>
 
+              <!-- Notes -->
+              <td class="py-2 px-4">
+                <input
+                  :value="item.note"
+                  @change="setProductNote(item.wpId, $event.target.value)"
+                  @keydown.enter="$event.target.blur()"
+                  :disabled="isSessionLocked"
+                  type="text"
+                  maxlength="500"
+                  placeholder="Add note..."
+                  class="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 placeholder-slate-300 focus:outline-none focus:border-teal-500"
+                />
+              </td>
+
               <!-- Action -->
               <td class="py-3.5 px-4 text-right">
                 <button
@@ -1225,7 +1223,7 @@ onMounted(() => {
 
             <!-- Empty Filter State -->
             <tr v-if="filteredItems.length === 0">
-              <td colspan="8" class="py-12 text-center text-slate-400">
+              <td colspan="9" class="py-12 text-center text-slate-400">
                 <Package class="w-8 h-8 text-slate-300 mx-auto mb-2" />
                 <p class="font-medium text-slate-600">No products matching your search</p>
                 <button
@@ -1726,5 +1724,33 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Audit Complete success animation -->
+    <transition name="audit-success">
+      <div
+        v-if="showAuditSuccess"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm"
+        @click="showAuditSuccess = false"
+      >
+        <div class="bg-white rounded-3xl shadow-2xl px-12 py-10 flex flex-col items-center gap-4 audit-success-card">
+          <svg class="w-24 h-24" viewBox="0 0 52 52" fill="none">
+            <circle class="audit-success-circle" cx="26" cy="26" r="24" stroke="#0d9488" stroke-width="3" />
+            <path class="audit-success-check" d="M14 27 l8 8 l16 -17" stroke="#0d9488" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <p class="text-2xl font-extrabold text-slate-900">Audit Complete</p>
+          <p class="text-sm font-semibold text-teal-700">Success! Saved to Audit Records.</p>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
+
+<style scoped>
+.audit-success-enter-active, .audit-success-leave-active { transition: opacity 0.3s ease; }
+.audit-success-enter-from, .audit-success-leave-to { opacity: 0; }
+.audit-success-card { animation: audit-pop 0.5s cubic-bezier(0.2, 1.4, 0.4, 1); }
+.audit-success-circle { stroke-dasharray: 151; stroke-dashoffset: 151; animation: audit-draw 0.6s ease forwards; }
+.audit-success-check { stroke-dasharray: 40; stroke-dashoffset: 40; animation: audit-draw 0.4s 0.5s ease forwards; }
+@keyframes audit-draw { to { stroke-dashoffset: 0; } }
+@keyframes audit-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+</style>

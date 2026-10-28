@@ -236,6 +236,7 @@ const ALLOWED_OUTLETS = [
   { store_id: 3, id: 'birmas-kwitang', name: 'Birmas Kwitang' },
 ]
 
+const store = ref('Birmas Sudirman')
 const localStores = ref([])
 const activeStores = computed(() => {
   return ALLOWED_OUTLETS
@@ -277,7 +278,6 @@ const months = ref([
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
 ])
 
-const store = ref('Birmas Sudirman')
 const year = ref(String(currentYear))
 const month = ref('Januari')
 const file = ref(null)

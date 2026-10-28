@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseLocalizedNumber } from './src/utils/salesCsv.js';
 
-const DATA_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data');
+const DATA_DIR = process.env.DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), 'data');
 const DB_PATH = path.join(DATA_DIR, 'sales_clean.sqlite');
 const CSV_COLUMNS = [
   ['sales_date_in', 'Sales Date In'],
@@ -22,6 +22,12 @@ const CSV_COLUMNS = [
 ];
 
 let database;
+
+const BUSINESS_DATE_SQL = "date(sales_date_in, '-6 hours')";
+function jakartaToday() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  return `${parts.find((part) => part.type === 'year').value}-${parts.find((part) => part.type === 'month').value}-${parts.find((part) => part.type === 'day').value}`;
+}
 
 export function initializeSalesDatabase(db) {
   db.exec(`
@@ -251,14 +257,14 @@ export function makeWhere(filters = {}) {
     }
   }
   if (filters.startDate) {
-    clauses.push('sales_date_in >= ?');
-    values.push(`${filters.startDate} 00:00:00`);
+    clauses.push(`${BUSINESS_DATE_SQL} >= ?`);
+    values.push(filters.startDate);
   }
   if (filters.endDate) {
     const nextDate = new Date(`${filters.endDate}T00:00:00Z`);
     nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-    clauses.push('sales_date_in < ?');
-    values.push(`${nextDate.toISOString().slice(0, 10)} 00:00:00`);
+    clauses.push(`${BUSINESS_DATE_SQL} < ?`);
+    values.push(nextDate.toISOString().slice(0, 10));
   }
   if (filters.importId) {
     clauses.push('import_id = ?');
@@ -419,8 +425,8 @@ export function getSalesSummary(filters = {}) {
   `, where.values);
   const promotions = aggregateRows(db, `
     SELECT menu AS name, branch, SUM(total_after_bill_discount) AS sales, SUM(qty) AS units,
-      MIN(substr(sales_date_in, 1, 10)) AS start_date,
-      MAX(substr(sales_date_in, 1, 10)) AS end_date
+      MIN(${BUSINESS_DATE_SQL}) AS start_date,
+      MAX(${BUSINESS_DATE_SQL}) AS end_date
     FROM sales_transactions ${where.sql}
     ${where.sql ? 'AND' : 'WHERE'}
       (UPPER(menu_category) LIKE '%PROMO%' OR UPPER(menu_category_detail) LIKE '%PROMO%')
@@ -446,6 +452,32 @@ export function getSalesSummary(filters = {}) {
     ) WHERE rank <= 10 ORDER BY branch, rank
   `, productWhere.values);
 
+  const storeOnlyWhere = makeWhere({ storeId: filters.storeId, storeIds: filters.storeIds });
+  const latestDataDate = db.prepare(`SELECT MAX(${BUSINESS_DATE_SQL}) AS d FROM sales_transactions ${storeOnlyWhere.sql}`).get(...storeOnlyWhere.values)?.d;
+  const today = jakartaToday();
+  const latestBusinessDate = latestDataDate && latestDataDate < today ? latestDataDate : today;
+  const lastWeekStart = new Date(`${latestBusinessDate}T00:00:00Z`);
+  lastWeekStart.setUTCDate(lastWeekStart.getUTCDate() - 6);
+  const lastWeekDate = lastWeekStart.toISOString().slice(0, 10);
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const getTopProducts = (startDate, endDate) => {
+    const rangeWhere = makeWhere({
+      storeId: filters.storeId, storeIds: filters.storeIds, startDate, endDate,
+    });
+    return aggregateRows(db, `
+      SELECT branch, menu, qty, sales, rank FROM (
+        SELECT branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
+          ROW_NUMBER() OVER (PARTITION BY branch ORDER BY SUM(qty) DESC, SUM(total_after_bill_discount) DESC, menu) AS rank
+        FROM sales_transactions ${rangeWhere.sql}
+          ${rangeWhere.sql ? 'AND' : 'WHERE'} UPPER(menu_category) NOT LIKE '%PROMO%'
+          AND UPPER(menu_category_detail) NOT LIKE '%PROMO%' AND menu <> ''
+        GROUP BY branch, menu
+      ) WHERE rank <= 5 ORDER BY branch, rank
+    `, rangeWhere.values);
+  };
+  const topProductsLastWeek = getTopProducts(lastWeekDate, latestBusinessDate);
+  const topProductsThisMonth = getTopProducts(monthStart, today);
+
   return {
     ...base,
     byStore,
@@ -462,6 +494,9 @@ export function getSalesSummary(filters = {}) {
     storePayments,
     topProductsByStore,
     topProductsAllStores,
+    topProductsLastWeek,
+    topProductsThisMonth,
+    latestBusinessDate,
     pivots: {
       brand: allocatePaymentSales(pivotRows(db, where, 'brand', filters), ['item']),
       category: allocatePaymentSales(pivotRows(db, where, 'category', filters), ['item']),
@@ -473,78 +508,72 @@ export function getSalesSummary(filters = {}) {
 export function getSalesTimeSeries(filters = {}) {
   const db = getSalesDb();
   const where = makeWhere(filters);
-  const weeklyByPaymentRows = db.prepare(`
-    SELECT branch, payment_method, date(substr(sales_date_in, 1, 10), '-' ||
-      ((CAST(strftime('%w', substr(sales_date_in, 1, 10)) AS INTEGER) + 6) % 7) || ' days') AS week_start,
-      SUM(total_after_bill_discount) AS sales
-    FROM sales_transactions ${where.sql}
-    GROUP BY branch, payment_method, week_start ORDER BY week_start, branch
-  `).all(...where.values);
-  const weeklyByPayment = allocatePaymentSales(weeklyByPaymentRows, ['branch', 'week_start']);
-  const hourlyByPaymentRows = db.prepare(`
-    SELECT branch, payment_method, CAST(substr(sales_date_in, 12, 2) AS INTEGER) AS hour,
-      SUM(total_after_bill_discount) AS sales
-    FROM sales_transactions ${where.sql}
-    ${where.sql ? 'AND' : 'WHERE'}
-      substr(sales_date_in, 12, 2) GLOB '[0-2][0-9]'
-    GROUP BY branch, payment_method, hour ORDER BY hour, branch
-  `).all(...where.values);
-  const hourlyByPayment = allocatePaymentSales(hourlyByPaymentRows, ['branch', 'hour']);
-  const hourlySales = db.prepare(`
-    SELECT CAST(substr(sales_date_in, 12, 2) AS INTEGER) AS hour,
-      SUM(total_after_bill_discount) AS sales
-    FROM sales_transactions ${where.sql}
-    ${where.sql ? 'AND' : 'WHERE'}
-      substr(sales_date_in, 12, 2) GLOB '[0-2][0-9]'
-    GROUP BY hour ORDER BY hour
-  `).all(...where.values);
-  const hourlyByStore = db.prepare(`
-    SELECT branch, CAST(substr(sales_date_in, 12, 2) AS INTEGER) AS hour,
-      SUM(total_after_bill_discount) AS sales
-    FROM sales_transactions ${where.sql}
-    ${where.sql ? 'AND' : 'WHERE'}
-      substr(sales_date_in, 12, 2) GLOB '[0-2][0-9]'
-    GROUP BY branch, hour ORDER BY hour, sales DESC
-  `).all(...where.values);
+  const dayExpr = BUSINESS_DATE_SQL;
+  const hourExpr = 'CAST(substr(sales_date_in, 12, 2) AS INTEGER)';
+  const weekExpr = `date(${dayExpr}, '-' || ((CAST(strftime('%w', ${dayExpr}) AS INTEGER) + 6) % 7) || ' days')`;
   const weeklySales = db.prepare(`
-    SELECT date(substr(sales_date_in, 1, 10), '-' ||
-      ((CAST(strftime('%w', substr(sales_date_in, 1, 10)) AS INTEGER) + 6) % 7) || ' days') AS week_start,
-      SUM(total_after_bill_discount) AS sales
-    FROM sales_transactions ${where.sql}
-    GROUP BY week_start ORDER BY week_start
+    SELECT week_start, substr(week_start, 1, 7) AS month, SUM(sales) AS sales FROM (
+      SELECT ${weekExpr} AS week_start, SUM(total_after_bill_discount) AS sales
+      FROM sales_transactions ${where.sql} GROUP BY week_start
+    ) GROUP BY week_start ORDER BY week_start
   `).all(...where.values);
   const weeklyByStore = db.prepare(`
-    SELECT branch, date(substr(sales_date_in, 1, 10), '-' ||
-      ((CAST(strftime('%w', substr(sales_date_in, 1, 10)) AS INTEGER) + 6) % 7) || ' days') AS week_start,
-      SUM(total_after_bill_discount) AS sales
-    FROM sales_transactions ${where.sql}
-    GROUP BY branch, week_start ORDER BY week_start, sales DESC
+    SELECT branch, ${weekExpr} AS week_start, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions ${where.sql} GROUP BY branch, week_start ORDER BY week_start, sales DESC
   `).all(...where.values);
   const monthlySales = db.prepare(`
-    SELECT substr(sales_date_in, 1, 7) AS month,
-      SUM(total_after_bill_discount) AS sales
-    FROM sales_transactions ${where.sql}
-    GROUP BY month ORDER BY month
+    SELECT substr(${dayExpr}, 1, 7) AS month, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions ${where.sql} GROUP BY month ORDER BY month
   `).all(...where.values);
   const monthlyByStore = db.prepare(`
-    SELECT branch, substr(sales_date_in, 1, 7) AS month,
-      SUM(total_after_bill_discount) AS sales
-    FROM sales_transactions ${where.sql}
-    GROUP BY branch, month ORDER BY month, sales DESC
+    SELECT branch, substr(${dayExpr}, 1, 7) AS month, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions ${where.sql} GROUP BY branch, month ORDER BY month, sales DESC
   `).all(...where.values);
   const monthlyByPaymentRows = db.prepare(`
-    SELECT branch, payment_method, substr(sales_date_in, 1, 7) AS month,
-      SUM(total_after_bill_discount) AS sales
-    FROM sales_transactions ${where.sql}
-    GROUP BY branch, payment_method, month ORDER BY month, branch
+    SELECT branch, payment_method, substr(${dayExpr}, 1, 7) AS month, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions ${where.sql} GROUP BY branch, payment_method, month ORDER BY month, branch
   `).all(...where.values);
   const monthlyByPayment = allocatePaymentSales(monthlyByPaymentRows, ['branch', 'month']);
+  const hourlySales = db.prepare(`
+    SELECT ${hourExpr} AS hour, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions ${where.sql} ${where.sql ? 'AND' : 'WHERE'} substr(sales_date_in, 12, 2) GLOB '[0-2][0-9]'
+    GROUP BY hour ORDER BY CASE WHEN hour >= 11 THEN hour - 11 ELSE hour + 13 END
+  `).all(...where.values);
+  const hourlyByStore = db.prepare(`
+    SELECT branch, ${hourExpr} AS hour, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions ${where.sql} ${where.sql ? 'AND' : 'WHERE'} substr(sales_date_in, 12, 2) GLOB '[0-2][0-9]'
+    GROUP BY branch, hour ORDER BY CASE WHEN hour >= 11 THEN hour - 11 ELSE hour + 13 END, sales DESC
+  `).all(...where.values);
+  const hourlyByPaymentRows = db.prepare(`
+    SELECT branch, payment_method, ${hourExpr} AS hour, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions ${where.sql} ${where.sql ? 'AND' : 'WHERE'} substr(sales_date_in, 12, 2) GLOB '[0-2][0-9]'
+    GROUP BY branch, payment_method, hour ORDER BY CASE WHEN hour >= 11 THEN hour - 11 ELSE hour + 13 END, branch
+  `).all(...where.values);
+  const hourlyByPayment = allocatePaymentSales(hourlyByPaymentRows, ['branch', 'hour']);
+  const weekdaySales = db.prepare(`
+    SELECT CAST(strftime('%w', ${dayExpr}) AS INTEGER) AS weekday, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions ${where.sql} GROUP BY weekday ORDER BY weekday
+  `).all(...where.values);
+  const weekdayTopProducts = db.prepare(`
+    SELECT weekday, menu, qty, sales FROM (
+      SELECT CAST(strftime('%w', ${dayExpr}) AS INTEGER) AS weekday, menu,
+        SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
+        ROW_NUMBER() OVER (PARTITION BY CAST(strftime('%w', ${dayExpr}) AS INTEGER) ORDER BY SUM(qty) DESC, SUM(total_after_bill_discount) DESC) AS rank
+      FROM sales_transactions ${where.sql} ${where.sql ? 'AND' : 'WHERE'} menu <> ''
+      GROUP BY weekday, menu
+    ) WHERE rank <= 10 ORDER BY weekday, rank
+  `).all(...where.values);
+  return { hourlySales, hourlyByStore, hourlyByPayment, weeklySales, weeklyByStore, monthlySales, monthlyByStore, monthlyByPayment, weekdaySales, weekdayTopProducts };
+}
 
-  return {
-    hourlySales, hourlyByStore, hourlyByPayment,
-    weeklySales, weeklyByStore, weeklyByPayment,
-    monthlySales, monthlyByStore, monthlyByPayment,
-  };
+export function getSalesProductsByBusinessDate(date, branch) {
+  const db = getSalesDb();
+  return db.prepare(`
+    SELECT menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions
+    WHERE ${BUSINESS_DATE_SQL} = ? AND branch = ? AND menu <> ''
+    GROUP BY menu ORDER BY menu
+  `).all(date, branch);
 }
 
 export function getSalesFiles() {

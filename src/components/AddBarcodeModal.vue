@@ -313,7 +313,7 @@ async function handleSubmit() {
                 @mousedown.prevent="pickProduct(p)"
                 @mouseenter="hoverIdx(i)"
                 class="h-8 px-3 flex items-center cursor-pointer font-semibold text-slate-800 truncate"
-                :class="i === highlightIdx ? 'bg-teal-50 text-teal-900' : ''"
+                :class="i === highlightIdx ? 'bg-teal-600 text-white' : 'hover:bg-slate-100'"
               >
                 {{ p.productTitle || p.varian }}
               </li>

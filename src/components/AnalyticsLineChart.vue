@@ -14,6 +14,7 @@ const props = defineProps({
 });
 
 const tooltip = ref(null);
+const hoveredPoint = ref(null);
 const filteredItems = computed(() => {
   const items = props.items
     .map((item) => ({ ...item, value: Number(item[props.metric]) || 0 }))
@@ -88,10 +89,10 @@ function moveTooltip(event) {
         <path :d="linePath" fill="none" :stroke="lineColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
         <line v-if="points.length === 1" :x1="points[0].x" :x2="points[0].x" :y1="points[0].y" :y2="top + plotHeight" :stroke="lineColor" stroke-width="2" stroke-dasharray="4 4" />
         <g v-for="point in points" :key="point.name">
-          <circle :cx="point.x" :cy="point.y" :r="points.length === 1 ? 7 : 4" :fill="lineColor" stroke="#fff" stroke-width="1" tabindex="0"
+          <circle :cx="point.x" :cy="point.y" :r="hoveredPoint === point.name ? (points.length === 1 ? 10 : 8) : (points.length === 1 ? 7 : 4)" :style="{ transition: 'r 300ms ease' }" :fill="lineColor" stroke="#fff" stroke-width="1" tabindex="0"
             :aria-label="`${point.name}: ${point.percent.toFixed(1)}%, ${formatValue(point.value)}`"
-            @pointerenter="showTooltip($event, point)" @pointermove="moveTooltip" @pointerleave="tooltip = null"
-            @focus="showTooltip($event, point)" @blur="tooltip = null" />
+            @pointerenter="hoveredPoint = point.name; showTooltip($event, point)" @pointermove="moveTooltip" @pointerleave="hoveredPoint = null; tooltip = null"
+            @focus="hoveredPoint = point.name; showTooltip($event, point)" @blur="hoveredPoint = null; tooltip = null" />
           <text :transform="`translate(${point.x + 2},${top + plotHeight + 13}) rotate(-48)`" text-anchor="end" fill="#334155" :font-size="xAxisFontSize">{{ point.name.length > 22 ? `${point.name.slice(0, 21)}…` : point.name }}</text>
         </g>
         <text :x="left + plotWidth / 2" :y="height - 5" text-anchor="middle" fill="#334155" font-size="10">{{ xAxisLabel }} · top {{ chartItems.length }}</text>

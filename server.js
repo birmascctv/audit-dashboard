@@ -11,6 +11,7 @@ import * as salesDb from './salesDb.js';
 import * as storeAuditService from './storeAuditService.js';
 import * as stockPeriodCsv from './stockPeriodCsv.js';
 import * as stockPeriodCsvStore from './stockPeriodCsvStore.js';
+import { captureStockSnapshot, ensureStockSnapshots } from './stockSnapshots.js';
 
 export function parseSafeMoney(val) {
   if (val === undefined || val === null || val === '') return 0;
@@ -70,7 +71,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // In AI Studio runtime environment, the app must bind strictly to port 3000
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 export const BIRMAS_STORE_KEYWORD_MAP = [
   { storeId: 'birmas-sudirman', name: 'Birmas Sudirman', keywords: ['sudirman', 'outs', 'sdr', 'outlet sudirman', 'brms'] },
@@ -374,12 +375,14 @@ export async function runSalesSync() {
 
 let isBirmasServerSyncing = false;
 
+const ALWAYS_INCLUDED_ESB_PRODUCTS = new Set(['GELAS CUP']);
 const EXCLUDED_ESB_CATEGORIES = new Set(['LAIN-LAIN', 'LAIN LAIN', 'PERLENGKAPAN OUTLET', 'ELECTRONIC']);
 const ESB_FEED_STORES = { BRMS: 'birmas-sudirman', BRMK: 'birmas-kuningan', BRMKW: 'birmas-kwitang' };
 
 export function isExcludedEsbProduct(name, category) {
   const n = String(name || '').trim().toUpperCase();
   if (n.startsWith('PROMO') && /\(?DRAFT\)?$/.test(n)) return true;
+  if (ALWAYS_INCLUDED_ESB_PRODUCTS.has(n)) return false;
   return EXCLUDED_ESB_CATEGORIES.has(String(category || '').trim().toUpperCase());
 }
 
@@ -476,6 +479,7 @@ async function runEsbFeedSync() {
     throw err;
   }
   db.setConfig('last_birmas_server_synced_at', new Date().toISOString());
+  try { captureStockSnapshot(db.getDb()); } catch (snapshotError) { console.warn('[Stock Snapshots] Capture failed:', snapshotError.message); }
   console.log(`[ESB Feed Sync] Synced ${synced} store stocks.`);
   return synced;
 }
@@ -1338,17 +1342,47 @@ async function startServer() {
     const audit = req.body;
     if (!audit.storeId) return res.status(400).json({ error: 'Store ID required' });
 
+    const allItems = Array.isArray(audit.items) ? audit.items : (Array.isArray(audit.records) ? audit.records : []);
+    const metrics = db.computeAuditMetrics(allItems);
+    const num = (v, fallback) => (v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : fallback);
+    const nowIso = new Date().toISOString();
+    const totalScanned = num(audit.totalScanned, metrics.totalScanned);
+    const missingCount = num(audit.missingCount, metrics.missingCount);
+    // Keep only products that carry audit information (drop zero-stock/unscanned-zero rows) to keep the archive small
+    const keptItems = allItems
+      .filter((it) => (Number(it.wpExpectedQty) || 0) !== 0 || (Number(it.scannedCount) || 0) !== 0)
+      .map((it) => ({
+        barcode: it.barcode || '',
+        productTitle: it.productTitle || it.varian || '',
+        varian: it.varian || '',
+        brand: it.brand || it.subCategory || '',
+        category: it.category || '',
+        wpExpectedQty: Number(it.wpExpectedQty) || 0,
+        scannedCount: Number(it.scannedCount) || 0,
+        discrepancy: Number(it.discrepancy) || 0,
+        status: it.status || '',
+        ...(it.note ? { note: String(it.note) } : {}),
+      }));
+
     const auditRecord = {
       id: audit.id || `audit-${Date.now()}`,
       storeId: audit.storeId,
       storeName: audit.storeName || 'Birmas Store',
       auditorName: audit.auditorName || 'Auditor',
-      timestamp: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      totalItems: audit.totalScanned || 0,
-      varianceCount: audit.missingCount || 0,
-      accuracy: audit.accuracy || 100,
-      records: audit.items || [],
+      timestamp: nowIso,
+      startedAt: audit.startedAt || null,
+      completedAt: audit.completedAt || nowIso,
+      totalItems: totalScanned,
+      varianceCount: missingCount,
+      totalExpected: num(audit.totalExpected, metrics.totalExpected),
+      totalScanned,
+      matchedCount: num(audit.matchedCount, metrics.matchedCount),
+      missingCount,
+      surplusCount: num(audit.surplusCount, metrics.surplusCount),
+      accuracy: num(audit.accuracy, metrics.accuracy),
+      notes: audit.notes ? String(audit.notes) : '',
+      records: keptItems,
+      items: keptItems,
     };
 
     db.saveAuditHistoryRecord(auditRecord);
@@ -1374,9 +1408,71 @@ async function startServer() {
     });
   });
 
+  // Per-product notes written by the auditor during a Stock Audit session
+  const ensureNotesTable = () => db.getDb().exec(
+    'CREATE TABLE IF NOT EXISTS audit_product_notes (store_id TEXT NOT NULL, product_id TEXT NOT NULL, note TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (store_id, product_id));'
+  );
+  app.get('/api/audit/notes', (req, res) => {
+    ensureNotesTable();
+    const rows = db.getDb().prepare('SELECT product_id, note FROM audit_product_notes WHERE store_id = ?;').all(String(req.query.storeId || ''));
+    res.json({ success: true, notes: Object.fromEntries(rows.map((r) => [r.product_id, r.note])) });
+  });
+  app.put('/api/audit/notes', (req, res) => {
+    ensureNotesTable();
+    const { storeId, productId } = req.body || {};
+    const note = String(req.body?.note || '').trim().slice(0, 500);
+    if (!storeId || !productId) return res.status(400).json({ success: false, error: 'storeId and productId are required' });
+    if (!note) {
+      db.getDb().prepare('DELETE FROM audit_product_notes WHERE store_id = ? AND product_id = ?;').run(storeId, String(productId));
+    } else {
+      db.getDb().prepare('INSERT OR REPLACE INTO audit_product_notes (store_id, product_id, note, updated_at) VALUES (?, ?, ?, ?);').run(storeId, String(productId), note, new Date().toISOString());
+    }
+    res.json({ success: true });
+  });
+  app.delete('/api/audit/notes', (req, res) => {
+    ensureNotesTable();
+    db.getDb().prepare('DELETE FROM audit_product_notes WHERE store_id = ?;').run(String(req.query.storeId || ''));
+    res.json({ success: true });
+  });
+
   // 9. Audit History
   app.get('/api/audit/history', (req, res) => {
     res.json(db.getAllAuditHistory());
+  });
+
+  // No server-side sessions exist: role comes from the client (header x-user-role or body.role), same trust model as session unlock
+  const requireSuperadmin = (req, res) => {
+    const role = req.headers['x-user-role'] || req.body?.role || '';
+    if (role !== 'superadmin') {
+      res.status(403).json({ success: false, error: 'Only Superadmin can modify audit records.' });
+      return false;
+    }
+    return true;
+  };
+
+  app.patch('/api/audit/history/:id', (req, res) => {
+    if (!requireSuperadmin(req, res)) return;
+    const { auditorName, notes, completedAt } = req.body || {};
+    if (completedAt && Number.isNaN(new Date(completedAt).getTime())) {
+      return res.status(400).json({ success: false, error: 'Invalid date' });
+    }
+    if (auditorName !== undefined && !String(auditorName).trim()) {
+      return res.status(400).json({ success: false, error: 'Auditor name required' });
+    }
+    const ok = db.updateAuditHistoryRecord(req.params.id, {
+      auditorName: auditorName !== undefined ? String(auditorName).trim() : undefined,
+      notes,
+      completedAt: completedAt ? new Date(completedAt).toISOString() : undefined,
+    });
+    if (!ok) return res.status(404).json({ success: false, error: 'Audit record not found' });
+    res.json({ success: true, audit: db.getAllAuditHistory().find((a) => a.id === req.params.id) });
+  });
+
+  app.delete('/api/audit/history/:id', (req, res) => {
+    if (!requireSuperadmin(req, res)) return;
+    const ok = db.deleteAuditHistoryRecord(req.params.id);
+    if (!ok) return res.status(404).json({ success: false, error: 'Audit record not found' });
+    res.json({ success: true });
   });
 
   app.delete('/api/audit/history', (req, res) => {
@@ -1729,136 +1825,6 @@ async function startServer() {
 
 
   // ==========================================
-  // Stock Audit CSV Upload & Management Endpoints
-  // ==========================================
-
-  app.get('/api/stock-csv/history', (req, res) => {
-    try {
-      const files = db.getStockFilesList();
-      res.json({ success: true, files });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.get('/api/stock-csv/active', (req, res) => {
-    try {
-      const file = db.getActiveStockFile();
-      res.json({ success: true, file: file || null });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.post('/api/stock-csv/upload', (req, res) => {
-    try {
-      const {
-        filename,
-        fileSize,
-        uploadedBy,
-        metadata = {},
-        rows = [],
-        fileContent = '',
-      } = req.body;
-
-      if (!filename) {
-        return res.status(400).json({
-          success: false,
-          code: 'FILE_NAME_REQUIRED',
-          error: 'Filename is required.',
-        });
-      }
-
-      if (!filename.toLowerCase().endsWith('.csv')) {
-        return res.status(400).json({
-          success: false,
-          code: 'INVALID_FILE_TYPE',
-          error: 'File must be a CSV file (.csv).',
-        });
-      }
-
-      if (!rows || rows.length === 0) {
-        return res.status(400).json({
-          success: false,
-          code: 'NO_DATA_ROWS',
-          error: 'No valid product stock records found in the uploaded CSV table.',
-        });
-      }
-
-      const inferredStores = Array.from(new Set(rows.map(r => r.storeName).filter(Boolean))).join(', ');
-      const downloadedAt = metadata.downloadedAtEsb || metadata.cell4B || new Date().toLocaleString('id-ID');
-      const stockDate = metadata.stockDate || metadata.cell5B || new Date().toLocaleDateString('id-ID');
-      const activeStores = metadata.activeStores || metadata.cell6B || inferredStores || 'All Active Stores';
-
-      const fileInfo = {
-        filename,
-        file_size: fileSize || '0 KB',
-        uploaded_by: uploadedBy || 'Auditor',
-        downloaded_at_esb: downloadedAt,
-        stock_date: stockDate,
-        active_stores: activeStores,
-        file_content: fileContent,
-      };
-
-      const result = db.saveStockFileRecord(fileInfo, rows);
-      if (!result.success) {
-        return res.status(500).json(result);
-      }
-
-      res.json({
-        success: true,
-        message: `Successfully uploaded ${filename} and applied ${rows.length} product stock records to comparison table.`,
-        fileId: result.fileId,
-        activeStores: fileInfo.active_stores,
-        stockDate: fileInfo.stock_date,
-        downloadedAtEsb: fileInfo.downloaded_at_esb,
-        rowCount: rows.length,
-      });
-    } catch (err) {
-      console.error('[Upload Stock CSV Error]:', err);
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.post('/api/stock-csv/revert/:id', (req, res) => {
-    try {
-      const result = db.revertStockFileRecord(req.params.id);
-      if (!result.success) {
-        return res.status(404).json(result);
-      }
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.delete('/api/stock-csv/:id', (req, res) => {
-    try {
-      const result = db.deleteStockFileRecord(req.params.id);
-      if (!result.success) {
-        return res.status(404).json(result);
-      }
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.get('/api/stock-csv/template', (req, res) => {
-    try {
-      const templatePath = path.join(process.cwd(), 'public', 'templates', 'stock_period_list_sample.csv');
-      if (fs.existsSync(templatePath)) {
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', 'attachment; filename="stock_period_list_template.csv"');
-        return fs.createReadStream(templatePath).pipe(res);
-      }
-      res.status(404).send('Template not found');
-    } catch (err) {
-      res.status(500).send(err.message);
-    }
-  });
-
-  // ==========================================
   // Stock Period CSV Upload & History (strict ESB template: product name + stock qty only)
   // ==========================================
 
@@ -1998,6 +1964,14 @@ async function startServer() {
   });
 
   // Store Audit API Endpoints
+  app.get('/api/store-audit/dashboard-stores', (req, res) => {
+    try {
+      res.json(storeAuditService.getDashboardStoreData());
+    } catch (err) {
+      res.status(500).json({ stores: [], recentStoreIds: [], latestDataMonth: null });
+    }
+  });
+
   app.get('/api/categories', (req, res) => {
     try {
       const cats = storeAuditService.getCctvCategories();
@@ -2469,6 +2443,76 @@ async function startServer() {
     }
   });
 
+  app.get('/api/sales/stock-compare', (req, res) => {
+    try {
+      const date = String(req.query.date || '').trim();
+      const branch = String(req.query.store || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !branch) return res.status(400).json({ success: false, error: 'A store and business date are required.' });
+      const storeId = extractMatchedStoreId(branch) || db.getAllStores().find((store) =>
+        String(store.name).toLowerCase().replace(/[^a-z0-9]/g, '').includes(branch.toLowerCase().replace(/[^a-z0-9]/g, '')) ||
+        branch.toLowerCase().replace(/[^a-z0-9]/g, '').includes(String(store.name).toLowerCase().replace(/[^a-z0-9]/g, '')))?.id;
+      if (!storeId) return res.status(404).json({ success: false, error: 'No matching inventory store is configured for this sales branch.' });
+      const sqlite = db.getDb();
+      ensureStockSnapshots(sqlite);
+      const nextDate = new Date(`${date}T00:00:00Z`);
+      nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+      const followingDate = nextDate.toISOString().slice(0, 10);
+      const snapshots = sqlite.prepare(`SELECT business_date, product_id, product_name, stock_qty, captured_at
+        FROM stock_snapshots WHERE store_id = ? AND business_date IN (?, ?)`)
+        .all(storeId, date, followingDate);
+      const opening = snapshots.filter((row) => row.business_date === date);
+      const closing = snapshots.filter((row) => row.business_date === followingDate);
+      if (!opening.length || !closing.length) {
+        const earliest = sqlite.prepare('SELECT MIN(business_date) AS d FROM stock_snapshots WHERE store_id = ?').get(storeId)?.d || null;
+        return res.json({ success: true, needsSnapshots: true, collectingSince: earliest, requiredDates: [date, followingDate], rows: [] });
+      }
+      const sales = salesDb.getSalesProductsByBusinessDate(date, branch);
+      const normalize = (value) => String(value || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+      const editDistance = (a, b) => {
+        const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+        for (let i = 1; i <= a.length; i++) {
+          let previous = row[0]; row[0] = i;
+          for (let j = 1; j <= b.length; j++) {
+            const old = row[j];
+            row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1));
+            previous = old;
+          }
+        }
+        return row[b.length];
+      };
+      const stockNames = [...new Set([...opening, ...closing].map((row) => row.product_id))].map((id) => ({
+        id,
+        name: opening.find((row) => row.product_id === id)?.product_name || closing.find((row) => row.product_id === id)?.product_name || id,
+        opening: opening.find((row) => row.product_id === id)?.stock_qty,
+        closing: closing.find((row) => row.product_id === id)?.stock_qty,
+      }));
+      const used = new Set();
+      const rows = sales.map((item) => {
+        const name = normalize(item.menu);
+        const candidates = stockNames.map((stock) => ({ stock, value: normalize(stock.name) }));
+        let match = candidates.find((candidate) => candidate.value === name);
+        if (!match) {
+          const close = candidates.filter((candidate) => candidate.value.includes(name) || name.includes(candidate.value));
+          if (close.length === 1) match = close[0];
+        }
+        if (!match) {
+          const close = candidates.filter((candidate) => name.length >= 7 && candidate.value.length >= 7 && editDistance(name, candidate.value) <= 2);
+          if (close.length === 1) match = close[0];
+        }
+        if (!match) return { product: item.menu, opening: null, sold: item.qty, expectedClosing: null, actualClosing: null, difference: null, status: 'unmatched', stockProduct: null };
+        used.add(match.stock.id);
+        const expectedClosing = Number(match.stock.opening || 0) - Number(item.qty || 0);
+        const actualClosing = match.stock.closing == null ? null : Number(match.stock.closing);
+        const difference = actualClosing == null ? null : actualClosing - expectedClosing;
+        return { product: item.menu, stockProduct: match.stock.name, opening: Number(match.stock.opening || 0), sold: Number(item.qty || 0), expectedClosing, actualClosing, difference, status: difference === null ? 'unmatched' : difference === 0 ? 'matched' : 'mismatch' };
+      });
+      for (const stock of stockNames) if (!used.has(stock.id)) rows.push({ product: stock.name, opening: Number(stock.opening || 0), sold: null, expectedClosing: null, actualClosing: stock.closing == null ? null : Number(stock.closing), difference: null, status: 'unmatched', stockProduct: stock.name });
+      res.json({ success: true, needsSnapshots: false, storeId, rows });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.delete('/api/sales/clear', (req, res) => {
     try {
       const result = salesDb.clearSalesData();
@@ -2489,7 +2533,7 @@ async function startServer() {
 
   // 15. Database health & system status
   app.get('/api/database/status', (req, res) => {
-    const dbPath = path.join(__dirname, 'data', 'birmas_audit.sqlite');
+    const dbPath = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'birmas_audit.sqlite');
     const stats = fs.existsSync(dbPath) ? fs.statSync(dbPath) : null;
     const stores = db.getAllStores();
     const products = db.getAllProducts();

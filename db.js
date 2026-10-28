@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
@@ -124,6 +124,9 @@ function initTables(db) {
       records_json TEXT
     );
   `);
+  for (const col of ['started_at TEXT', 'total_expected INTEGER', 'total_scanned INTEGER', 'matched_count INTEGER', 'missing_count INTEGER', 'surplus_count INTEGER', 'notes TEXT']) {
+    try { db.exec(`ALTER TABLE audit_history ADD COLUMN ${col};`); } catch (_) {}
+  }
 
   // 6. Users Table
   db.exec(`
@@ -193,21 +196,7 @@ function initTables(db) {
       file_content TEXT
     );
 
-    -- 10. Uploaded Stock Audit Files Table
-    CREATE TABLE IF NOT EXISTS stock_audit_files (
-      id TEXT PRIMARY KEY,
-      filename TEXT NOT NULL,
-      file_size TEXT,
-      uploaded_at TEXT NOT NULL,
-      uploaded_by TEXT,
-      downloaded_at_esb TEXT,
-      stock_date TEXT,
-      active_stores TEXT,
-      row_count INTEGER DEFAULT 0,
-      is_active INTEGER DEFAULT 1,
-      file_content TEXT,
-      parsed_data TEXT
-    );
+    DROP TABLE IF EXISTS stock_audit_files;
 
     -- 11. Audit Sessions Lock Table
     CREATE TABLE IF NOT EXISTS audit_sessions (
@@ -273,7 +262,7 @@ function initTables(db) {
   // Purge any legacy mock barcodes from previous template versions
   db.exec(`
     DELETE FROM products WHERE id LIKE 'wp-10%';
-    DELETE FROM products WHERE UPPER(category) IN ('PERLENGKAPAN OUTLET', 'LAIN-LAIN', 'LAIN LAIN', 'ELECTRONIC');
+    DELETE FROM products WHERE UPPER(category) IN ('PERLENGKAPAN OUTLET', 'LAIN-LAIN', 'LAIN LAIN', 'ELECTRONIC') AND UPPER(TRIM(product_title)) <> 'GELAS CUP';
   `);
 
   // Seed default WP config if not present
@@ -507,36 +496,100 @@ export function getAllAuditHistory() {
     SELECT 
       id, store_id as storeId, store_name as storeName, auditor_name as auditorName,
       timestamp, completed_at as completedAt, total_items as totalItems,
-      variance_count as varianceCount, accuracy, records_json as recordsJson
+      variance_count as varianceCount, accuracy, records_json as recordsJson,
+      started_at as startedAt, total_expected as totalExpected, total_scanned as totalScanned,
+      matched_count as matchedCount, missing_count as missingCount, surplus_count as surplusCount, notes
     FROM audit_history 
-    ORDER BY timestamp DESC;
+    ORDER BY completed_at DESC, timestamp DESC;
   `).all();
 
-  return rows.map(r => ({
-    id: r.id,
-    storeId: r.storeId,
-    storeName: r.storeName,
-    auditorName: r.auditorName,
-    timestamp: r.timestamp,
-    completedAt: r.completedAt,
-    totalItems: r.totalItems,
-    varianceCount: r.varianceCount,
-    accuracy: r.accuracy,
-    records: r.recordsJson ? JSON.parse(r.recordsJson) : [],
-  }));
+  return rows.map(r => {
+    let items = [];
+    try { items = r.recordsJson ? JSON.parse(r.recordsJson) : []; } catch (_) {}
+    if (!Array.isArray(items)) items = [];
+    const m = computeAuditMetrics(items);
+    // Legacy rows have NULL summary columns: recompute from stored item details when available
+    const pick = (stored, computed, fallback = 0) =>
+      stored !== null && stored !== undefined ? stored : (items.length ? computed : fallback);
+    const totalExpected = pick(r.totalExpected, m.totalExpected);
+    const totalScanned = pick(r.totalScanned, m.totalScanned, r.totalItems || 0);
+    const missingCount = pick(r.missingCount, m.missingCount, r.varianceCount || 0);
+    const accuracy = items.length && r.totalExpected == null ? m.accuracy
+      : (r.accuracy !== null && r.accuracy !== undefined ? r.accuracy : 100);
+    return {
+      id: r.id,
+      storeId: r.storeId,
+      storeName: r.storeName,
+      auditorName: r.auditorName,
+      timestamp: r.timestamp,
+      startedAt: r.startedAt || null,
+      completedAt: r.completedAt || r.timestamp,
+      totalItems: r.totalItems,
+      varianceCount: r.varianceCount,
+      totalExpected,
+      totalScanned,
+      matchedCount: pick(r.matchedCount, m.matchedCount),
+      missingCount,
+      surplusCount: pick(r.surplusCount, m.surplusCount),
+      accuracy,
+      notes: r.notes || '',
+      records: items,
+      items,
+    };
+  });
+}
+
+export function computeAuditMetrics(items = []) {
+  let totalExpected = 0, totalScanned = 0, matchedCount = 0, missingCount = 0, surplusCount = 0;
+  let expectedSkus = 0;
+  for (const it of items) {
+    const exp = Number(it.wpExpectedQty) || 0;
+    const sc = Number(it.scannedCount) || 0;
+    totalExpected += Math.max(exp, 0);
+    totalScanned += sc;
+    if (exp > 0) expectedSkus += 1;
+    if (it.status === 'matched' && exp !== 0) matchedCount += 1;
+    if (exp > 0 && sc < exp) missingCount += 1;
+    if (it.status === 'surplus') surplusCount += 1;
+  }
+  const accuracy = expectedSkus > 0 ? Math.round(((expectedSkus - missingCount) / expectedSkus) * 1000) / 10 : 100;
+  return { totalExpected, totalScanned, matchedCount, missingCount, surplusCount, accuracy };
+}
+
+export function updateAuditHistoryRecord(id, { auditorName, notes, completedAt } = {}) {
+  const db = getDb();
+  const row = db.prepare('SELECT id FROM audit_history WHERE id = ?;').get(id);
+  if (!row) return false;
+  if (auditorName !== undefined) db.prepare('UPDATE audit_history SET auditor_name = ? WHERE id = ?;').run(String(auditorName), id);
+  if (notes !== undefined) db.prepare('UPDATE audit_history SET notes = ? WHERE id = ?;').run(String(notes), id);
+  if (completedAt) db.prepare('UPDATE audit_history SET completed_at = ? WHERE id = ?;').run(String(completedAt), id);
+  return true;
+}
+
+export function deleteAuditHistoryRecord(id) {
+  const db = getDb();
+  return db.prepare('DELETE FROM audit_history WHERE id = ?;').run(id).changes > 0;
 }
 
 export function saveAuditHistoryRecord(record) {
   const db = getDb();
   const stmt = db.prepare(`
     INSERT INTO audit_history (
-      id, store_id, store_name, auditor_name, timestamp, completed_at, total_items, variance_count, accuracy, records_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, store_id, store_name, auditor_name, timestamp, completed_at, total_items, variance_count, accuracy, records_json,
+      started_at, total_expected, total_scanned, matched_count, missing_count, surplus_count, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       total_items = excluded.total_items,
       variance_count = excluded.variance_count,
       accuracy = excluded.accuracy,
-      records_json = excluded.records_json;
+      records_json = excluded.records_json,
+      started_at = excluded.started_at,
+      total_expected = excluded.total_expected,
+      total_scanned = excluded.total_scanned,
+      matched_count = excluded.matched_count,
+      missing_count = excluded.missing_count,
+      surplus_count = excluded.surplus_count,
+      notes = excluded.notes;
   `);
 
   stmt.run(
@@ -549,7 +602,14 @@ export function saveAuditHistoryRecord(record) {
     record.totalItems ?? 0,
     record.varianceCount ?? 0,
     record.accuracy ?? 100,
-    JSON.stringify(record.records || [])
+    JSON.stringify(record.records || []),
+    record.startedAt || null,
+    record.totalExpected ?? 0,
+    record.totalScanned ?? 0,
+    record.matchedCount ?? 0,
+    record.missingCount ?? 0,
+    record.surplusCount ?? 0,
+    record.notes || ''
   );
 }
 
@@ -916,40 +976,6 @@ export function clearAllSalesTransactions() {
 // Stock Audit CSV File Records & Live Stock Application
 // ==========================================
 
-export function getStockFilesList() {
-  const db = getDb();
-  try {
-    return db.prepare(`
-      SELECT id, filename, file_size, uploaded_at, uploaded_by, downloaded_at_esb, stock_date, active_stores, row_count, is_active
-      FROM stock_audit_files
-      ORDER BY uploaded_at DESC
-    `).all();
-  } catch (err) {
-    console.error('[DB] getStockFilesList error:', err.message);
-    return [];
-  }
-}
-
-export function getStockFileById(id) {
-  const db = getDb();
-  try {
-    return db.prepare(`SELECT * FROM stock_audit_files WHERE id = ?`).get(id);
-  } catch (err) {
-    console.error('[DB] getStockFileById error:', err.message);
-    return null;
-  }
-}
-
-export function getActiveStockFile() {
-  const db = getDb();
-  try {
-    return db.prepare(`SELECT * FROM stock_audit_files WHERE is_active = 1 ORDER BY uploaded_at DESC LIMIT 1`).get();
-  } catch (err) {
-    console.error('[DB] getActiveStockFile error:', err.message);
-    return null;
-  }
-}
-
 export function resolveStoreIdForStock(storeName) {
   const raw = String(storeName || '').trim().toLowerCase();
   if (!raw) return 'birmas-sudirman';
@@ -1105,118 +1131,6 @@ export function applyStockRowsToDatabase(db, rows = []) {
   for (const [key, totalQty] of stockTotals) {
     const [storeId, productId] = key.split('\u0000');
     upsertStockStmt.run(storeId, productId, totalQty, now);
-  }
-}
-
-export function saveStockFileRecord(fileInfo, rows = []) {
-  const db = getDb();
-  const fileId = fileInfo.id || `stk-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
-
-  try {
-    db.exec('BEGIN TRANSACTION;');
-
-    // Deactivate prior files
-    db.prepare('UPDATE stock_audit_files SET is_active = 0').run();
-
-    const insertStmt = db.prepare(`
-      INSERT INTO stock_audit_files (
-        id, filename, file_size, uploaded_at, uploaded_by, downloaded_at_esb, stock_date, active_stores, row_count, is_active, file_content, parsed_data
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `);
-
-    insertStmt.run(
-      fileId,
-      fileInfo.filename || 'stock_period_list.csv',
-      fileInfo.file_size || `${(rows.length * 0.15).toFixed(1)} KB`,
-      fileInfo.uploaded_at || new Date().toISOString(),
-      fileInfo.uploaded_by || 'Auditor',
-      fileInfo.downloaded_at_esb || '',
-      fileInfo.stock_date || '',
-      fileInfo.active_stores || '',
-      rows.length,
-      fileInfo.file_content || '',
-      JSON.stringify(rows)
-    );
-
-    applyStockRowsToDatabase(db, rows);
-
-    db.exec('COMMIT;');
-    console.log(`[DB] Saved stock file ${fileId} with ${rows.length} rows and applied to stores.`);
-    return { success: true, fileId, message: 'Stock CSV imported and applied successfully.' };
-  } catch (err) {
-    try { db.exec('ROLLBACK;'); } catch (_) {}
-    console.error('[DB] saveStockFileRecord error:', err.message);
-    return { success: false, error: err.message };
-  }
-}
-
-export function revertStockFileRecord(fileId) {
-  const db = getDb();
-  try {
-    const file = db.prepare('SELECT * FROM stock_audit_files WHERE id = ?').get(fileId);
-    if (!file) {
-      return { success: false, error: 'File record not found' };
-    }
-
-    let rows = [];
-    try {
-      rows = JSON.parse(file.parsed_data || '[]');
-    } catch {}
-
-    db.exec('BEGIN TRANSACTION;');
-
-    // Mark all as inactive, and this one active
-    db.prepare('UPDATE stock_audit_files SET is_active = 0').run();
-    db.prepare('UPDATE stock_audit_files SET is_active = 1 WHERE id = ?').run(fileId);
-
-    // Apply rows
-    applyStockRowsToDatabase(db, rows);
-
-    db.exec('COMMIT;');
-    console.log(`[DB] Reverted stock data to file ${file.filename} (${fileId}).`);
-    return { success: true, message: `Reverted stock comparison data to "${file.filename}".`, file };
-  } catch (err) {
-    try { db.exec('ROLLBACK;'); } catch (_) {}
-    console.error('[DB] revertStockFileRecord error:', err.message);
-    return { success: false, error: err.message };
-  }
-}
-
-export function deleteStockFileRecord(fileId) {
-  const db = getDb();
-  try {
-    const file = db.prepare('SELECT * FROM stock_audit_files WHERE id = ?').get(fileId);
-    if (!file) {
-      return { success: false, error: 'File record not found' };
-    }
-
-    const wasActive = file.is_active === 1;
-
-    db.exec('BEGIN TRANSACTION;');
-    db.prepare('DELETE FROM stock_audit_files WHERE id = ?').run(fileId);
-
-    let nextActiveFile = null;
-    if (wasActive) {
-      nextActiveFile = db.prepare('SELECT * FROM stock_audit_files ORDER BY uploaded_at DESC LIMIT 1').get();
-      if (nextActiveFile) {
-        db.prepare('UPDATE stock_audit_files SET is_active = 1 WHERE id = ?').run(nextActiveFile.id);
-        let nextRows = [];
-        try { nextRows = JSON.parse(nextActiveFile.parsed_data || '[]'); } catch {}
-        applyStockRowsToDatabase(db, nextRows);
-      }
-    }
-
-    db.exec('COMMIT;');
-    console.log(`[DB] Deleted stock file ${fileId}. Next active: ${nextActiveFile?.filename || 'None'}`);
-    return {
-      success: true,
-      message: `File "${file.filename}" deleted successfully from history.`,
-      nextActiveFile
-    };
-  } catch (err) {
-    try { db.exec('ROLLBACK;'); } catch (_) {}
-    console.error('[DB] deleteStockFileRecord error:', err.message);
-    return { success: false, error: err.message };
   }
 }
 

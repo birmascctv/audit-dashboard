@@ -16,6 +16,9 @@
           <span v-if="periodLabel" class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
             {{ periodLabel }}
           </span>
+          <span v-if="latestDataMonth" class="text-[10px] text-slate-500 font-medium">
+            Ranked using data in the 3 months through {{ latestDataMonth }}
+          </span>
         </div>
       </div>
 
@@ -198,7 +201,9 @@ const props = defineProps({
   year: { type: [Number, String], default: 2026 },
   stores: { type: Array, default: () => [] },
   periodFrom: { type: [Number, String], default: null },
-  periodTo: { type: [Number, String], default: null }
+  periodTo: { type: [Number, String], default: null },
+  recentStoreIds: { type: Array, default: null },
+  latestDataMonth: { type: String, default: null }
 })
 
 const loading = ref(false)
@@ -221,7 +226,13 @@ const periodLabel = computed(() => {
 async function loadRanks() {
   loading.value = true
   try {
-    const targetStores = props.stores.length ? props.stores : Object.values(STORE_META)
+    const recentIds = props.recentStoreIds === null
+      ? null
+      : new Set(props.recentStoreIds.map(Number))
+    const targetStores = props.stores.filter((store) => {
+      const storeId = store.store_id ?? store.id
+      return !recentIds || recentIds.has(Number(storeId))
+    })
     const results = await Promise.all(
       targetStores.map(async (s) => {
         const storeId = s.store_id ?? s.id
@@ -274,7 +285,8 @@ async function loadRanks() {
             return {
               name: ds.label,
               passRate,
-              grade: calculateAlphabetGrade(passRate)
+              grade: calculateAlphabetGrade(passRate),
+              hasData: seriesData.length > 0
             }
           })
 
@@ -301,7 +313,7 @@ async function loadRanks() {
             passRate: storeOverallAvg,
             grade: calculateAlphabetGrade(storeOverallAvg),
             topCategories,
-            hasData: categories.length > 0 && catAverages.some(v => v > 0)
+            hasData: categories.some(category => category.hasData)
           }
         } catch (err) {
           return {
@@ -367,7 +379,7 @@ function getMascotWatermarkStyle(store) {
 }
 
 watch(
-  [() => props.year, () => props.stores, () => props.periodFrom, () => props.periodTo],
+  [() => props.year, () => props.stores, () => props.recentStoreIds, () => props.periodFrom, () => props.periodTo],
   () => {
     loadRanks()
   },

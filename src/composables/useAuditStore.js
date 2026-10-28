@@ -38,6 +38,7 @@ const wpConfig = ref({
 
 const wpProducts = ref(DEFAULT_WP_PRODUCTS);
 const scannedCounts = ref({});
+const productNotes = ref({});
 const scanLogs = ref([]);
 const auditHistory = ref([]);
 const isSyncing = ref(false);
@@ -210,6 +211,10 @@ async function flushPendingScans() {
 async function loadStoreScans(storeId) {
   try {
     await flushPendingScans();
+    fetch(`/api/audit/notes?storeId=${encodeURIComponent(storeId)}`)
+      .then((r) => r.json())
+      .then((d) => { productNotes.value = d.notes || {}; })
+      .catch(() => {});
     const res = await fetchAuditState(storeId);
     if (res.failed) {
       // Offline: fall back to the last counts saved on this device, plus unsent scans
@@ -341,6 +346,7 @@ export function useAuditStore() {
         isDeficit: status === 'missing' || (count < wpExpected && wpExpected > 0),
         isUnscanned: status === 'unscanned',
         lastScannedAt: lastLog ? lastLog.timestamp : null,
+        note: productNotes.value[prod.id] || '',
       };
     });
   });
@@ -521,7 +527,38 @@ export function useAuditStore() {
     await adjustAuditCount(clean, selectedStoreId.value, { delta, productId: wpId });
   }
 
+  async function setProductNote(productId, note) {
+    const clean = String(note || '').trim();
+    if (clean) productNotes.value[productId] = clean;
+    else delete productNotes.value[productId];
+    try {
+      await fetch('/api/audit/notes', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storeId: selectedStoreId.value, productId, note: clean }),
+      });
+    } catch (_) {}
+  }
+
+  async function clearProductNotes() {
+    productNotes.value = {};
+    try { await fetch(`/api/audit/notes?storeId=${encodeURIComponent(selectedStoreId.value)}`, { method: 'DELETE' }); } catch (_) {}
+  }
+
+  // Silently pull the latest stock from the server (which syncs from ESB on its own schedule)
+  async function refreshProductsSilently() {
+    try {
+      const fresh = await fetchProducts();
+      if (Array.isArray(fresh) && fresh.length > 0) {
+        wpProducts.value = fresh;
+        const sts = await fetchStores();
+        if (Array.isArray(sts) && sts.length > 0) stores.value = sts;
+      }
+    } catch (_) {}
+  }
+
   async function resetCurrentAudit() {
+    clearProductNotes();
     scannedCounts.value = {};
     scanLogs.value = [];
     writePending(readPending().filter((p) => p.storeId !== selectedStoreId.value));
@@ -730,7 +767,7 @@ export function useAuditStore() {
       matchedCount: matchedVariantsCount.value,
       missingCount: missingVariantsCount.value,
       surplusCount: surplusVariantsCount.value,
-      items: auditItems.value,
+      items: auditItems.value.map((i) => ({ ...i, note: productNotes.value[i.wpId] || '' })),
       pushedToWordPress: pushToWP,
       notes,
     };
@@ -740,6 +777,7 @@ export function useAuditStore() {
     if (res.success) {
       auditHistory.value.unshift(completedRecord);
       await lockCurrentSession(auditorName);
+      await clearProductNotes();
       scannedCounts.value = {};
       scanLogs.value = [];
 
@@ -916,6 +954,9 @@ export function useAuditStore() {
     lastCheckedAt,
     selectStore,
     registerAuditScan,
+    productNotes,
+    setProductNote,
+    refreshProductsSilently,
     decrementAuditCount,
     addBatchAuditCount,
     setAuditCount,

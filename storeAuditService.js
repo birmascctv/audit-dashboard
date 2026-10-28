@@ -87,6 +87,61 @@ export function getCctvStores() {
   }
 }
 
+export function getDashboardStoreData() {
+  const db = getStoreAuditDb();
+  if (!db) return { stores: [], recentStoreIds: [], latestDataMonth: null };
+  try {
+    const dataAudits = `
+      WITH data_audits AS (
+        SELECT a.audit_id, a.store_id, a.year, a.month
+        FROM audits a
+        WHERE EXISTS (
+          SELECT 1 FROM scores sc
+          WHERE sc.audit_id = a.audit_id
+            AND (sc.score IS NOT NULL OR NULLIF(TRIM(sc.pass_fail), '') IS NOT NULL)
+        )
+      )
+    `;
+    const stores = db.prepare(`${dataAudits}
+      SELECT s.store_id, s.name
+      FROM stores s
+      JOIN (
+        SELECT store_id
+        FROM data_audits
+        WHERE year IN (2025, 2026)
+        GROUP BY store_id
+        HAVING COUNT(DISTINCT year) = 2
+      ) eligible ON eligible.store_id = s.store_id
+      ORDER BY s.name
+    `).all();
+    const latest = db.prepare(`${dataAudits}
+      SELECT MAX(year * 12 + month) AS month_index FROM data_audits
+    `).get()?.month_index;
+    if (latest === null || latest === undefined) {
+      return { stores, recentStoreIds: [], latestDataMonth: null };
+    }
+    const latestDataMonth = db.prepare(`${dataAudits}
+      SELECT year, month FROM data_audits
+      WHERE year * 12 + month = ?
+      LIMIT 1
+    `).get(latest);
+    const recentStoreIds = db.prepare(`${dataAudits}
+      SELECT DISTINCT store_id FROM data_audits
+      WHERE year * 12 + month BETWEEN ? AND ?
+    `).all(latest - 2, latest).map((row) => row.store_id);
+    return {
+      stores,
+      recentStoreIds,
+      latestDataMonth: latestDataMonth
+        ? `${String(latestDataMonth.year).padStart(4, '0')}-${String(latestDataMonth.month).padStart(2, '0')}`
+        : null,
+    };
+  } catch (err) {
+    console.error('getDashboardStoreData error:', err.message);
+    return { stores: [], recentStoreIds: [], latestDataMonth: null };
+  }
+}
+
 // 2. Categories list
 export function getCctvCategories() {
   const db = getCctvDb();

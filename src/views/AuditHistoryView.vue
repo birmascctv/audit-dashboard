@@ -26,15 +26,79 @@ import {
   ArrowUpDown,
   BarChart3,
   Flame,
+  Pencil,
   Check
 } from 'lucide-vue-next';
 
 const { auditHistory, clearHistory, stores } = useAuditStore();
-const { isSuperAdmin } = useAuth();
+const { isSuperAdmin, role } = useAuth();
 
 const searchQuery = ref('');
-const selectedAudit = ref(null);
+const expandedId = ref(null);
 const isLoadingHistory = ref(false);
+const editingAudit = ref(null);
+const editForm = ref({ id: '', auditorName: '', notes: '', date: '' });
+const editError = ref('');
+const deletingAudit = ref(null);
+const deleteError = ref('');
+const isSaving = ref(false);
+
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+function sessionItems(a) {
+  return Array.isArray(a.items) && a.items.length ? a.items : Array.isArray(a.records) ? a.records : [];
+}
+
+// Missing/surplus in units (cans); falls back to SKU counts when item details are absent
+function missingUnits(a) {
+  const items = sessionItems(a);
+  if (items.length) {
+    return items.reduce((s, i) => (num(i.wpExpectedQty) > 0 && num(i.scannedCount) < num(i.wpExpectedQty) ? s + num(i.wpExpectedQty) - num(i.scannedCount) : s), 0);
+  }
+  return num(a.missingCount);
+}
+
+function surplusUnits(a) {
+  const items = sessionItems(a);
+  if (items.length) {
+    return items.reduce((s, i) => (num(i.scannedCount) > Math.max(num(i.wpExpectedQty), 0) ? s + num(i.scannedCount) - Math.max(num(i.wpExpectedQty), 0) : s), 0);
+  }
+  return num(a.surplusCount);
+}
+
+function sessionAccuracy(a) {
+  if (a.accuracy !== null && a.accuracy !== undefined && Number.isFinite(Number(a.accuracy))) {
+    return Math.max(0, Math.min(100, Number(a.accuracy)));
+  }
+  return 100;
+}
+
+const matchedItems = (a) => sessionItems(a).filter((i) => i.status === 'matched' && num(i.wpExpectedQty) !== 0);
+const discrepancyItems = (a) => sessionItems(a).filter((i) => i.status !== 'matched' && (num(i.discrepancy) !== 0 || i.note));
+
+function toLocalInput(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function updateAuditRecord(id, body, userRole) {
+  const res = await fetch(`/api/audit/history/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'x-user-role': userRole },
+    body: JSON.stringify(body),
+  });
+  return await res.json();
+}
+
+async function deleteAuditRecord(id, userRole) {
+  const res = await fetch(`/api/audit/history/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { 'x-user-role': userRole },
+  });
+  return await res.json();
+}
 
 onMounted(async () => {
   isLoadingHistory.value = true;
@@ -64,6 +128,8 @@ const shrinkageLeaderboard = computed(() => {
       totalScanned: 0,
       totalMissing: 0,
       totalSurplus: 0,
+      accWeighted: 0,
+      accWeight: 0,
       lastAuditDate: null,
       lastAuditor: null,
     });
@@ -82,6 +148,8 @@ const shrinkageLeaderboard = computed(() => {
         totalScanned: 0,
         totalMissing: 0,
         totalSurplus: 0,
+        accWeighted: 0,
+        accWeight: 0,
         lastAuditDate: null,
         lastAuditor: null,
       });
@@ -89,10 +157,14 @@ const shrinkageLeaderboard = computed(() => {
 
     const entry = storeMap.get(sName);
     entry.totalAudits += 1;
-    entry.totalExpected += (a.totalExpected || 0);
-    entry.totalScanned += (a.totalScanned || 0);
-    entry.totalMissing += (a.missingCount || 0);
-    entry.totalSurplus += (a.surplusCount || 0);
+    entry.totalExpected += num(a.totalExpected);
+    entry.totalScanned += num(a.totalScanned);
+    entry.totalMissing += missingUnits(a);
+    entry.totalSurplus += surplusUnits(a);
+    // Accuracy is averaged per session, weighted by expected units (weight 1 when unknown)
+    const w = Math.max(num(a.totalExpected), 1);
+    entry.accWeighted += sessionAccuracy(a) * w;
+    entry.accWeight += w;
     if (!entry.lastAuditDate || new Date(a.completedAt) > new Date(entry.lastAuditDate)) {
       entry.lastAuditDate = a.completedAt;
       entry.lastAuditor = a.auditorName;
@@ -101,12 +173,7 @@ const shrinkageLeaderboard = computed(() => {
 
   const list = Array.from(storeMap.values()).map((item) => {
     const netDiscrepancy = item.totalScanned - item.totalExpected;
-    let accuracy = 100;
-    if (item.totalExpected > 0) {
-      accuracy = Math.max(0, Math.min(100, Math.round(((item.totalExpected - item.totalMissing) / item.totalExpected) * 100)));
-    } else if (item.totalAudits === 0) {
-      accuracy = 100;
-    }
+    const accuracy = item.accWeight > 0 ? Math.round((item.accWeighted / item.accWeight) * 10) / 10 : 100;
 
     let riskLevel = 'LOW';
     if (item.totalMissing > 10 || accuracy < 90) {
@@ -143,11 +210,75 @@ const totalChainMissing = computed(() => {
   return shrinkageLeaderboard.value.reduce((acc, s) => acc + s.totalMissing, 0);
 });
 
+// Chain accuracy = expected-weighted average of every archived session's accuracy
 const overallChainAccuracy = computed(() => {
-  const totalExp = shrinkageLeaderboard.value.reduce((acc, s) => acc + s.totalExpected, 0);
-  const totalMiss = shrinkageLeaderboard.value.reduce((acc, s) => acc + s.totalMissing, 0);
-  if (totalExp === 0) return 100;
-  return Math.max(0, Math.min(100, Math.round(((totalExp - totalMiss) / totalExp) * 100)));
+  const list = auditHistory.value || [];
+  if (list.length === 0) return null;
+  let sum = 0;
+  let weight = 0;
+  list.forEach((a) => {
+    const w = Math.max(num(a.totalExpected), 1);
+    sum += sessionAccuracy(a) * w;
+    weight += w;
+  });
+  return weight > 0 ? Math.round((sum / weight) * 10) / 10 : null;
+});
+
+function startEdit(audit) {
+  editError.value = '';
+  editForm.value = {
+    id: audit.id,
+    auditorName: audit.auditorName || '',
+    notes: audit.notes || '',
+    date: toLocalInput(audit.completedAt),
+  };
+  editingAudit.value = audit;
+}
+
+async function saveEdit() {
+  if (!editForm.value.auditorName.trim()) {
+    editError.value = 'Auditor name is required';
+    return;
+  }
+  isSaving.value = true;
+  editError.value = '';
+  try {
+    const res = await updateAuditRecord(editForm.value.id, {
+      auditorName: editForm.value.auditorName.trim(),
+      notes: editForm.value.notes,
+      completedAt: editForm.value.date ? new Date(editForm.value.date).toISOString() : undefined,
+    }, role.value);
+    if (!res.success) throw new Error(res.error || 'Update failed');
+    const idx = auditHistory.value.findIndex((a) => a.id === editForm.value.id);
+    if (idx >= 0 && res.audit) auditHistory.value[idx] = res.audit;
+    editingAudit.value = null;
+  } catch (err) {
+    editError.value = err.message;
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+async function confirmDelete() {
+  const target = deletingAudit.value;
+  if (!target) return;
+  isSaving.value = true;
+  try {
+    const res = await deleteAuditRecord(target.id, role.value);
+    if (!res.success) throw new Error(res.error || 'Delete failed');
+    auditHistory.value = auditHistory.value.filter((a) => a.id !== target.id);
+    if (expandedId.value === target.id) expandedId.value = null;
+    deletingAudit.value = null;
+  } catch (err) {
+    deleteError.value = err.message;
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+const filteredHistory = computed(() => {
+  const q = searchQuery.value.toLowerCase();
+  return (auditHistory.value || []).filter((a) => !q || (a.storeName || '').toLowerCase().includes(q) || (a.auditorName || '').toLowerCase().includes(q));
 });
 
 function handleClearHistory() {
@@ -237,8 +368,8 @@ function exportHistoryCSV() {
           </div>
           <div>
             <span class="text-xs font-bold text-slate-500 block">Overall Chain Accuracy</span>
-            <span class="text-xl font-black text-slate-900 font-mono">{{ overallChainAccuracy }}%</span>
-            <span class="text-[11px] text-teal-700 font-semibold block mt-0.5">Across all branch audits</span>
+            <span class="text-xl font-black text-slate-900 font-mono">{{ overallChainAccuracy === null ? '—' : `${overallChainAccuracy}%` }}</span>
+            <span class="text-[11px] text-teal-700 font-semibold block mt-0.5">{{ auditHistory.length ? `Weighted avg of ${auditHistory.length} archived audits` : 'Awaiting audits' }}</span>
           </div>
         </div>
 
@@ -250,7 +381,7 @@ function exportHistoryCSV() {
           <div>
             <span class="text-xs font-bold text-slate-500 block">Total Missing Units</span>
             <span class="text-xl font-black text-rose-600 font-mono">{{ totalChainMissing > 0 ? "-" : "" }}{{ totalChainMissing }} cans</span>
-            <span class="text-[11px] text-rose-700 font-semibold block mt-0.5">Discrepancy shrinkage</span>
+            <span class="text-[11px] text-rose-700 font-semibold block mt-0.5">Sum across all archived audits</span>
           </div>
         </div>
 
@@ -433,7 +564,7 @@ function exportHistoryCSV() {
       </div>
     </div>
 
-    <!-- PREVIOUS TEMPLATE: COMPLETED AUDIT SESSION ARCHIVE -->
+    <!-- COMPLETED AUDIT SESSION ARCHIVE -->
     <div class="space-y-4">
       <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
         <div class="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -442,7 +573,7 @@ function exportHistoryCSV() {
               Completed Audit Session Archive
             </h3>
             <p class="text-xs text-slate-500">
-              Detailed chronological logs of all completed physical counts. Click any row to view individual items.
+              Chronological logs of completed physical counts. Use Details to see matched and discrepancy products.
             </p>
           </div>
           <div class="relative w-full sm:w-64">
@@ -456,209 +587,188 @@ function exportHistoryCSV() {
           </div>
         </div>
 
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr class="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase">
-                <th class="py-3 px-4">Date & Time</th>
-                <th class="py-3 px-4">Store Location</th>
-                <th class="py-3 px-4">Auditor</th>
-                <th class="py-3 px-4 text-center">Expected (ESB)</th>
-                <th class="py-3 px-4 text-center">Scanned (Physical)</th>
-                <th class="py-3 px-4 text-center">Discrepancy</th>
-                <th class="py-3 px-4">Notes</th>
-                <th class="py-3 px-4 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
+        <table class="w-full table-fixed text-left border-collapse text-xs">
+          <thead>
+            <tr class="bg-slate-50/80 border-b border-slate-200 text-[10px] font-bold text-slate-600 uppercase">
+              <th class="py-2 px-2 w-[14%]">Date & Time</th>
+              <th class="py-2 px-2 w-[16%]">Store</th>
+              <th class="py-2 px-2 w-[12%]">Auditor</th>
+              <th class="py-2 px-1 text-center w-[8%]">Expected</th>
+              <th class="py-2 px-1 text-center w-[8%]">Scanned</th>
+              <th class="py-2 px-1 text-center w-[9%]">Discrepancy</th>
+              <th class="py-2 px-1 text-center w-[7%]">Missing</th>
+              <th class="py-2 px-1 text-center w-[8%]">Accuracy</th>
+              <th class="py-2 px-2 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <template v-for="audit in filteredHistory" :key="audit.id">
               <tr
-                v-for="audit in auditHistory.filter(a => !searchQuery || (a.storeName || '').toLowerCase().includes(searchQuery.toLowerCase()) || (a.auditorName || '').toLowerCase().includes(searchQuery.toLowerCase()))"
-                :key="audit.id"
-                class="hover:bg-slate-50/80 transition-colors cursor-pointer"
-                @click="selectedAudit = audit"
+                class="hover:bg-slate-50/80 transition-colors cursor-pointer align-top"
+                @click="expandedId = expandedId === audit.id ? null : audit.id"
               >
-                <!-- Date & Time -->
-                <td class="py-3.5 px-4 font-mono text-slate-700 whitespace-nowrap">
-                  <div class="flex items-center gap-1.5 font-medium">
-                    <Calendar class="w-3.5 h-3.5 text-teal-600" />
-                    <span>{{ formatDateTime(audit.completedAt).full }}</span>
-                  </div>
+                <td class="py-2 px-2 font-mono text-slate-700 text-[11px] leading-tight">
+                  <span class="block">{{ formatDateTime(audit.completedAt).date }}</span>
+                  <span class="block text-slate-400">{{ formatDateTime(audit.completedAt).time }}</span>
                 </td>
-
-                <!-- Store -->
-                <td class="py-3.5 px-4 font-semibold text-slate-900">
-                  <div class="flex items-center gap-1.5">
-                    <Building2 class="w-3.5 h-3.5 text-teal-600" />
-                    <span>{{ audit.storeName }}</span>
-                  </div>
-                </td>
-
-                <!-- Auditor -->
-                <td class="py-3.5 px-4 text-slate-700">
-                  {{ audit.auditorName }}
-                </td>
-
-                <!-- Expected -->
-                <td class="py-3.5 px-4 text-center font-mono font-bold text-slate-800">
-                  {{ audit.totalExpected }}
-                </td>
-
-                <!-- Scanned -->
-                <td class="py-3.5 px-4 text-center font-mono font-bold text-teal-700">
-                  {{ audit.totalScanned }}
-                </td>
-
-                <!-- Discrepancy -->
-                <td class="py-3.5 px-4 text-center font-mono">
+                <td class="py-2 px-2 font-semibold text-slate-900 break-words">{{ audit.storeName }}</td>
+                <td class="py-2 px-2 text-slate-700 break-words">{{ audit.auditorName }}</td>
+                <td class="py-2 px-1 text-center font-mono font-bold text-slate-800">{{ audit.totalExpected ?? 0 }}</td>
+                <td class="py-2 px-1 text-center font-mono font-bold text-teal-700">{{ audit.totalScanned ?? 0 }}</td>
+                <td class="py-2 px-1 text-center font-mono">
                   <span
-                    class="px-2.5 py-0.5 rounded-full text-xs font-bold inline-flex items-center gap-1"
+                    class="px-1.5 py-0.5 rounded-full text-[11px] font-bold inline-block"
                     :class="
-                      audit.totalScanned === audit.totalExpected
+                      num(audit.totalScanned) === num(audit.totalExpected)
                         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : audit.totalScanned < audit.totalExpected
+                        : num(audit.totalScanned) < num(audit.totalExpected)
                         ? 'bg-rose-50 text-rose-700 border border-rose-200'
                         : 'bg-amber-50 text-amber-700 border border-amber-200'
                     "
                   >
-                    {{ audit.totalScanned - audit.totalExpected === 0 ? 'Match (0)' : audit.totalScanned - audit.totalExpected }}
+                    {{ num(audit.totalScanned) - num(audit.totalExpected) === 0 ? '0' : num(audit.totalScanned) - num(audit.totalExpected) }}
                   </span>
                 </td>
-
-                <!-- Notes -->
-                <td class="py-3.5 px-4 text-slate-700 max-w-xs">
-                  <span v-if="audit.notes" class="font-medium text-slate-800">{{ audit.notes }}</span>
-                  <span v-else class="text-slate-400 italic">No notes</span>
+                <td class="py-2 px-1 text-center font-mono font-bold" :class="missingUnits(audit) > 0 ? 'text-rose-600' : 'text-emerald-600'">
+                  {{ missingUnits(audit) > 0 ? `-${missingUnits(audit)}` : '0' }}
                 </td>
-
-                <!-- Action -->
-                <td class="py-3.5 px-4 text-right">
-                  <button
-                    @click.stop="selectedAudit = audit"
-                    type="button"
-                    class="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 font-bold text-xs inline-flex items-center gap-1 cursor-pointer"
-                  >
-                    <Eye class="w-3.5 h-3.5" />
-                    <span>View Items</span>
-                  </button>
+                <td class="py-2 px-1 text-center font-mono font-bold" :class="sessionAccuracy(audit) >= 96 ? 'text-emerald-700' : sessionAccuracy(audit) >= 90 ? 'text-amber-700' : 'text-rose-700'">
+                  {{ sessionAccuracy(audit) }}%
+                </td>
+                <td class="py-2 px-2 text-right">
+                  <div class="flex items-center justify-end gap-1 flex-wrap">
+                    <button
+                      @click.stop="expandedId = expandedId === audit.id ? null : audit.id"
+                      type="button"
+                      class="px-2 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <Eye class="w-3 h-3" />
+                      <span>{{ expandedId === audit.id ? 'Hide' : 'Details' }}</span>
+                    </button>
+                    <template v-if="isSuperAdmin">
+                      <button
+                        @click.stop="startEdit(audit)"
+                        type="button"
+                        title="Edit session"
+                        class="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-300 cursor-pointer"
+                      >
+                        <Pencil class="w-3 h-3" />
+                      </button>
+                      <button
+                        @click.stop="deleteError = ''; deletingAudit = audit"
+                        type="button"
+                        title="Remove session"
+                        class="p-1.5 rounded-lg bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-300 cursor-pointer"
+                      >
+                        <Trash2 class="w-3 h-3" />
+                      </button>
+                    </template>
+                  </div>
                 </td>
               </tr>
 
-              <!-- Empty -->
-              <tr v-if="auditHistory.length === 0">
-                <td colspan="8" class="py-12 text-center text-slate-400">
-                  <History class="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                  <p class="font-bold text-slate-700">No completed audits in history yet</p>
-                  <p class="text-xs text-slate-400 mt-0.5">
-                    Complete your first physical scan audit in the Stock Audit tab to see historical reconciliation reports here.
+              <tr v-if="expandedId === audit.id" class="bg-slate-50/60">
+                <td colspan="9" class="px-3 py-3">
+                  <p v-if="audit.notes" class="text-xs text-slate-600 mb-2">
+                    <span class="font-bold text-slate-700">Session notes:</span> {{ audit.notes }}
                   </p>
+                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <div class="border border-rose-200 rounded-xl bg-white overflow-hidden">
+                      <div class="px-3 py-1.5 bg-rose-50 text-rose-800 font-bold text-[11px] uppercase">
+                        Discrepancies ({{ discrepancyItems(audit).length }})
+                      </div>
+                      <ul class="divide-y divide-slate-100 max-h-64 overflow-y-auto">
+                        <li v-for="(item, k) in discrepancyItems(audit)" :key="`d-${k}-${item.barcode}`" class="px-3 py-1.5 flex items-start justify-between gap-2">
+                          <div class="min-w-0">
+                            <span class="font-semibold text-slate-900 block break-words">{{ item.productTitle || item.varian }}</span>
+                            <span class="text-[10px] font-mono text-slate-400">{{ item.barcode }} · exp {{ item.wpExpectedQty }} / phys {{ item.scannedCount }}</span>
+                            <span v-if="item.note" class="block text-[11px] text-slate-600 italic break-words">Note: {{ item.note }}</span>
+                          </div>
+                          <span class="font-mono font-bold shrink-0" :class="num(item.discrepancy) < 0 ? 'text-rose-600' : 'text-amber-600'">
+                            {{ num(item.discrepancy) > 0 ? `+${item.discrepancy}` : item.discrepancy }}
+                          </span>
+                        </li>
+                        <li v-if="discrepancyItems(audit).length === 0" class="px-3 py-3 text-slate-400 italic">
+                          {{ sessionItems(audit).length ? 'No discrepancies' : 'No item details stored for this session' }}
+                        </li>
+                      </ul>
+                    </div>
+                    <div class="border border-emerald-200 rounded-xl bg-white overflow-hidden">
+                      <div class="px-3 py-1.5 bg-emerald-50 text-emerald-800 font-bold text-[11px] uppercase">
+                        Matched ({{ matchedItems(audit).length }})
+                      </div>
+                      <ul class="divide-y divide-slate-100 max-h-64 overflow-y-auto">
+                        <li v-for="(item, k) in matchedItems(audit)" :key="`m-${k}-${item.barcode}`" class="px-3 py-1.5 flex items-start justify-between gap-2">
+                          <div class="min-w-0">
+                            <span class="font-semibold text-slate-900 block break-words">{{ item.productTitle || item.varian }}</span>
+                            <span class="text-[10px] font-mono text-slate-400">{{ item.barcode }}</span>
+                            <span v-if="item.note" class="block text-[11px] text-slate-600 italic break-words">Note: {{ item.note }}</span>
+                          </div>
+                          <span class="font-mono font-bold text-emerald-700 shrink-0">{{ item.scannedCount }}</span>
+                        </li>
+                        <li v-if="matchedItems(audit).length === 0" class="px-3 py-3 text-slate-400 italic">
+                          {{ sessionItems(audit).length ? 'No matched products' : 'No item details stored for this session' }}
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                 </td>
               </tr>
-            </tbody>
-          </table>
+            </template>
+
+            <tr v-if="filteredHistory.length === 0">
+              <td colspan="9" class="py-12 text-center text-slate-400">
+                <History class="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p class="font-bold text-slate-700">{{ auditHistory.length === 0 ? 'No completed audits in history yet' : 'No audits match your search' }}</p>
+                <p v-if="auditHistory.length === 0" class="text-xs text-slate-400 mt-0.5">
+                  Complete your first physical scan audit in the Stock Audit tab to see historical reconciliation reports here.
+                </p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Edit Modal (superadmin) -->
+    <div v-if="editingAudit" class="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/50">
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md p-5 space-y-3 text-slate-800">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-extrabold text-slate-900">Edit Audit Session — {{ editingAudit.storeName }}</h3>
+          <button @click="editingAudit = null" type="button" class="p-1 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"><X class="w-4 h-4" /></button>
+        </div>
+        <label class="block text-xs font-bold text-slate-600">
+          Auditor name
+          <input v-model="editForm.auditorName" type="text" class="mt-1 w-full px-3 py-1.5 rounded-xl border border-slate-300 text-xs font-normal focus:outline-none focus:border-teal-500" />
+        </label>
+        <label class="block text-xs font-bold text-slate-600">
+          Date & time
+          <input v-model="editForm.date" type="datetime-local" class="mt-1 w-full px-3 py-1.5 rounded-xl border border-slate-300 text-xs font-normal focus:outline-none focus:border-teal-500" />
+        </label>
+        <label class="block text-xs font-bold text-slate-600">
+          Session notes
+          <textarea v-model="editForm.notes" rows="3" class="mt-1 w-full px-3 py-1.5 rounded-xl border border-slate-300 text-xs font-normal focus:outline-none focus:border-teal-500"></textarea>
+        </label>
+        <p v-if="editError" class="text-xs text-rose-600 font-semibold">{{ editError }}</p>
+        <div class="flex justify-end gap-2 pt-1">
+          <button @click="editingAudit = null" type="button" class="px-3 py-1.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
+          <button @click="saveEdit" :disabled="isSaving" type="button" class="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-xs font-bold cursor-pointer">Save</button>
         </div>
       </div>
     </div>
 
-    <!-- Detail Modal for Selected Audit -->
-    <div
-      v-if="selectedAudit"
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200"
-    >
-      <div class="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-3xl w-full max-h-[85vh] flex flex-col overflow-hidden text-slate-800">
-        <div class="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-          <div>
-            <h3 class="text-base font-extrabold text-slate-900">
-              Audit Session Details: {{ selectedAudit.storeName }}
-            </h3>
-            <p class="text-xs text-slate-500">
-              Conducted by {{ selectedAudit.auditorName }} on {{ formatDateTime(selectedAudit.completedAt).full }}
-            </p>
-          </div>
-          <button
-            @click="selectedAudit = null"
-            type="button"
-            class="w-8 h-8 rounded-xl bg-white hover:bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center border border-slate-200 transition-colors cursor-pointer"
-          >
-            <X class="w-4 h-4" />
-          </button>
-        </div>
-
-        <div class="p-5 overflow-y-auto space-y-4">
-          <!-- Summary chips -->
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-            <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-              <span class="text-slate-400 block text-[11px]">Expected (ESB)</span>
-              <span class="font-mono font-bold text-base text-slate-900">{{ selectedAudit.totalExpected }}</span>
-            </div>
-            <div class="p-3 bg-teal-50 border border-teal-200 rounded-xl">
-              <span class="text-teal-700 block text-[11px]">Scanned (Physical)</span>
-              <span class="font-mono font-bold text-base text-teal-900">{{ selectedAudit.totalScanned }}</span>
-            </div>
-            <div class="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-              <span class="text-emerald-700 block text-[11px]">Matched SKUs</span>
-              <span class="font-mono font-bold text-base text-emerald-900">{{ selectedAudit.matchedCount }}</span>
-            </div>
-            <div class="p-3 bg-rose-50 border border-rose-200 rounded-xl">
-              <span class="text-rose-700 block text-[11px]">Discrepancies</span>
-              <span class="font-mono font-bold text-base text-rose-900">
-                {{ selectedAudit.totalScanned - selectedAudit.totalExpected }}
-              </span>
-            </div>
-          </div>
-
-          <!-- Items Table -->
-          <div class="border border-slate-200 rounded-xl overflow-hidden">
-            <table class="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr class="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-600 uppercase">
-                  <th class="py-2.5 px-3">Product</th>
-                  <th class="py-2.5 px-3 text-center">Expected</th>
-                  <th class="py-2.5 px-3 text-center">Physical</th>
-                  <th class="py-2.5 px-3 text-center">Diff</th>
-                  <th class="py-2.5 px-3 text-center">Status</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-slate-100">
-                <tr v-for="item in (selectedAudit.items || [])" :key="item.barcode" class="hover:bg-slate-50">
-                  <td class="py-2 px-3">
-                    <span class="font-bold text-slate-900 block">{{ item.productTitle || item.varian }}</span>
-                    <span class="text-[10px] font-mono text-slate-400">{{ item.barcode }}</span>
-                  </td>
-                  <td class="py-2 px-3 text-center font-mono">{{ item.wpExpectedQty }}</td>
-                  <td class="py-2 px-3 text-center font-mono font-bold text-teal-800">{{ item.scannedCount }}</td>
-                  <td class="py-2 px-3 text-center font-mono font-bold">
-                    <span :class="item.discrepancy < 0 ? 'text-rose-600' : item.discrepancy > 0 ? 'text-amber-600' : 'text-emerald-600'">
-                      {{ item.discrepancy }}
-                    </span>
-                  </td>
-                  <td class="py-2 px-3 text-center">
-                    <span
-                      class="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                      :class="
-                        item.status === 'matched'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : item.status === 'missing'
-                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                          : 'bg-amber-50 text-amber-700 border border-amber-200'
-                      "
-                    >
-                      {{ item.status }}
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end">
-          <button
-            @click="selectedAudit = null"
-            type="button"
-            class="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs"
-          >
-            Close
-          </button>
+    <!-- Remove Confirmation (superadmin) -->
+    <div v-if="deletingAudit" class="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-slate-900/60">
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-sm p-5 space-y-3 text-slate-800">
+        <h3 class="text-sm font-extrabold text-slate-900">Remove audit session?</h3>
+        <p class="text-xs text-slate-600">
+          {{ deletingAudit.storeName }} · {{ deletingAudit.auditorName }} · {{ formatDateTime(deletingAudit.completedAt).full }}.
+          This permanently deletes the archived session and cannot be undone.
+        </p>
+        <p v-if="deleteError" class="text-xs text-rose-600 font-semibold">{{ deleteError }}</p>
+        <div class="flex justify-end gap-2 pt-1">
+          <button @click="deletingAudit = null" type="button" class="px-3 py-1.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
+          <button @click="confirmDelete" :disabled="isSaving" type="button" class="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold cursor-pointer">Remove</button>
         </div>
       </div>
     </div>

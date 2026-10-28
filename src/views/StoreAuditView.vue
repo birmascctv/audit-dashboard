@@ -1,8 +1,10 @@
 <template>
-  <div class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1560px] mx-auto pb-12">
+  <div v-if="lookupsLoaded && stores.length" class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1560px] mx-auto pb-12">
     <!-- STORE RANKS: Top 3 Outlets & Academic Grade Index -->
     <ExecutiveKpiBar
       :year="2026"
+      :recent-store-ids="recentStoreIds"
+      :latest-data-month="latestDataMonth"
       :stores="stores"
       :categories="categories"
       :period-from="periodFrom"
@@ -61,7 +63,7 @@
           @update:average="averageValue = $event"
           :passingGrade="categoryPassingGradeFor(selectedCriterion.category)"
           :options="{ title: { text: selectedCriterion.label } }"
-          :exclude-year="excludeYear"
+          :exclude-year="props.excludeYear"
           :period-from="periodFrom"
           :period-to="periodTo"
           :refresh-key="dataVersion"
@@ -189,7 +191,7 @@
             fill-height
             :stores="stores"
             :selected-stores="selectedStores"
-            :exclude-year="excludeYear"
+            :exclude-year="props.excludeYear"
             :period-from="periodFrom"
             :period-to="periodTo"
             :refresh-key="dataVersion"
@@ -270,7 +272,7 @@
           type="bar"
           :store-id="s.store_id"
           :selected-categories="selectedCategoriesForStore"
-          :exclude-year="excludeYear"
+          :exclude-year="props.excludeYear"
           :period-from="periodFrom"
           :period-to="periodTo"
           :refresh-key="dataVersion"
@@ -293,6 +295,11 @@
 
     <!-- Quick Scroll Navigation (Back to Top / Back to Bottom) -->
     <ScrollNavButtons />
+  </div>
+  <div v-else class="max-w-[1560px] mx-auto px-4 sm:px-8 lg:px-16 py-12">
+    <div class="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600 shadow-sm">
+      {{ lookupsLoaded ? 'No stores have audit data in both 2025 and 2026.' : 'Loading store audit data…' }}
+    </div>
   </div>
 </template>
 
@@ -324,6 +331,9 @@ const props = defineProps({
 const criteria = ref([])
 const categories = ref([])
 const stores = ref([])
+const recentStoreIds = ref([])
+const latestDataMonth = ref(null)
+const lookupsLoaded = ref(false)
 const selectedStores = ref([])
 const selectedCategoriesForStore = ref([])
 const selectedCategory = ref('')
@@ -388,25 +398,39 @@ const categoryCriteria = computed(() => {
 })
 
 async function loadLookups() {
-  const excludeYear = props.excludeYear
-  const [critRes, catRes, storesRes] = await Promise.all([
-    fetch(`/api/criteria?exclude_year=${excludeYear}`),
-    fetch('/api/categories'),
-    fetch('/api/stores')
-  ])
   try {
-    const rawCrit = await critRes.json()
-    criteria.value = (rawCrit || []).map(c => ({
-      ...c,
-      metrics: c.metrics || lookupCriteriaMetric(2026, c.label) || null
-    }))
-  } catch (e) { criteria.value = [] }
-  try {
-    categories.value = await catRes.json()
-  } catch (e) { categories.value = [] }
-  try {
-    stores.value = await storesRes.json()
-  } catch (e) { stores.value = [] }
+    const [critRes, catRes, storeDataRes] = await Promise.all([
+      fetch(`/api/criteria?exclude_year=${props.excludeYear}`),
+      fetch('/api/categories'),
+      fetch('/api/store-audit/dashboard-stores')
+    ])
+    try {
+      const rawCrit = await critRes.json()
+      criteria.value = (rawCrit || []).map(c => ({
+        ...c,
+        metrics: c.metrics || lookupCriteriaMetric(2026, c.label) || null
+      }))
+    } catch (e) { criteria.value = [] }
+    try { categories.value = await catRes.json() } catch (e) { categories.value = [] }
+    try {
+      const storeData = await storeDataRes.json()
+      stores.value = Array.isArray(storeData?.stores) ? storeData.stores : []
+      recentStoreIds.value = Array.isArray(storeData?.recentStoreIds) ? storeData.recentStoreIds : []
+      latestDataMonth.value = storeData?.latestDataMonth || null
+    } catch (e) {
+      stores.value = []
+      recentStoreIds.value = []
+      latestDataMonth.value = null
+    }
+  } catch (e) {
+    criteria.value = []
+    categories.value = []
+    stores.value = []
+    recentStoreIds.value = []
+    latestDataMonth.value = null
+  } finally {
+    lookupsLoaded.value = true
+  }
 }
 
 watch(criteria, (newVal) => {
