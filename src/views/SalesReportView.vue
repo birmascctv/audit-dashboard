@@ -25,6 +25,8 @@ const pivotSearch = ref('');
 const pivotDropdownOpen = ref(false);
 const selectedPivotProduct = ref('');
 const productChartStores = ref(null);
+const topProductsLastWeekStores = ref(null);
+const topProductsThisMonthStores = ref(null);
 const promotionChartStores = ref(null);
 const promotionChartPromos = ref(null);
 const promotionSearch = ref('');
@@ -189,17 +191,42 @@ const weekdayValues = computed(() => {
   }));
 });
 const maxWeekdaySales = computed(() => Math.max(1, ...weekdayValues.value.map((item) => item.sales)));
-const topProductWindows = computed(() => [
-  { title: 'Last 7 Days', key: 'topProductsLastWeek' },
-  { title: 'This Month', key: 'topProductsThisMonth' },
-].map((window) => {
-  const byStore = new Map();
-  for (const item of summary.value[window.key] || []) {
-    if (!byStore.has(item.branch)) byStore.set(item.branch, []);
-    byStore.get(item.branch).push(item);
+function getTop5Products(rawList, selectedStoreNames) {
+  if (!rawList || !Array.isArray(rawList)) return [];
+  const map = new Map();
+  for (const item of rawList) {
+    if (selectedStoreNames !== null && !selectedStoreNames.includes(item.branch)) continue;
+    const name = String(item.menu || '').trim();
+    if (!name || name.toUpperCase().endsWith('(PACKAGE)')) continue;
+    if (!map.has(name)) {
+      map.set(name, { name, qty: 0, sales: 0 });
+    }
+    const cur = map.get(name);
+    cur.qty += Number(item.qty || 0);
+    cur.sales += Number(item.sales || 0);
   }
-  return { ...window, stores: [...byStore].map(([name, products]) => ({ name, products })) };
-}));
+  return [...map.values()]
+    .sort((a, b) => b.qty - a.qty || b.sales - a.sales || a.name.localeCompare(b.name))
+    .slice(0, 5);
+}
+const topProductWindows = computed(() => [
+  {
+    title: 'Last 7 Days',
+    key: 'topProductsLastWeek',
+    selectedStores: topProductsLastWeekStores.value,
+    toggleStore: toggleTopProductsWeekStore,
+    setStoresAll: setTopProductsWeekStoresAll,
+    products: getTop5Products(summary.value.topProductsLastWeek, topProductsLastWeekStores.value),
+  },
+  {
+    title: 'This Month',
+    key: 'topProductsThisMonth',
+    selectedStores: topProductsThisMonthStores.value,
+    toggleStore: toggleTopProductsMonthStore,
+    setStoresAll: setTopProductsMonthStoresAll,
+    products: getTop5Products(summary.value.topProductsThisMonth, topProductsThisMonthStores.value),
+  },
+]);
 const monthlyValues = computed(() => {
   const storesByMonth = new Map();
   for (const item of timeSummary.value.monthlyByStore || []) {
@@ -464,13 +491,9 @@ function heatColor(value, maximum) {
   const rgb = HEAT_STOPS[index].map((channel, i) => Math.round(channel + (HEAT_STOPS[index + 1][i] - channel) * mix));
   return { t, rgb };
 }
-function yellowRedStyle(value, maximum) {
-  const { t, rgb } = heatColor(value, maximum);
-  return {
-    backgroundColor: `rgb(${rgb.join(' ')})`,
-    color: t >= 0.55 ? '#ffffff' : '#0f172a',
-    borderColor: 'rgba(15, 23, 42, 0.15)',
-  };
+function redHeatmapStyle(value, maximum) {
+  // Pure monochromatic red heatmap: light red (#fee2e2) to dark red (#991b1b)
+  return heatmapStyle(value, maximum, '#fee2e2', '#991b1b');
 }
 async function loadTimeSummary() {
   const requestId = ++timeRequestId;
@@ -552,6 +575,18 @@ function toggleTopProductStore(storeName) {
 }
 function setTopProductStoresAll(event) {
   setChecklistAll(topProductStores, event.target.checked);
+}
+function toggleTopProductsWeekStore(storeName) {
+  toggleChecklistSelection(topProductsLastWeekStores, storeName, chartStoreOptions.value.map((store) => store.name));
+}
+function setTopProductsWeekStoresAll(event) {
+  setChecklistAll(topProductsLastWeekStores, event.target.checked);
+}
+function toggleTopProductsMonthStore(storeName) {
+  toggleChecklistSelection(topProductsThisMonthStores, storeName, chartStoreOptions.value.map((store) => store.name));
+}
+function setTopProductsMonthStoresAll(event) {
+  setChecklistAll(topProductsThisMonthStores, event.target.checked);
 }
 function toggleProductChartStore(storeName) {
   toggleChecklistSelection(productChartStores, storeName, chartStoreOptions.value.map((store) => store.name));
@@ -842,23 +877,70 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
       </section>
       <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <article v-for="window in topProductWindows" :key="window.key" class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 class="mb-1 text-sm font-bold text-slate-900">Top 5 Products per Store · {{ window.title }}</h2>
-          <p class="mb-3 text-[11px] text-slate-500">Ranked by quantity sold. Excludes Lain-Lain, Mixer and Snack.</p>
-          <div v-if="window.stores.length" class="max-h-[26rem] overflow-auto rounded-xl border border-slate-100">
+          <header class="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div>
+              <h2 class="text-sm font-bold text-slate-900">Top 5 Products · {{ window.title }}</h2>
+              <p class="text-[11px] text-slate-500">Top 5 products by quantity sold · Excludes package items</p>
+            </div>
+            <details class="relative">
+              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:border-slate-300">
+                <span>{{ checklistLabel(window.selectedStores, 'All stores', 'stores') }}</span>
+                <span aria-hidden="true" class="text-slate-400">▾</span>
+              </summary>
+              <div class="absolute right-0 z-30 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold text-slate-800">
+                  <input type="checkbox" :checked="window.selectedStores === null" @change="window.setStoresAll">
+                  All stores
+                </label>
+                <label v-for="store in chartStoreOptions" :key="store.name" class="flex gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-700 hover:bg-slate-50">
+                  <input type="checkbox" :checked="window.selectedStores === null || window.selectedStores.includes(store.name)" @change="window.toggleStore(store.name)">
+                  {{ store.name }}
+                </label>
+              </div>
+            </details>
+          </header>
+          <div class="overflow-x-auto rounded-xl border border-slate-100">
             <table class="w-full table-fixed text-xs">
-              <colgroup><col><col class="w-16"><col class="w-32"></colgroup>
-              <thead class="sticky top-0 z-10 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-3 py-2 text-left">Product</th><th class="px-3 py-2 text-right">Qty</th><th class="px-3 py-2 text-right">Revenue</th></tr></thead>
-              <tbody v-for="store in window.stores" :key="store.name">
-                <tr class="bg-teal-50"><th colspan="3" class="truncate px-3 py-1.5 text-left text-[11px] font-bold text-teal-900">{{ store.name }}</th></tr>
-                <tr v-for="product in store.products" :key="product.menu" class="border-t border-slate-100">
-                  <td class="truncate px-3 py-1.5 font-medium text-slate-800" :title="product.menu">{{ product.menu }}</td>
-                  <td class="px-3 py-1.5 text-right font-mono">{{ Number(product.qty).toLocaleString('id-ID') }}</td>
-                  <td class="whitespace-nowrap px-3 py-1.5 text-right font-mono text-slate-700">{{ formatMoney(product.sales) }}</td>
+              <colgroup>
+                <col class="w-10">
+                <col>
+                <col class="w-20">
+                <col class="w-32">
+              </colgroup>
+              <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500">
+                <tr>
+                  <th class="px-3 py-2 text-center">#</th>
+                  <th class="px-3 py-2 text-left">Product</th>
+                  <th class="px-3 py-2 text-right">Qty</th>
+                  <th class="px-3 py-2 text-right">Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(product, idx) in window.products" :key="product.name" class="border-t border-slate-100 hover:bg-slate-50/50">
+                  <td class="px-3 py-2 text-center font-bold text-slate-400">
+                    <span class="inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px]"
+                      :class="idx === 0 ? 'bg-amber-100 font-bold text-amber-800' : idx === 1 ? 'bg-slate-200 text-slate-700' : idx === 2 ? 'bg-amber-50 text-amber-900' : 'text-slate-500'">
+                      {{ idx + 1 }}
+                    </span>
+                  </td>
+                  <td class="truncate px-3 py-2 font-medium text-slate-800" :title="product.name">
+                    {{ product.name }}
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono font-semibold text-slate-900">
+                    {{ Number(product.qty).toLocaleString('id-ID') }}
+                  </td>
+                  <td class="whitespace-nowrap px-3 py-2 text-right font-mono font-semibold text-teal-800">
+                    {{ formatMoney(product.sales) }}
+                  </td>
+                </tr>
+                <tr v-if="!window.products.length">
+                  <td colspan="4" class="p-6 text-center text-xs text-slate-400">
+                    No product sales found for the selected stores in this period.
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <p v-else class="text-xs text-slate-400">No product sales in this period for the selected stores.</p>
         </article>
       </section>
     </template>
@@ -1148,8 +1230,8 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
             <h3 class="mb-3 text-xs font-bold text-slate-700">Sales by Day</h3>
             <div class="grid grid-cols-7 gap-1.5">
               <button v-for="slot in weekdayValues" :key="slot.weekday" type="button"
-                class="min-w-0 rounded-lg border p-2 text-center shadow-sm transition hover:z-10 hover:scale-[1.03] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-cyan-600"
-                :style="yellowRedStyle(slot.sales, maxWeekdaySales)"
+                class="min-w-0 rounded-lg border p-2 text-center shadow-sm transition hover:z-10 hover:scale-[1.03] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-red-600"
+                :style="redHeatmapStyle(slot.sales, maxWeekdaySales)"
                 :aria-label="`${slot.name}: ${formatMoney(slot.sales)}`"
                 @pointerenter="showTimeTooltip($event, slot)" @pointermove="moveTimeTooltip" @pointerleave="hourTooltip = null"
                 @focus="showTimeTooltip($event, slot)" @blur="hourTooltip = null">
