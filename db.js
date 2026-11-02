@@ -213,7 +213,8 @@ function initTables(db) {
 
   // Seed & sync required users:
   // - superadmin (superadmin666): can access both Stock Audit & Sales Report
-  // - admin (admin666): can ONLY access Audit Sales Report
+  // - mia (admin666): can ONLY access Sales Report
+  // - bertha (owner): everything and the only one who can unlock audits; superadmin: Store Audit, Audit Records, Sales Report
   // - chrisna / auditor (auditor666): can ONLY access Stock Audit
   const upsertUser = db.prepare(`
     INSERT INTO users (id, username, email, password, name, role)
@@ -223,8 +224,9 @@ function initTables(db) {
       role = excluded.role;
   `);
   upsertUser.run('user-superadmin', 'superadmin', 'superadmin@birmas.id', hashPassword('superadmin666'), 'Super Admin', 'superadmin');
-  upsertUser.run('user-bertha', 'bertha', 'bertha@birmas.id', hashPassword('evania'), 'Bertha', 'superadmin');
-  upsertUser.run('user-admin', 'admin', 'admin@birmas.id', hashPassword('admin666'), 'Admin', 'admin');
+  db.prepare("UPDATE users SET username = 'mia', email = 'mia@birmas.id', name = 'Mia' WHERE id = 'user-admin' AND username = 'admin';").run();
+  upsertUser.run('user-bertha', 'bertha', 'bertha@birmas.id', hashPassword('evania'), 'Bertha', 'owner');
+  upsertUser.run('user-admin', 'mia', 'mia@birmas.id', hashPassword('admin666'), 'Mia', 'admin');
   upsertUser.run('user-chrisna', 'chrisna', 'chrisna@birmas.id', hashPassword('auditor666'), 'Chrisna', 'auditor');
   upsertUser.run('user-auditor', 'auditor', 'auditor@birmas.id', hashPassword('auditor666'), 'Auditor Staff', 'auditor');
   for (const u of db.prepare('SELECT id, password FROM users;').all()) {

@@ -31,37 +31,37 @@ const routes = [
     path: '/store-audit',
     name: 'StoreAudit',
     component: StoreAuditView,
-    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin', 'owner'] },
   },
   {
     path: '/store-audit2025',
     name: 'StoreAudit2025',
     component: StoreAudit2025View,
-    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin', 'owner'] },
   },
   {
     path: '/upload-audits',
     name: 'StoreAuditUpload',
     component: StoreAuditUploadView,
-    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'owner'] },
   },
   {
     path: '/stock-audit',
     name: 'StockAudit',
     component: AuditView,
-    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'owner'] },
   },
   {
     path: '/audit-records',
     name: 'AuditHistory',
     component: AuditHistoryView,
-    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin', 'owner'] },
   },
   {
     path: '/sales',
     name: 'SalesReport',
     component: SalesReportView,
-    meta: { requiresAuth: true, allowedRoles: ['admin', 'superadmin'] },
+    meta: { requiresAuth: true, allowedRoles: ['admin', 'superadmin', 'owner'] },
   },
   {
     path: '/login',
@@ -113,6 +113,9 @@ router.beforeEach((to, from, next) => {
       return next('/sales');
     }
     if (userRole === 'auditor') {
+      return next('/store-audit');
+    }
+    if (userRole === 'superadmin' || userRole === 'owner') {
       return next('/store-audit');
     }
     return next('/login');

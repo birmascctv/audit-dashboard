@@ -397,7 +397,7 @@ function exportHistoryCSV() {
               </span>
             </div>
             <p class="text-xs text-slate-500 mt-0.5">
-              Loss prevention rankings, cross-store shrinkage benchmarking, and physical reconciliation archives.
+              Missing-product rankings, store-by-store comparison, and physical reconciliation archives.
             </p>
           </div>
         </div>
@@ -428,7 +428,7 @@ function exportHistoryCSV() {
       </div>
     </div>
 
-    <!-- ON TOP OF PAGE: STORE SHRINKAGE LEADERBOARD -->
+    <!-- ON TOP OF PAGE: STORE MISSING-PRODUCTS LEADERBOARD -->
     <div class="space-y-6">
       <!-- Executive Summary Cards -->
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -472,13 +472,13 @@ function exportHistoryCSV() {
           </div>
         </div>
 
-        <!-- Card 4: Highest Shrinkage Alert -->
+        <!-- Card 4: Highest Missing Items -->
         <div class="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center gap-3.5">
           <div class="w-12 h-12 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 shrink-0">
             <ShieldAlert class="w-6 h-6 text-amber-600" />
           </div>
           <div>
-            <span class="text-xs font-bold text-slate-500 block">Highest Shrinkage Alert</span>
+            <span class="text-xs font-bold text-slate-500 block">Highest Missing Items</span>
             <span class="text-sm font-black text-amber-950 block truncate" :title="worstShrinkageStore?.storeName">
               {{ worstShrinkageStore && worstShrinkageStore.totalMissing > 0 ? worstShrinkageStore.storeName : 'Zero Critical Losses' }}
             </span>
@@ -498,7 +498,7 @@ function exportHistoryCSV() {
             </div>
             <div>
               <h3 class="text-sm font-extrabold text-slate-900">
-                Store Shrinkage Leaderboard
+                Store Missing Products Leaderboard
               </h3>
               <p class="text-xs text-slate-500">
                 Ranked from highest physical stock shrinkage to best inventory compliance.
@@ -605,7 +605,7 @@ function exportHistoryCSV() {
                     <ShieldAlert v-if="store.riskLevel === 'HIGH'" class="w-3 h-3 text-rose-700" />
                     <AlertTriangle v-else-if="store.riskLevel === 'MEDIUM'" class="w-3 h-3 text-amber-700" />
                     <Check v-else class="w-3 h-3 text-emerald-700" />
-                    {{ store.riskLevel === 'HIGH' ? 'Critical Shrinkage' : store.riskLevel === 'MEDIUM' ? 'Caution' : 'Compliant' }}
+                    {{ store.riskLevel === 'HIGH' ? 'High Missing Items' : store.riskLevel === 'MEDIUM' ? 'Caution' : 'Compliant' }}
                   </span>
                 </td>
 
@@ -655,7 +655,7 @@ function exportHistoryCSV() {
               <th class="py-2 px-2 w-[12%]"><button type="button" @click="toggleSort('auditorName')" class="inline-flex items-center gap-1">Auditor <span>{{ sortKey === 'auditorName' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</span></button></th>
               <th class="py-2 px-1 text-center w-[8%]"><button type="button" @click="toggleSort('totalExpected')">Expected {{ sortKey === 'totalExpected' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
               <th class="py-2 px-1 text-center w-[8%]"><button type="button" @click="toggleSort('totalScanned')">Scanned {{ sortKey === 'totalScanned' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
-              <th class="py-2 px-1 text-center w-[9%]"><button type="button" @click="toggleSort('discrepancy')">Discrepancy {{ sortKey === 'discrepancy' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
+              <th class="py-2 px-1 text-center w-[9%]"><button type="button" @click="toggleSort('discrepancy')">Difference {{ sortKey === 'discrepancy' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
               <th class="py-2 px-1 text-center w-[7%]"><button type="button" @click="toggleSort('missing')">Missing {{ sortKey === 'missing' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
               <th class="py-2 px-1 text-center w-[8%]"><button type="button" @click="toggleSort('accuracy')">Accuracy {{ sortKey === 'accuracy' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
               <th class="py-2 px-2 text-right">Action</th>
@@ -711,7 +711,7 @@ function exportHistoryCSV() {
                       @click.stop="downloadSession(audit)"
                       type="button"
                       class="px-2 py-1 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
-                      title="Download discrepancies and matched products (CSV)"
+                      title="Download differences and matched products (CSV)"
                     >
                       <Download class="w-3 h-3" />
                       <span>CSV</span>
@@ -746,7 +746,7 @@ function exportHistoryCSV() {
                   <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
                     <div :id="`audit-discrepancies-${audit.id}`" class="border border-rose-200 rounded-xl bg-white overflow-hidden">
                       <div class="px-3 py-1.5 bg-rose-50 text-rose-800 font-bold text-[11px] uppercase">
-                        Discrepancies ({{ discrepancyItems(audit).length }})
+                        Differences ({{ discrepancyItems(audit).length }})
                       </div>
                       <div class="max-h-64 overflow-y-auto">
                         <table class="w-full text-left">
@@ -771,7 +771,7 @@ function exportHistoryCSV() {
                               <td class="py-1.5 px-3 text-[11px] text-slate-600 break-words">{{ item.note || '-' }}</td>
                             </tr>
                             <tr v-if="discrepancyItems(audit).length === 0">
-                              <td colspan="4"><EmptyState title="No discrepancies" :hint="sessionItems(audit).length ? 'All recorded products matched expected quantities.' : 'No item details are stored for this session.'" /></td>
+                              <td colspan="4"><EmptyState title="No differences" :hint="sessionItems(audit).length ? 'All recorded products matched expected quantities.' : 'No item details are stored for this session.'" /></td>
                             </tr>
                           </tbody>
                         </table>

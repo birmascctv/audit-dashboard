@@ -11,13 +11,13 @@ export const DEFAULT_ACCOUNTS = [
     name: 'Super Admin',
     role: 'superadmin',
     roleLabel: 'Super Admin',
-    accessScope: 'Store Audit, Upload Audits, Stock Audit, Audit Records & Sales Report',
+    accessScope: 'Store Audit, Audit Records & Sales Report',
   },
   {
     id: 'user-admin',
-    username: 'admin',
-    email: 'admin@birmas.id',
-    name: 'Admin',
+    username: 'mia',
+    email: 'mia@birmas.id',
+    name: 'Mia',
     role: 'admin',
     roleLabel: 'Sales Admin',
     accessScope: 'Sales Report Only',
@@ -105,17 +105,18 @@ export function useAuth() {
   const role = computed(() => currentUser.value?.role || '');
   const isAuditor = computed(() => role.value === 'auditor');
   const isAdmin = computed(() => role.value === 'admin');
-  const isSuperAdmin = computed(() => role.value === 'superadmin');
+  const isSuperAdmin = computed(() => role.value === 'superadmin' || role.value === 'owner');
 
   // Strict RBAC Access Controls:
   // - Auditor: Store Audit, Upload Audits, Stock Audit, Audit Records
   // - Admin: Sales Report Only
   // - Superadmin: Everything
-  const canAccessStoreAudit = computed(() => role.value === 'auditor' || role.value === 'superadmin');
-  const canAccessUploadAudits = computed(() => role.value === 'auditor' || role.value === 'superadmin');
-  const canAccessStockAudit = computed(() => role.value === 'auditor' || role.value === 'superadmin');
-  const canAccessAuditRecords = computed(() => role.value === 'auditor' || role.value === 'superadmin');
-  const canAccessSalesReport = computed(() => role.value === 'admin' || role.value === 'superadmin');
+  const isOwner = computed(() => role.value === 'owner');
+  const canAccessStoreAudit = computed(() => ['auditor', 'superadmin', 'owner'].includes(role.value));
+  const canAccessUploadAudits = computed(() => ['auditor', 'owner'].includes(role.value));
+  const canAccessStockAudit = computed(() => ['auditor', 'owner'].includes(role.value));
+  const canAccessAuditRecords = computed(() => ['auditor', 'superadmin', 'owner'].includes(role.value));
+  const canAccessSalesReport = computed(() => ['admin', 'superadmin', 'owner'].includes(role.value));
 
   return {
     currentUser,

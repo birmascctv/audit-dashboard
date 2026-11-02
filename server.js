@@ -1062,7 +1062,9 @@ async function startServer() {
     const isConfig = /^\/api\/(wordpress|esb|birmas)\/(config|erp-config)$/.test(url) && req.method !== 'GET';
     const salesOnly = url.startsWith('/api/sales') && session.role === 'auditor';
     const stockOnly = !url.startsWith('/api/sales') && session.role === 'admin' && !url.startsWith('/api/stores');
-    if (isConfig && session.role !== 'superadmin') return res.status(403).json({ success: false, error: 'Superadmin only.' });
+    if (isConfig && !['superadmin', 'owner'].includes(session.role)) return res.status(403).json({ success: false, error: 'Superadmin only.' });
+    const stockWork = session.role === 'superadmin' && req.method !== 'GET' && /^\/api\/(upload|products|audit\/(scan|adjust|reset|finalize|notes))(\/|$)/.test(url);
+    if (stockWork) return res.status(403).json({ success: false, error: 'Access denied.' });
     if (salesOnly || stockOnly) return res.status(403).json({ success: false, error: 'Access denied.' });
     req.authUser = session;
     next();
@@ -1497,7 +1499,7 @@ async function startServer() {
     if (!session) {
       return res.status(401).json({ success: false, error: 'Session expired - please log out and log in again to edit or remove.' });
     }
-    if (session.role !== requiredRole) {
+    if (session.role !== requiredRole && session.role !== 'owner') {
       return res.status(403).json({ success: false, error: `Only ${requiredRole === 'superadmin' ? 'Superadmin' : requiredRole} can perform this action.` });
     }
     req.authUser = session;

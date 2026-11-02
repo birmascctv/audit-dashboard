@@ -675,7 +675,7 @@ const showAuditSuccess = ref(false);
       <!-- Card 1: ESB STOCK -->
       <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider" title="Quantity the system (ESB) says should be in the store">System Stock (ESB) <span class="cursor-help text-slate-400">?</span></span>
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider" title="Quantity the system says should be in the store">System Stock <span class="cursor-help text-slate-400">?</span></span>
         </div>
         <div class="my-2">
           <span class="text-3xl font-extrabold text-slate-900 font-mono">{{ Math.round(Number(totalWpExpected) || 0).toLocaleString('id-ID') }}</span>
@@ -762,14 +762,14 @@ const showAuditSuccess = ref(false);
           </div>
         </div>
         <p class="text-[11px] text-slate-500">
-          {{ totalScanned === 0 ? 'Pindai barcode untuk menghitung akurasi' : 'Target: 100% matched with ESB stock' }}
+          {{ totalScanned === 0 ? 'Pindai barcode untuk menghitung akurasi' : 'Target: 100% matched with system stock' }}
         </p>
       </div>
     </div>
 
     <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
       <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <span class="font-bold text-slate-800">ESB products scanned</span>
+        <span class="font-bold text-slate-800">System products scanned</span>
         <span class="font-mono font-bold text-teal-700">{{ scannedOpeningStockProducts }} / {{ openingStockProducts.length }} ({{ openingStockProgress }}%)</span>
       </div>
       <div class="mt-2 h-3 overflow-hidden rounded-full bg-slate-100" role="progressbar" :aria-valuenow="openingStockProgress" aria-valuemin="0" aria-valuemax="100" :aria-label="`${openingStockProgress}% of in-stock ESB products scanned`">
@@ -932,7 +932,7 @@ const showAuditSuccess = ref(false);
                   <th class="py-2.5 px-3 w-10 text-center">No</th>
                   <th class="py-2.5 px-3">Kode Barcode</th>
                   <th class="py-2.5 px-3">Product Name</th>
-                  <th class="py-2.5 px-3 text-center">ESB Stock</th>
+                  <th class="py-2.5 px-3 text-center">System Stock</th>
                   <th class="py-2.5 px-3 text-center bg-teal-50/80 text-teal-900 font-bold">Physical Count</th>
                   <th class="py-2.5 px-3 text-center">Difference</th>
                   <th class="py-2.5 px-3 text-center">Action</th>
@@ -1000,7 +1000,7 @@ const showAuditSuccess = ref(false);
                           : 'bg-amber-50 text-amber-700 border border-amber-200'
                       "
                     >
-                      {{ item.discrepancy === 0 ? 'Match (0)' : item.discrepancy > 0 ? `+${item.discrepancy}` : item.discrepancy }}
+                      {{ item.discrepancy === 0 ? 'OK (0)' : item.discrepancy > 0 ? `+${item.discrepancy}` : item.discrepancy }}
                     </span>
                   </td>
                   <td class="py-2 px-3 text-center">
@@ -1055,7 +1055,7 @@ const showAuditSuccess = ref(false);
             <button
               @click="statusFilter = 'ALL'"
               type="button"
-              class="px-3 py-2 min-h-12 rounded-lg border text-xs font-semibold transition-colors"
+              class="px-3 py-1 min-h-8 rounded-lg border text-xs font-semibold transition-colors"
               :class="statusFilter === 'ALL' ? 'bg-teal-600 border-teal-600 text-white shadow-sm' : 'bg-teal-50 border-teal-200 text-teal-800 hover:bg-teal-100'"
             >
               All ({{ auditItems.length }})
@@ -1063,16 +1063,16 @@ const showAuditSuccess = ref(false);
             <button
               @click="statusFilter = 'discrepancy'"
               type="button"
-              class="px-3 py-2 min-h-12 rounded-lg border text-xs font-semibold transition-colors flex items-center gap-1"
+              class="px-3 py-1 min-h-8 rounded-lg border text-xs font-semibold transition-colors flex items-center gap-1"
               :class="statusFilter === 'discrepancy' ? 'bg-rose-600 border-rose-600 text-white shadow-sm' : 'bg-rose-50 border-rose-200 text-rose-800 hover:bg-rose-100'"
             >
-              <span>Discrepancies</span>
+              <span>Differences</span>
               <span class="px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[10px] font-bold">{{ discrepancyVariantsCount }}</span>
             </button>
             <button
               @click="statusFilter = 'matched'"
               type="button"
-              class="px-3 py-2 min-h-12 rounded-lg border text-xs font-semibold transition-colors flex items-center gap-1"
+              class="px-3 py-1 min-h-8 rounded-lg border text-xs font-semibold transition-colors flex items-center gap-1"
               :class="statusFilter === 'matched' ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm' : 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'"
             >
               <span>Matched</span>
@@ -1081,7 +1081,7 @@ const showAuditSuccess = ref(false);
             <button
               @click="statusFilter = 'unscanned'"
               type="button"
-              class="px-3 py-2 min-h-12 rounded-lg border text-xs font-semibold transition-colors flex items-center gap-1"
+              class="px-3 py-1 min-h-8 rounded-lg border text-xs font-semibold transition-colors flex items-center gap-1"
               :class="statusFilter === 'unscanned' ? 'bg-slate-700 border-slate-700 text-white shadow-sm' : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'"
             >
               <span>Unscanned</span>
@@ -1090,15 +1090,15 @@ const showAuditSuccess = ref(false);
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
-            <select v-model="brandFilter" class="min-h-12 px-3 py-2 bg-sky-50 border border-sky-300 rounded-xl text-sm font-semibold text-sky-900">
+            <select v-model="brandFilter" class="min-h-8 px-3 py-1 bg-sky-50 border border-sky-300 rounded-xl text-sm font-semibold text-sky-900">
               <option value="ALL">All brands</option>
               <option v-for="brand in availableBrands" :key="brand" :value="brand">{{ brand }}</option>
             </select>
-            <select v-model="categoryFilter" class="min-h-12 px-3 py-2 bg-violet-50 border border-violet-300 rounded-xl text-sm font-semibold text-violet-900">
+            <select v-model="categoryFilter" class="min-h-8 px-3 py-1 bg-violet-50 border border-violet-300 rounded-xl text-sm font-semibold text-violet-900">
               <option value="ALL">All categories</option>
               <option v-for="category in availableCategories" :key="category" :value="category">{{ category }}</option>
             </select>
-            <label class="inline-flex min-h-12 items-center gap-2 px-3 py-2 rounded-xl border border-rose-300 bg-rose-50 text-sm font-semibold text-rose-800">
+            <label class="inline-flex min-h-8 items-center gap-2 px-3 py-1 rounded-xl border border-rose-300 bg-rose-50 text-sm font-semibold text-rose-800">
               <input v-model="mismatchesOnly" type="checkbox" class="accent-rose-600" />
               Show only mismatches
             </label>
@@ -1135,7 +1135,7 @@ const showAuditSuccess = ref(false);
               <th class="py-3 px-4 text-center bg-teal-100 text-teal-900">
                 Scanned Count
               </th>
-              <th class="py-3 px-4 text-center bg-slate-100">Discrepancy</th>
+              <th class="py-3 px-4 text-center bg-slate-100">Difference</th>
               <th class="py-3 px-4 text-center bg-slate-100">Audit Status</th>
               <th class="py-3 px-4 bg-slate-100 min-w-[180px]">Notes</th>
             </tr>
@@ -1195,7 +1195,7 @@ const showAuditSuccess = ref(false);
                   <span
                     v-if="item.wpExpectedQty < 0"
                     class="text-[9px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 mt-0.5 tracking-tight whitespace-nowrap"
-                    title="Minus in ESB indicates items already missing at the store"
+                    title="Minus in system stock indicates items already missing at the store"
                   >
                     Missing in Store
                   </span>
@@ -1402,7 +1402,7 @@ const showAuditSuccess = ref(false);
             <span class="text-lg font-mono font-bold text-teal-700">{{ totalScanned }}</span>
           </div>
           <div>
-            <span class="text-[10px] text-slate-500 uppercase font-bold block">Discrepancy</span>
+            <span class="text-[10px] text-slate-500 uppercase font-bold block">Difference</span>
             <span
               class="text-lg font-mono font-bold"
               :class="netDiscrepancyBottles === 0 ? 'text-emerald-600' : 'text-rose-600'"
