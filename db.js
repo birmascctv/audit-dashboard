@@ -835,9 +835,16 @@ export function getSessionLockState(storeId) {
     if (!row) {
       return { storeId, isLocked: false };
     }
+    const LOCK_MS = 3 * 24 * 60 * 60 * 1000;
+    const lockedUntil = row.locked_at ? new Date(new Date(row.locked_at).getTime() + LOCK_MS).toISOString() : null;
+    if (row.is_locked === 1 && lockedUntil && Date.now() >= new Date(lockedUntil).getTime()) {
+      db.prepare('UPDATE audit_sessions SET is_locked = 0, unlocked_at = ?, unlocked_by = ? WHERE store_id = ?').run(new Date().toISOString(), 'Auto (3 days)', storeId);
+      return { storeId, isLocked: false, lockedAt: row.locked_at, lockedBy: row.locked_by, unlockedBy: 'Auto (3 days)' };
+    }
     return {
       storeId: row.store_id,
       isLocked: row.is_locked === 1,
+      lockedUntil: row.is_locked === 1 ? lockedUntil : null,
       lockedAt: row.locked_at,
       lockedBy: row.locked_by,
       unlockedAt: row.unlocked_at,

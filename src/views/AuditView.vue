@@ -7,6 +7,7 @@ import EmptyState from '../components/EmptyState.vue';
 import SkeletonBlock from '../components/SkeletonBlock.vue';
 import { useToast } from '../composables/useToast.js';
 import { formatDateTime } from '../utils/storage.js';
+import { fmtDateTime } from '../utils/date.js';
 import AddBarcodeModal from '../components/AddBarcodeModal.vue';
 
 import {
@@ -139,6 +140,11 @@ const rawCurlInput = ref('');
 const isSavingSession = ref(false);
 const sessionStatusMsg = ref('');
 const pendingUnknownBarcode = ref('');
+let unknownTimer = null;
+watch(pendingUnknownBarcode, (v) => {
+  clearTimeout(unknownTimer);
+  if (v) unknownTimer = setTimeout(() => { if (!isAddBarcodeModalOpen.value) pendingUnknownBarcode.value = ''; }, 60000);
+});
 const isFinalizing = ref(false);
 const auditNotes = ref('');
 const pushToWordPressOnFinalize = ref(true);
@@ -636,6 +642,7 @@ const showAuditSuccess = ref(false);
           </div>
           <p class="text-amber-900 text-xs mt-0.5">
             Physical counts are sealed for {{ currentStore.name }}. All barcode scanning and manual tally edits are disabled.
+            <span v-if="sessionLockInfo?.lockedUntil"> Opens automatically on <strong>{{ fmtDateTime(sessionLockInfo.lockedUntil) }}</strong>.</span>
             <span v-if="sessionLockInfo?.lockedBy"> Sealed by <strong>{{ sessionLockInfo.lockedBy }}</strong>.</span>
           </p>
         </div>

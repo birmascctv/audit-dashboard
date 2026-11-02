@@ -109,6 +109,7 @@ async function loadSessionLockState(storeId) {
       isSessionLocked.value = Boolean(data.isLocked);
       sessionLockInfo.value = {
         lockedAt: data.lockedAt,
+        lockedUntil: data.lockedUntil,
         lockedBy: data.lockedBy,
         unlockedAt: data.unlockedAt,
         unlockedBy: data.unlockedBy,
