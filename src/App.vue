@@ -29,9 +29,6 @@ const isGuideOpen = ref(false);
     <!-- Header (shown on all pages except login) -->
     <ChillerHeader
       v-if="route.path !== '/login'"
-      :sound-enabled="soundEnabled"
-      @toggle-sound="soundEnabled = !soundEnabled"
-      @open-guide="isGuideOpen = true"
     />
 
     <!-- Routed View with generous left & right gutters -->

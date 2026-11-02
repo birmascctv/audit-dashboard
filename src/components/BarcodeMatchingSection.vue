@@ -151,8 +151,9 @@ async function handleRemoveBarcode(bCode: string) {
   }
 }
 
+const byVarian = (a: any, b: any) => String(a.varian || '').localeCompare(String(b.varian || ''), undefined, { numeric: true, sensitivity: 'base' });
 const filteredProducts = computed(() => {
-  if (!searchMapped.value) return wpProducts.value;
+  if (!searchMapped.value) return wpProducts.value.slice().sort(byVarian);
   const q = searchMapped.value.toLowerCase().trim();
   return wpProducts.value.filter(
     (p) =>
@@ -160,7 +161,7 @@ const filteredProducts = computed(() => {
       p.brand.toLowerCase().includes(q) ||
       p.varian.toLowerCase().includes(q) ||
       (p.sku && p.sku.toLowerCase().includes(q))
-  );
+  ).sort(byVarian);
 });
 
 defineExpose({

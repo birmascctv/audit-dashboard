@@ -501,6 +501,7 @@ export function getSalesSummary(filters = {}) {
     topProductsAllStores,
     topProductsLastWeek,
     topProductsThisMonth,
+    latestSaleAt: db.prepare(`SELECT MAX(sales_date_in) AS d FROM sales_transactions`).get()?.d || null,
     latestBusinessDate,
     pivots: {
       brand: allocatePaymentSales(pivotRows(db, where, 'brand', filters), ['item']),

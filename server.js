@@ -843,7 +843,7 @@ export async function runBirmasServerSync(options = {}) {
 // ==========================================
 let isErpSyncing = false;
 
-const DEFAULT_ERP_COOKIE = `_csrf-esb-fnb-backend=f78ccb84cefe055a764612525d2f74062e83a7c0a022538d86aa4fae44216c71a%3A2%3A%7Bi%3A0%3Bs%3A21%3A%22_csrf-esb-fnb-backend%22%3Bi%3A1%3Bs%3A32%3A%22L4gJX2eDfoa3DbPJAvw5vRJ89C12jNGn%22%3B%7D; PHPSESSID=t4vll2k1onjef4pmhma58f4bb0; _jwt-token=6610caad01882c9402616a0929ee9dfa964c4e662ad1643bde5be6fd8c0701c3a%3A2%3A%7Bi%3A0%3Bs%3A10%3A%22_jwt-token%22%3Bi%3A1%3Bs%3A373%3A%22eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdXRob3JpemVkIjp0cnVlLCJjb21wYW55Q29kZSI6IkJSTSIsImNvbXBhbnlJRCI6NTk3MSwiY29tcGFueU5hbWUiOiJQVC4gQmlybWFzIE1lcnViYWggUGVyc2Vwc2kiLCJkYk5hbWUiOiJmbmJfYnJtIiwiZXhwIjoxNzkwOTU1MDE0LCJmdWxsTmFtZSI6IlBoaWxsaXAiLCJzZXJ2ZXJDb2RlIjoiZ2xvYmFsMyIsInVzZXJSb2xlSUQiOjEsInVzZXJuYW1lIjoiQlJNUGhpbGxpcCJ9.j1zACEId80wffGXPNaJMGXA9A39dnOjngStrNCEHbVQ%22%3B%7D; _identity=18b2dc04b4c5721f9b9c31dd6309b0068ae32ae914af34d8ade231f4cc8f8542a%3A2%3A%7Bi%3A0%3Bs%3A9%3A%22_identity%22%3Bi%3A1%3Bs%3A28%3A%22%5B%22BRMPhillip%22%2Cnull%2C31104000%5D%22%3B%7D;`;
+const DEFAULT_ERP_COOKIE = process.env.ESB_COOKIE || '';
 const DEFAULT_ERP_CSRF = 'YG3zBCat5kSNTL7OxAYsz9Az4Rt7B2fsyYtF8Y3WYCQsWZROfp-DAOsj3_2AZHyFkUWWLg1VLdTwyHTD55gnSg==';
 
 export async function runDirectESBERPSync(options = {}) {
@@ -1019,9 +1019,24 @@ export async function runDirectESBERPSync(options = {}) {
   }
 }
 
+const loginFails = new Map();
+
 async function startServer() {
   const app = express();
+  app.set('trust proxy', 'loopback');
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    res.set({
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer',
+      'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+      'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+    });
+    next();
+  });
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -1029,7 +1044,17 @@ async function startServer() {
   // Every /api call needs a valid (1 hour) session token, except login/logout and the Birmas server push endpoints.
   const PUBLIC_API = new Set(['/api/auth/login', '/api/auth/logout', '/api/stock/push', '/api/sync/push', '/api/sales/push', '/api/esb/webhook']);
   app.use('/api', (req, res, next) => {
-    if (PUBLIC_API.has(req.originalUrl.split('?')[0])) return next();
+    const pubUrl = req.originalUrl.split('?')[0];
+    if (PUBLIC_API.has(pubUrl)) {
+      if (pubUrl.endsWith('/login') || pubUrl.endsWith('/logout')) return next();
+      // Push endpoints: when any ingest token is configured it is mandatory
+      const accepted = [process.env.STOCK_INGEST_TOKEN, db.getConfig('birmas_server_token')].map((t) => String(t || '').trim()).filter(Boolean);
+      if (accepted.length) {
+        const given = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim() || String(req.headers['x-ingest-token'] || '').trim();
+        if (!given || !accepted.includes(given)) return res.status(401).json({ success: false, error: 'Unauthorized' });
+      }
+      return next();
+    }
     const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '');
     const session = match ? db.getAuthSession(match[1]) : null;
     if (!session) return res.status(401).json({ success: false, error: 'Session expired - please log in again.' });
@@ -2399,11 +2424,25 @@ async function startServer() {
     }
 
     const cleanUser = username.trim().toLowerCase();
+    const ip = req.ip || req.socket?.remoteAddress || '';
+    const key = `${ip}|${cleanUser}`;
+    const rec = loginFails.get(key);
+    if (rec && rec.lockedUntil > Date.now()) {
+      db.logLoginAttempt(cleanUser, ip, false, 'locked');
+      return res.status(429).json({ success: false, message: 'Too many failed attempts. Try again in 15 minutes.' });
+    }
     const user = db.getUserByUsername(cleanUser);
 
-    if (!user || user.password !== password) {
+    if (!user || !db.verifyPassword(password, user.password)) {
+      const r = rec && rec.lockedUntil <= Date.now() && rec.count < 5 ? rec : { count: 0, lockedUntil: 0 };
+      r.count += 1;
+      if (r.count >= 5) { r.lockedUntil = Date.now() + 15 * 60 * 1000; r.count = 0; }
+      loginFails.set(key, r);
+      db.logLoginAttempt(cleanUser, ip, false, 'bad_credentials');
       return res.status(401).json({ success: false, message: 'Invalid username or password' });
     }
+    loginFails.delete(key);
+    db.logLoginAttempt(cleanUser, ip, true, 'ok');
 
     const safeUser = { id: user.id, username: user.username, name: user.name, email: user.email, role: user.role };
     const token = db.createAuthSession(user);
@@ -2493,9 +2532,9 @@ async function startServer() {
         .all(storeId, date, followingDate);
       const opening = snapshots.filter((row) => row.business_date === date);
       const closing = snapshots.filter((row) => row.business_date === followingDate);
-      if (!opening.length || !closing.length) {
+      if (!opening.length) {
         const earliest = sqlite.prepare('SELECT MIN(business_date) AS d FROM stock_snapshots WHERE store_id = ?').get(storeId)?.d || null;
-        return res.json({ success: true, needsSnapshots: true, collectingSince: earliest, requiredDates: [date, followingDate], rows: [] });
+        return res.json({ success: true, needsSnapshots: true, collectingSince: earliest, requiredDates: [date], rows: [] });
       }
       const sales = salesDb.getSalesProductsByBusinessDate(date, branch);
       const normalize = (value) => String(value || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
@@ -2511,12 +2550,12 @@ async function startServer() {
         }
         return row[b.length];
       };
-      const stockNames = [...new Set([...opening, ...closing].map((row) => row.product_id))].map((id) => ({
+      const stockNames = [...new Set(opening.map((row) => row.product_id))].map((id) => ({
         id,
         name: opening.find((row) => row.product_id === id)?.product_name || closing.find((row) => row.product_id === id)?.product_name || id,
         opening: opening.find((row) => row.product_id === id)?.stock_qty,
         closing: closing.find((row) => row.product_id === id)?.stock_qty,
-      }));
+      })).filter((stock) => Number(stock.opening) > 0);
       const used = new Set();
       const rows = sales.map((item) => {
         const name = normalize(item.menu);

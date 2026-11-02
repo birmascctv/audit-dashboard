@@ -74,8 +74,9 @@ function sessionAccuracy(a) {
   return 100;
 }
 
-const matchedItems = (a) => sessionItems(a).filter((i) => i.status === 'matched' && num(i.wpExpectedQty) !== 0);
-const discrepancyItems = (a) => sessionItems(a).filter((i) => i.status !== 'matched' && (num(i.discrepancy) !== 0 || i.note));
+const byName = (x, y) => String(x.productTitle || x.varian || '').localeCompare(String(y.productTitle || y.varian || ''), undefined, { numeric: true, sensitivity: 'base' });
+const matchedItems = (a) => sessionItems(a).filter((i) => i.status === 'matched' && num(i.wpExpectedQty) !== 0).sort(byName);
+const discrepancyItems = (a) => sessionItems(a).filter((i) => i.status !== 'matched' && (num(i.discrepancy) !== 0 || i.note)).sort(byName);
 
 function toLocalInput(iso) {
   const d = new Date(iso);
@@ -452,7 +453,6 @@ function exportHistoryCSV() {
                 <th class="py-3 px-4">Store Name</th>
                 <th class="py-3 px-4 text-center">MISSING PRODUCTS</th>
                 <th class="py-3 px-4 text-center">SURPLUS</th>
-                <th class="py-3 px-4 text-center">Net Variance</th>
                 <th class="py-3 px-4 text-center w-40">Accuracy Rate</th>
                 <th class="py-3 px-4 text-center">Risk Assessment</th>
                 <th class="py-3 px-4 text-right">Last Audit</th>
@@ -507,13 +507,6 @@ function exportHistoryCSV() {
                 <!-- Surplus Cans -->
                 <td class="py-3.5 px-4 text-center font-mono font-semibold text-amber-700">
                   {{ store.totalSurplus > 0 ? `+${store.totalSurplus}` : '0' }}
-                </td>
-
-                <!-- Net Variance -->
-                <td class="py-3.5 px-4 text-center font-mono font-bold">
-                  <span :class="store.netDiscrepancy < 0 ? 'text-rose-600' : store.netDiscrepancy > 0 ? 'text-amber-600' : 'text-emerald-600'">
-                    {{ store.netDiscrepancy === 0 ? '0' : store.netDiscrepancy > 0 ? `+${store.netDiscrepancy}` : store.netDiscrepancy }}
-                  </span>
                 </td>
 
                 <!-- Accuracy Rate -->
@@ -690,7 +683,8 @@ function exportHistoryCSV() {
                           <thead class="bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0">
                             <tr>
                               <th class="py-1 px-3">Product</th>
-                              <th class="py-1 px-2 text-center w-20">Qty</th>
+                              <th class="py-1 px-2 text-center w-16">Qty</th>
+                              <th class="py-1 px-2 text-center w-16">Missing</th>
                               <th class="py-1 px-3 w-[34%]">Notes</th>
                             </tr>
                           </thead>
@@ -702,12 +696,12 @@ function exportHistoryCSV() {
                               </td>
                               <td class="py-1.5 px-2 text-center font-mono">
                                 <span class="font-bold text-slate-900">{{ item.scannedCount ?? 0 }}</span>
-                                <span class="block text-[10px] text-slate-400">exp {{ item.wpExpectedQty ?? 0 }}<template v-if="num(item.discrepancy) !== 0"> · <span :class="num(item.discrepancy) < 0 ? 'text-rose-600' : 'text-amber-600'">{{ num(item.discrepancy) > 0 ? `+${item.discrepancy}` : item.discrepancy }}</span></template></span>
                               </td>
+                              <td class="py-1.5 px-2 text-center font-mono font-bold" :class="num(item.discrepancy) < 0 ? 'text-rose-600' : 'text-slate-300'">{{ num(item.discrepancy) < 0 ? Math.abs(num(item.discrepancy)) : '-' }}</td>
                               <td class="py-1.5 px-3 text-[11px] text-slate-600 break-words">{{ item.note || '-' }}</td>
                             </tr>
                             <tr v-if="discrepancyItems(audit).length === 0">
-                              <td colspan="3" class="px-3 py-3 text-slate-400 italic">
+                              <td colspan="4" class="px-3 py-3 text-slate-400 italic">
                                 {{ sessionItems(audit).length ? 'No discrepancies' : 'No item details stored for this session' }}
                               </td>
                             </tr>
@@ -736,7 +730,6 @@ function exportHistoryCSV() {
                               </td>
                               <td class="py-1.5 px-2 text-center font-mono">
                                 <span class="font-bold text-emerald-700">{{ item.scannedCount ?? 0 }}</span>
-                                <span class="block text-[10px] text-slate-400">exp {{ item.wpExpectedQty ?? 0 }}<template v-if="num(item.discrepancy) !== 0"> · <span :class="num(item.discrepancy) < 0 ? 'text-rose-600' : 'text-amber-600'">{{ num(item.discrepancy) > 0 ? `+${item.discrepancy}` : item.discrepancy }}</span></template></span>
                               </td>
                               <td class="py-1.5 px-3 text-[11px] text-slate-600 break-words">{{ item.note || '-' }}</td>
                             </tr>

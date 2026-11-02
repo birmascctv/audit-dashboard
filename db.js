@@ -2,7 +2,26 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+
+export function hashPassword(pw) {
+  const salt = randomBytes(16).toString('hex');
+  return `scrypt$${salt}$${scryptSync(String(pw), salt, 64).toString('hex')}`;
+}
+
+export function verifyPassword(pw, stored) {
+  const [tag, salt, hash] = String(stored || '').split('$');
+  if (tag !== 'scrypt' || !salt || !hash) return false;
+  const a = Buffer.from(hash, 'hex');
+  const b = scryptSync(String(pw), salt, 64);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function logLoginAttempt(username, ip, success, reason) {
+  try {
+    getDb().prepare('INSERT INTO login_attempts (username, ip, success, reason, created_at) VALUES (?, ?, ?, ?, ?);').run(String(username).slice(0, 60), String(ip).slice(0, 60), success ? 1 : 0, reason, new Date().toISOString());
+  } catch {}
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -190,6 +209,7 @@ function initTables(db) {
     CREATE INDEX IF NOT EXISTS idx_store_stocks_lookup ON store_stocks (store_id, product_id);
     CREATE INDEX IF NOT EXISTS idx_audit_scans_lookup ON audit_scans (store_id, barcode);
   `);
+  db.exec(`CREATE TABLE IF NOT EXISTS login_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, ip TEXT, success INTEGER, reason TEXT, created_at TEXT);`);
 
   // Seed & sync required users:
   // - superadmin (superadmin666): can access both Stock Audit & Sales Report
@@ -199,14 +219,16 @@ function initTables(db) {
     INSERT INTO users (id, username, email, password, name, role)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(username) DO UPDATE SET
-      password = excluded.password,
       name = excluded.name,
       role = excluded.role;
   `);
-  upsertUser.run('user-superadmin', 'superadmin', 'superadmin@birmas.id', 'superadmin666', 'Super Admin', 'superadmin');
-  upsertUser.run('user-admin', 'admin', 'admin@birmas.id', 'admin666', 'Admin', 'admin');
-  upsertUser.run('user-chrisna', 'chrisna', 'chrisna@birmas.id', 'auditor666', 'Chrisna', 'auditor');
-  upsertUser.run('user-auditor', 'auditor', 'auditor@birmas.id', 'auditor666', 'Auditor Staff', 'auditor');
+  upsertUser.run('user-superadmin', 'superadmin', 'superadmin@birmas.id', hashPassword('superadmin666'), 'Super Admin', 'superadmin');
+  upsertUser.run('user-admin', 'admin', 'admin@birmas.id', hashPassword('admin666'), 'Admin', 'admin');
+  upsertUser.run('user-chrisna', 'chrisna', 'chrisna@birmas.id', hashPassword('auditor666'), 'Chrisna', 'auditor');
+  upsertUser.run('user-auditor', 'auditor', 'auditor@birmas.id', hashPassword('auditor666'), 'Auditor Staff', 'auditor');
+  for (const u of db.prepare('SELECT id, password FROM users;').all()) {
+    if (!String(u.password).startsWith('scrypt$')) db.prepare('UPDATE users SET password = ? WHERE id = ?;').run(hashPassword(u.password), u.id);
+  }
 
   // Official stores: Kelapa Gading, Kuningan, Kwitang, Lebak Bulus, Sudirman, Tebet, Nomadic Bandung, Nusa Dua Bali
   const upsertStore = db.prepare(`

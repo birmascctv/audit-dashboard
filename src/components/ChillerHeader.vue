@@ -218,21 +218,6 @@ onUnmounted(() => {
         </div>
 
         <div class="flex items-center justify-between gap-2 sm:justify-end sm:gap-3 flex-wrap">
-          <div class="flex items-center gap-1">
-            <button
-              type="button"
-              @click="emit('toggleSound')"
-              class="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
-              :aria-label="soundEnabled ? 'Mute scanner sounds' : 'Enable scanner sounds'"
-              :title="soundEnabled ? 'Mute scanner sounds' : 'Enable scanner sounds'"
-            ><Volume2 v-if="soundEnabled" class="h-4 w-4" /><VolumeX v-else class="h-4 w-4" /></button>
-            <button
-              type="button"
-              @click="emit('openGuide')"
-              class="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 text-xs font-bold text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
-            ><BookOpen class="h-4 w-4" /><span>Guide</span></button>
-          </div>
-
           <div v-if="currentUser" class="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 shadow-xs">
             <div class="flex h-6 w-6 items-center justify-center rounded-lg bg-teal-100 text-[11px] font-black text-teal-800">{{ cleanUserName.charAt(0) }}</div>
             <div>
@@ -264,7 +249,7 @@ onUnmounted(() => {
 
 <style scoped>
 .menu-slide-enter-active,
-.menu-slide-leave-active { transition: opacity 180ms ease, transform 180ms ease; }
+.menu-slide-leave-active { transition: opacity 280ms ease, transform 280ms ease; }
 .menu-slide-enter-from,
 .menu-slide-leave-to { opacity: 0; transform: translateY(-10px); }
 </style>

@@ -404,9 +404,13 @@ const filteredItems = computed(() => {
   });
 });
 
+const sortedAuditItems = computed(() => auditItems.value.slice().sort((a, b) =>
+  String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' })));
+
 // ONLY products that have been physically scanned in this session (scannedCount > 0)
 const scannedOnlyItems = computed(() => {
-  return auditItems.value.filter((item) => item.scannedCount > 0);
+  return auditItems.value.filter((item) => item.scannedCount > 0).sort((a, b) =>
+    String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' }));
 });
 
 const accuracyPercentage = computed(() => {
@@ -805,7 +809,7 @@ const showAuditSuccess = ref(false);
                 class="text-[11px] bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-slate-700 cursor-pointer focus:outline-none focus:border-teal-500"
               >
                 <option value="">+ Test Scan Item...</option>
-                <option v-for="item in auditItems" :key="item.barcode" :value="item.barcode">
+                <option v-for="item in sortedAuditItems" :key="item.barcode" :value="item.barcode">
                   {{ item.productTitle || item.varian }} ({{ item.barcode }})
                 </option>
               </select>

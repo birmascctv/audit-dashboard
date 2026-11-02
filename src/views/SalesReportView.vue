@@ -855,6 +855,7 @@ onBeforeUnmount(() => {
         <div>
           <h1 class="text-xl font-black text-slate-900">Sales Report</h1>
           <p class="text-xs text-slate-500">Clean CSV-backed sales analytics and source columns</p>
+          <p v-if="summary.latestSaleAt" class="text-[11px] font-semibold text-teal-700">Latest sales data: {{ summary.latestSaleAt }}</p>
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -1189,25 +1190,6 @@ onBeforeUnmount(() => {
         </article>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-            <h2 class="text-sm font-bold text-slate-900">Store Sales per Month</h2>
-            <select v-model="monthStore" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs"><option value="all">All stores</option><option v-for="name in monthStoreNames" :key="name" :value="name">{{ name }}</option></select>
-          </header>
-          <div class="max-h-[24rem] overflow-auto">
-            <table class="w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Month</th><th v-for="name in (monthStore === 'all' ? monthStoreNames : [monthStore])" :key="name" class="px-4 py-2 text-right">{{ name }}</th><th v-if="monthStore === 'all'" class="px-4 py-2 text-right">Total</th></tr></thead>
-              <tbody class="sales-table-body"><tr v-for="row in monthStoreRows" :key="row.key" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ row.name }}</td><td v-for="name in (monthStore === 'all' ? monthStoreNames : [monthStore])" :key="name" class="px-4 py-2 text-right font-mono">{{ formatMoney(row.bySales.get(name) || 0) }}</td><td v-if="monthStore === 'all'" class="px-4 py-2 text-right font-mono font-bold">{{ formatMoney(row.sales) }}</td></tr>
-                <tr v-if="!monthStoreRows.length"><td colspan="9" class="p-6 text-center text-slate-400">No monthly sales yet.</td></tr></tbody>
-            </table>
-          </div>
-        </article>
-        <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <header class="border-b border-slate-100 px-4 py-3"><h3 class="text-xs font-bold text-slate-700">Store Sales per Month Chart</h3></header>
-          <AnalyticsBarChart :items="monthChartItems" value-axis="rupiah" :max-items="24" x-axis-label="Month" empty-label="No monthly sales yet." heatmap />
-        </article>
-      </section>
-
       <section class="space-y-4 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <header class="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 pb-4">
           <div><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><BarChart3 class="h-4 w-4 text-indigo-600" />Sales by Time Range</h2><p class="text-[11px] text-slate-500">Hourly, weekday, weekly, and monthly revenue · business dates run 06:00–05:59 Jakarta time.</p></div>
@@ -1296,15 +1278,15 @@ onBeforeUnmount(() => {
         </div>
         <section class="rounded-xl border border-slate-200 bg-slate-50 p-4">
           <header class="mb-3 flex flex-wrap items-end justify-between gap-3">
-            <div><h3 class="text-sm font-bold text-slate-900">Stock vs Sold</h3><p class="text-[11px] text-slate-500">Opening snapshot before 06:00, sales in the business day, and next-morning closing snapshot.</p></div>
+            <div><h3 class="text-sm font-bold text-slate-900">Stock vs Sold</h3><p class="text-[11px] text-slate-500">Products with opening stock (snapshot before 06:00) versus what was sold that business day.</p></div>
             <div class="flex flex-wrap gap-2">
               <label class="text-[10px] font-bold uppercase text-slate-500">Store<select v-model="stockCompareStore" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800"><option v-for="store in stores" :key="store.name" :value="store.name">{{ store.name }}</option></select></label>
               <label class="text-[10px] font-bold uppercase text-slate-500">Business date<input v-model="stockCompareDate" type="date" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800"></label>
             </div>
           </header>
           <p v-if="stockCompareError" class="text-xs text-rose-700">{{ stockCompareError }}</p>
-          <p v-else-if="stockCompareLoading" class="text-xs text-slate-500">Loading stock comparison…</p>
-          <p v-else-if="stockCompare.needsSnapshots" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Needs stock snapshots from two consecutive mornings ({{ stockCompare.requiredDates?.join(' and ') || 'selected date and following day' }}); collecting since {{ stockCompare.collectingSince || 'the next successful inventory sync' }}.</p>
+          <p v-else-if="stockCompareLoading && !stockCompare.rows.length" class="text-xs text-slate-500">Loading stock comparison…</p>
+          <p v-else-if="stockCompare.needsSnapshots" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">No opening stock snapshot for this date; snapshots are collected since {{ stockCompare.collectingSince || 'the next successful inventory sync' }}.</p>
           <div v-else class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
             <table class="w-full min-w-[760px] text-left text-xs"><thead class="bg-slate-100 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-3 py-2">Product (sales / stock)</th><th class="px-3 py-2 text-right">Opening</th><th class="px-3 py-2 text-right">Sold</th><th class="px-3 py-2 text-right">Expected closing</th><th class="px-3 py-2 text-right">Actual closing</th><th class="px-3 py-2 text-right">Difference</th><th class="px-3 py-2">Status</th></tr></thead>
               <tbody><tr v-for="(row,index) in stockCompare.rows" :key="`${row.product}-${index}`" class="border-t border-slate-100"><td class="px-3 py-2 font-medium">{{ row.product }}<span v-if="row.stockProduct && row.stockProduct !== row.product" class="block text-[10px] text-slate-500">Matched stock: {{ row.stockProduct }}</span></td><td class="px-3 py-2 text-right">{{ row.opening ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.sold ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.expectedClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.actualClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.difference ?? '—' }}</td><td class="px-3 py-2"><span :class="row.status === 'matched' ? 'text-emerald-700' : row.status === 'mismatch' ? 'text-amber-700' : 'text-slate-500'">{{ row.status }}</span></td></tr>
