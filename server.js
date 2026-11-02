@@ -1262,6 +1262,16 @@ async function startServer() {
   // table, which may not have a real barcode yet - in that case the frontend sends
   // a synthetic `id:<productId>` key alongside productId so the product can still be
   // matched and counted individually instead of collapsing onto a shared empty key)
+  // A locked store accepts no counting changes until Bertha unlocks it or the 3-day lock expires
+  app.use(['/api/audit/scan', '/api/audit/adjust', '/api/audit/reset', '/api/audit/finalize', '/api/audit/notes'], (req, res, next) => {
+    if (req.method === 'GET') return next();
+    const stores = db.getAllStores();
+    const storeId = req.body?.storeId || req.query?.storeId || (req.path.endsWith('/scan') || req.path.endsWith('/adjust') ? stores[0]?.id : '') || '';
+    if (storeId && db.getSessionLockState(storeId).isLocked) {
+      return res.status(423).json({ success: false, error: 'This audit session is locked. Only Bertha can unlock it, or it opens automatically after 3 days.' });
+    }
+    next();
+  });
   app.post('/api/audit/scan', (req, res) => {
     const stores = db.getAllStores();
     const { barcode, productId, storeId = (stores[0]?.id || 'birmas-sudirman'), auditorName = 'Auditor' } = req.body;
