@@ -1,1 +1,10 @@
 @import "tailwindcss";
+
+/* Clear keyboard focus + larger tap targets on touch screens */
+:focus-visible { outline: 2px solid #0d9488; outline-offset: 2px; }
+@media (pointer: coarse) {
+  button, [role="button"], select, input:not([type="checkbox"]):not([type="radio"]) { min-height: 40px; }
+}
+@media print {
+  header, footer, nav, .no-print { display: none !important; }
+}

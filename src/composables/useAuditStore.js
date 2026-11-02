@@ -86,13 +86,14 @@ async function initializeFromBackend() {
     }
 
     await loadStoreScans(selectedStoreId.value);
-    isInitialized.value = true;
   } catch (err) {
     console.warn('Backend init fallback:', err);
     try {
       const localProds = JSON.parse(localStorage.getItem('birmas_products') || '[]');
       if (localProds.length > 0) wpProducts.value = localProds;
     } catch (_) {}
+  } finally {
+    isInitialized.value = true;
   }
 }
 
@@ -910,8 +911,8 @@ export function useAuditStore() {
       if (filename) {
         const activeInfo = {
           filename,
-          stock_date: metadata.stockDate || metadata.cell5B || new Date().toLocaleDateString('id-ID'),
-          downloaded_at_esb: metadata.downloadedAtEsb || metadata.cell4B || new Date().toLocaleString('id-ID'),
+          stock_date: metadata.stockDate || metadata.cell5B || new Date().toLocaleDateString('en-GB'),
+          downloaded_at_esb: metadata.downloadedAtEsb || metadata.cell4B || new Date().toLocaleString('en-GB'),
           active_stores: metadata.activeStores || metadata.cell6B || '',
           row_count: rows.length,
           updated_at: new Date().toISOString(),
@@ -930,6 +931,7 @@ export function useAuditStore() {
     currentStore,
     wpConfig,
     wpProducts,
+    isInitialized,
     auditItems,
     scannedCounts,
     scanLogs,

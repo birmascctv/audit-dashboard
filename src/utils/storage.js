@@ -5,7 +5,7 @@ export function formatDateTime(isoString) {
     const dateObj = new Date(isoString);
     const date = dateObj.toLocaleDateString('en-GB', {
       day: '2-digit',
-      month: 'short',
+      month: '2-digit',
       year: 'numeric',
     });
     const time = dateObj.toLocaleTimeString('en-GB', {

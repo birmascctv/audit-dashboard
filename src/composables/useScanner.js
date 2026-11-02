@@ -1,102 +1,69 @@
 import { ref, onMounted, onUnmounted } from 'vue';
-import { playScanSuccessSound, playScanErrorSound } from '../utils/audio.js';
 
 export function useScanner(options = {}) {
   const isListening = ref(true);
-  const soundEnabled = ref(options.soundEnabled ?? true);
   const multiplier = ref(1);
   const lastScannedBarcode = ref(null);
-  const scanFeedback = ref({
-    type: 'idle',
-    message: '',
-    timestamp: 0,
-  });
+  const scanFeedback = ref({ type: 'idle', message: '', timestamp: 0 });
 
-  // Internal buffer for rapid scanner keystrokes
   let buffer = '';
   let lastKeyTime = 0;
   let lastProcessed = { code: '', at: 0 };
+  let feedbackTimer = null;
 
-  function processBarcode(barcodeToProcess) {
-    const cleaned = (barcodeToProcess || '').trim();
-    if (!cleaned) return;
-
-    // One physical scan must count once, even if two key handlers see the same Enter
-    const now = Date.now();
-    if (cleaned === lastProcessed.code && now - lastProcessed.at < 400) return;
-    lastProcessed = { code: cleaned, at: now };
-
-    lastScannedBarcode.value = cleaned;
-    const result = options.onScan ? options.onScan(cleaned) : true;
-
-    let isSuccess = false;
-    let msg = '';
-
-    if (typeof result === 'boolean') {
-      isSuccess = result;
-      msg = result ? `Scanned: ${cleaned}` : `Barcode not found: ${cleaned}`;
-    } else if (result && typeof result.then === 'function') {
-      result.then((res) => {
-        const ok = res?.success ?? true;
-        if (ok) {
-          if (soundEnabled.value) playScanSuccessSound();
-          scanFeedback.value = {
-            type: 'success',
-            message: res?.message || `Scanned: ${cleaned}`,
-            timestamp: Date.now(),
-          };
-        } else {
-          if (soundEnabled.value) playScanErrorSound();
-          scanFeedback.value = {
-            type: 'error',
-            message: res?.message || `Failed: ${cleaned}`,
-            timestamp: Date.now(),
-          };
-        }
-      });
-      return;
-    } else if (result) {
-      isSuccess = result.success;
-      msg = result.message || (isSuccess ? `Scanned: ${cleaned}` : `Failed: ${cleaned}`);
-    }
-
-    if (isSuccess) {
-      if (soundEnabled.value) playScanSuccessSound();
-      scanFeedback.value = {
-        type: 'success',
-        message: msg,
-        timestamp: Date.now(),
-      };
-    } else {
-      if (soundEnabled.value) playScanErrorSound();
-      scanFeedback.value = {
-        type: 'error',
-        message: msg,
-        timestamp: Date.now(),
-      };
-    }
-
-    setTimeout(() => {
-      if (Date.now() - scanFeedback.value.timestamp >= 3900) {
+  function publishFeedback(type, message) {
+    const timestamp = Date.now();
+    scanFeedback.value = { type, message, timestamp };
+    clearTimeout(feedbackTimer);
+    feedbackTimer = setTimeout(() => {
+      if (scanFeedback.value.timestamp === timestamp) {
         scanFeedback.value = { type: 'idle', message: '', timestamp: 0 };
       }
     }, 4000);
   }
 
+  function processBarcode(barcodeToProcess) {
+    const cleaned = (barcodeToProcess || '').trim();
+    if (!cleaned) return;
+
+    const now = Date.now();
+    if (cleaned === lastProcessed.code && now - lastProcessed.at < 400) return;
+    lastProcessed = { code: cleaned, at: now };
+    lastScannedBarcode.value = cleaned;
+
+    let result;
+    try {
+      result = options.onScan ? options.onScan(cleaned) : true;
+    } catch (error) {
+      publishFeedback('error', error?.message || `Failed: ${cleaned}`);
+      return;
+    }
+
+    const handleResult = (res) => {
+      const success = typeof res === 'boolean' ? res : Boolean(res?.success ?? res);
+      const message = typeof res === 'boolean'
+        ? (res ? `Scanned: ${cleaned}` : `Barcode not found: ${cleaned}`)
+        : (res?.message || (success ? `Scanned: ${cleaned}` : `Failed: ${cleaned}`));
+      publishFeedback(success ? 'success' : 'error', message);
+    };
+
+    if (result && typeof result.then === 'function') {
+      result.then(handleResult).catch((error) => publishFeedback('error', error?.message || `Failed: ${cleaned}`));
+    } else {
+      handleResult(result);
+    }
+  }
+
   function handleKeyDown(event) {
     if (!isListening.value) return;
-
     const target = event.target;
     const isDedicatedScanInput = target?.id === 'scanner-main-input';
-    const isGenericInput =
-      target &&
+    const isGenericInput = target &&
       (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) &&
       !isDedicatedScanInput;
 
     const currentTime = Date.now();
     const timeDiff = currentTime - lastKeyTime;
-
-    // A scanner types a full code in a few ms; stale or runaway digits from a bad read are discarded
     if (isDedicatedScanInput && event.key.length === 1) {
       if (target.value && (timeDiff > 500 || target.value.length >= 40)) target.value = '';
       lastKeyTime = currentTime;
@@ -115,11 +82,7 @@ export function useScanner(options = {}) {
         }
         return;
       }
-
-      if (isGenericInput) {
-        return;
-      }
-
+      if (isGenericInput) return;
       if (buffer.length >= 3) {
         event.preventDefault();
         processBarcode(buffer);
@@ -132,30 +95,18 @@ export function useScanner(options = {}) {
       buffer = '';
       return;
     }
-
     if (event.key.length === 1) {
-      if (timeDiff > 250 && !isDedicatedScanInput) {
-        buffer = '';
-      }
+      if (timeDiff > 250 && !isDedicatedScanInput) buffer = '';
       buffer += event.key;
       lastKeyTime = currentTime;
     }
   }
 
-  onMounted(() => {
-    window.addEventListener('keydown', handleKeyDown);
-  });
-
+  onMounted(() => window.addEventListener('keydown', handleKeyDown));
   onUnmounted(() => {
     window.removeEventListener('keydown', handleKeyDown);
+    clearTimeout(feedbackTimer);
   });
 
-  return {
-    isListening,
-    soundEnabled,
-    multiplier,
-    lastScannedBarcode,
-    scanFeedback,
-    processBarcode,
-  };
+  return { isListening, multiplier, lastScannedBarcode, scanFeedback, processBarcode };
 }

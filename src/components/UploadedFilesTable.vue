@@ -261,7 +261,7 @@
             <!-- Inspection Date -->
             <td class="py-3 px-3 whitespace-nowrap">
               <span class="text-xs font-semibold text-slate-700">
-                {{ f.audit_date }}
+                {{ fmtDateLoose(f.audit_date) }}
               </span>
             </td>
 
@@ -380,6 +380,8 @@
 </template>
 
 <script setup>
+import { fmtDate } from '../utils/date.js';
+const fmtDateLoose = (v) => fmtDate(v) || '—';
 import { ref, computed, onMounted, watch } from 'vue'
 import StoreMascot from './StoreMascot.vue'
 import { stripStoreBrand } from '../store-meta.js'
@@ -629,13 +631,14 @@ function formatTimestamp(iso) {
   try {
     const d = new Date(iso)
     if (isNaN(d.getTime())) return iso
-    return d.toLocaleString('id-ID', {
+    return d.toLocaleString('en-GB', {
       year: 'numeric',
-      month: 'short',
-      day: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit'
+      second: '2-digit',
+      hour12: false
     })
   } catch (e) {
     return iso

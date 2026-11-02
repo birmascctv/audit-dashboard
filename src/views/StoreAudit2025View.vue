@@ -1,5 +1,12 @@
 <template>
   <div v-if="lookupsLoaded && stores.length" class="page-gutter px-4 sm:px-8 lg:px-16 max-w-[1560px] mx-auto pb-12">
+    <div class="flex items-center justify-between gap-3 mb-3">
+      <h1 class="text-lg font-black text-slate-900">Store Audit Dashboard</h1>
+      <nav class="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs" aria-label="Audit year">
+        <router-link to="/store-audit2025" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="2025 === 2025 ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-50'">2025</router-link>
+        <router-link to="/store-audit" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="2025 === 2026 ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-50'">2026</router-link>
+      </nav>
+    </div>
     <!-- STORE RANKS: Top 3 Outlets & Academic Grade Index (Year 2025) -->
     <ExecutiveKpiBar
       :year="2025"
@@ -10,6 +17,32 @@
       :period-from="periodFrom"
       :period-to="periodTo"
     />
+
+    <section class="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="text-sm font-extrabold text-slate-900">Store Comparison</h2>
+          <p class="text-xs text-slate-500 mt-0.5">Select 2–4 stores to compare their latest audit score and category scores.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <label v-for="store in stores" :key="`compare-${store.store_id}`" class="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700 cursor-pointer hover:border-teal-400">
+            <input type="checkbox" :checked="comparisonStoreIds.includes(store.store_id)" @change="toggleComparisonStore(store.store_id)" class="accent-teal-600" />
+            {{ stripStoreBrand(store.name) }}
+          </label>
+        </div>
+      </div>
+      <p v-if="comparisonStoreIds.length < 2" class="mt-3 text-xs text-slate-500">Choose at least two stores to compare.</p>
+      <div v-else-if="comparisonLoading" class="mt-4"><SkeletonBlock :rows="3" height="h-7" /></div>
+      <EmptyState v-else-if="!comparisonRows.length" class="mt-2" title="No comparison data" hint="No score data is available for the selected stores and period." />
+      <div v-else class="mt-4 overflow-x-auto">
+        <table class="min-w-[720px] w-full text-left text-xs border-collapse">
+          <thead><tr class="border-b border-slate-200 bg-slate-50 text-slate-600"><th class="p-2">Store</th><th class="p-2 text-center">Latest score</th><th v-for="category in comparisonCategories" :key="category" class="p-2 text-center">{{ category }}</th></tr></thead>
+          <tbody class="divide-y divide-slate-100">
+            <tr v-for="row in comparisonRows" :key="row.storeId"><th class="p-2 font-bold text-slate-800">{{ row.name }}</th><td class="p-2 text-center"><span class="inline-block min-w-[4.5rem] rounded-lg px-3 py-1.5 font-extrabold" :class="scoreFillClass(row.score)">{{ formatScore(row.score) }}</span></td><td v-for="category in comparisonCategories" :key="category" class="p-2 text-center"><span class="inline-block min-w-[4.5rem] rounded-lg px-3 py-1.5 font-extrabold" :class="scoreFillClass(row.categories[category])">{{ formatScore(row.categories[category]) }}</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <!-- Criteria search + selection -->
     <div id="criteria-section" class="controls-grid grid grid-cols-1 gap-4 md:grid-cols-3 mb-4">
@@ -103,7 +136,7 @@
               </div>
               <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
                 <span class="text-xs font-semibold text-slate-500">Average</span>
-                <span class="text-lg font-extrabold text-rose-600 leading-tight my-0.5">
+                <span class="text-lg font-extrabold leading-tight my-0.5" :class="scoreColorClass(averageValue)">
                   {{ averageValue !== null ? averageValue : '—' }}
                 </span>
                 <span class="text-[11px] text-slate-400">Store Average</span>
@@ -296,15 +329,16 @@
     <!-- Quick Scroll Navigation (Back to Top / Back to Bottom) -->
     <ScrollNavButtons />
   </div>
-  <div v-else class="max-w-[1560px] mx-auto px-4 sm:px-8 lg:px-16 py-12">
-    <div class="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600 shadow-sm">
-      {{ lookupsLoaded ? 'No stores have audit data for 2025.' : 'Loading store audit data…' }}
-    </div>
+  <div v-else class="max-w-[1560px] mx-auto px-4 sm:px-8 lg:px-16 py-12 rounded-2xl border border-slate-200 bg-white">
+    <SkeletonBlock v-if="!lookupsLoaded" :rows="6" height="h-8" />
+    <EmptyState v-else title="No store audit data available" hint="No stores have audit data for 2025." />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
+import EmptyState from '../components/EmptyState.vue'
+import SkeletonBlock from '../components/SkeletonBlock.vue'
 import CriteriaSelect from '../components/CriteriaSelect.vue'
 import ChartCard from '../components/ChartCard.vue'
 import SectionHeader from '../components/SectionHeader.vue'
@@ -335,6 +369,10 @@ const recentStoreIds = ref(null)
 const latestDataMonth = ref(null)
 const lookupsLoaded = ref(false)
 const selectedStores = ref([])
+const comparisonStoreIds = ref([])
+const comparisonData = ref({})
+const comparisonLoading = ref(false)
+let comparisonRequest = 0
 const selectedCategoriesForStore = ref([])
 const selectedCategory = ref('')
 const averageValue = ref(null)
@@ -397,6 +435,66 @@ const categoryCriteria = computed(() => {
   return criteria.value.filter(c => c.category === selectedCategory.value)
 })
 
+function scoreColorClass(score) {
+  if (score === null || score === undefined || !Number.isFinite(Number(score))) return 'text-slate-400'
+  return Number(score) >= 80 ? 'text-emerald-700' : Number(score) >= 60 ? 'text-amber-700' : 'text-rose-700'
+}
+
+function scoreFillClass(score) {
+  if (score === null || score === undefined || !Number.isFinite(Number(score))) return 'bg-slate-100 text-slate-400'
+  return Number(score) >= 80 ? 'bg-emerald-500 text-white' : Number(score) >= 60 ? 'bg-amber-400 text-slate-900' : 'bg-rose-500 text-white'
+}
+
+function formatScore(score) {
+  return score === null || score === undefined || !Number.isFinite(Number(score)) ? '—' : `${Number(score).toFixed(1)}%`
+}
+
+function toggleComparisonStore(storeId) {
+  const ids = comparisonStoreIds.value
+  if (ids.includes(storeId)) comparisonStoreIds.value = ids.filter(id => id !== storeId)
+  else if (ids.length < 4) comparisonStoreIds.value = [...ids, storeId]
+}
+
+const comparisonCategories = computed(() => [...new Set(Object.values(comparisonData.value).flatMap(row => Object.keys(row.categories || {})))])
+const comparisonRows = computed(() => comparisonStoreIds.value.map(id => {
+  const store = stores.value.find(item => String(item.store_id) === String(id))
+  const data = comparisonData.value[String(id)]
+  return data && store ? { storeId: id, name: stripStoreBrand(store.name), score: data.score, categories: data.categories } : null
+}).filter(Boolean))
+
+async function loadComparison() {
+  const request = ++comparisonRequest
+  const ids = comparisonStoreIds.value.slice()
+  if (ids.length < 2) { comparisonData.value = {}; return }
+  comparisonLoading.value = true
+  try {
+    const results = await Promise.all(ids.map(async id => {
+      try {
+        const res = await fetch(`/api/store/${id}/passrate?year=2025`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const payload = await res.json()
+        const labels = Array.isArray(payload.labels) ? payload.labels : []
+        const datasets = Array.isArray(payload.datasets) ? payload.datasets : []
+        const valid = labels.map((label, index) => ({ label, index })).filter(item => String(item.label || '').startsWith('2025-'))
+          .filter(item => (periodFrom.value === null || Number(String(item.label).split('-')[1]) >= periodFrom.value) && (periodTo.value === null || Number(String(item.label).split('-')[1]) <= periodTo.value))
+        const categories = {}
+        datasets.forEach(ds => {
+          const latest = valid.slice().reverse().find(item => ds.data?.[item.index] !== null && ds.data?.[item.index] !== undefined)
+          const value = latest ? ds.data[latest.index] : null
+          categories[ds.label] = value === null ? null : Math.round(Number(value) * 1000) / 10
+        })
+        const values = Object.values(categories).filter(value => value !== null)
+        return [String(id), { categories, score: values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 10) / 10 : null }]
+      } catch { return [String(id), { categories: {}, score: null }] }
+    }))
+    if (request === comparisonRequest) comparisonData.value = Object.fromEntries(results)
+  } finally {
+    if (request === comparisonRequest) comparisonLoading.value = false
+  }
+}
+
+watch([comparisonStoreIds, periodFrom, periodTo], loadComparison, { deep: true })
+
 async function loadLookups() {
   try {
     const [critRes, catRes, storeDataRes] = await Promise.all([
@@ -445,6 +543,7 @@ watch(criteria, (newVal) => {
 onMounted(async () => {
   await loadLookups()
   selectedStores.value = stores.value.map(s => s.store_id)
+  comparisonStoreIds.value = stores.value.slice(0, 2).map(s => s.store_id)
   selectedCategoriesForStore.value = categories.value.slice()
   if (!selectedCriterionId.value && criteria.value.length) {
     selectedCriterionId.value = criteria.value[0].id

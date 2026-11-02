@@ -2,6 +2,7 @@
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from '../composables/useAuth.js';
+import { online, lastUpdatedAt } from '../composables/useSyncStatus.js';
 import {
   BookOpen,
   ChevronDown,
@@ -25,6 +26,16 @@ defineProps({
 const emit = defineEmits(['toggleSound', 'openGuide']);
 const route = useRoute();
 const router = useRouter();
+const now = ref(Date.now());
+let clockTimer = null;
+const profileOpen = ref(false);
+const updatedLabel = computed(() => {
+  if (!lastUpdatedAt.value) return 'Waiting for data';
+  const s = Math.max(0, Math.round((now.value - lastUpdatedAt.value) / 1000));
+  if (s < 5) return 'Updated just now';
+  if (s < 60) return `Updated ${s}s ago`;
+  return `Updated ${Math.round(s / 60)}m ago`;
+});
 const menuRoot = ref(null);
 const auditButton = ref(null);
 const dropdownPosition = ref({});
@@ -90,6 +101,7 @@ function hoverClose() {
 
 function handleOutsidePointerDown(event) {
   if (menuRoot.value && !menuRoot.value.contains(event.target)) closeMenus();
+  if (!event.target.closest?.('[data-profile-menu]')) profileOpen.value = false;
 }
 
 function handleLogout() {
@@ -100,11 +112,13 @@ function handleLogout() {
 
 watch(() => route.fullPath, closeMenus);
 onMounted(() => {
+  clockTimer = setInterval(() => { now.value = Date.now(); }, 5000);
   document.addEventListener('pointerdown', handleOutsidePointerDown);
   window.addEventListener('resize', updateDropdownPosition);
   window.addEventListener('scroll', updateDropdownPosition, true);
 });
 onUnmounted(() => {
+  clearInterval(clockTimer);
   document.removeEventListener('pointerdown', handleOutsidePointerDown);
   window.removeEventListener('resize', updateDropdownPosition);
   window.removeEventListener('scroll', updateDropdownPosition, true);
@@ -218,29 +232,32 @@ onUnmounted(() => {
         </div>
 
         <div class="flex items-center justify-between gap-2 sm:justify-end sm:gap-3 flex-wrap">
-          <div v-if="currentUser" class="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 shadow-xs">
-            <div class="flex h-6 w-6 items-center justify-center rounded-lg bg-teal-100 text-[11px] font-black text-teal-800">{{ cleanUserName.charAt(0) }}</div>
-            <div>
-              <div class="flex items-center gap-1.5">
-                <span class="text-xs font-bold leading-tight text-slate-900">{{ cleanUserName }}</span>
-                <span
-                  class="rounded px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wider"
-                  :class="{
-                    'bg-purple-100 text-purple-800 border border-purple-200': isSuperAdmin,
-                    'bg-blue-100 text-blue-800 border border-blue-200': isAdmin,
-                    'bg-teal-100 text-teal-800 border border-teal-200': isAuditor,
-                  }"
-                >{{ isSuperAdmin ? 'Superadmin' : (isAdmin ? 'Admin' : 'Auditor') }}</span>
-              </div>
-            </div>
+          <div class="hidden sm:flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold" :class="online ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'" :title="online ? 'Connected to server' : 'Offline - scans are saved locally'">
+            <span class="h-2 w-2 rounded-full" :class="online ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'" />
+            {{ online ? 'Live' : 'Offline' }}<span v-if="online" class="font-medium text-slate-500">· {{ updatedLabel }}</span>
           </div>
 
-          <button
-            @click="handleLogout"
-            type="button"
-            class="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 transition-colors hover:bg-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
-            title="Log Out"
-          ><LogOut class="h-3.5 w-3.5" /><span>Logout</span></button>
+          <div v-if="currentUser" class="relative" data-profile-menu>
+            <button type="button" class="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 shadow-xs hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500" aria-haspopup="true" :aria-expanded="profileOpen" @click="profileOpen = !profileOpen">
+              <div class="flex h-6 w-6 items-center justify-center rounded-lg bg-teal-100 text-[11px] font-black text-teal-800">{{ cleanUserName.charAt(0) }}</div>
+              <span class="text-xs font-bold leading-tight text-slate-900">{{ cleanUserName }}</span>
+              <span
+                class="rounded px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wider"
+                :class="{
+                  'bg-purple-100 text-purple-800 border border-purple-200': isSuperAdmin,
+                  'bg-blue-100 text-blue-800 border border-blue-200': isAdmin,
+                  'bg-teal-100 text-teal-800 border border-teal-200': isAuditor,
+                }"
+              >{{ isSuperAdmin ? 'Superadmin' : (isAdmin ? 'Admin' : 'Auditor') }}</span>
+              <ChevronDown class="h-3.5 w-3.5 text-slate-500 transition-transform" :class="profileOpen ? 'rotate-180' : ''" />
+            </button>
+            <Transition name="menu-slide">
+              <div v-if="profileOpen" class="absolute right-0 top-full z-[70] mt-2 w-48 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black/5">
+                <p class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Signed in as {{ currentUser.username }}</p>
+                <button type="button" class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50" @click="handleLogout"><LogOut class="h-4 w-4" />Logout</button>
+              </div>
+            </Transition>
+          </div>
         </div>
       </div>
     </div>

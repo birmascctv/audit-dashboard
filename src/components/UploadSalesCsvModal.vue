@@ -1,4 +1,5 @@
 <script setup>
+import { fmtDate } from '../utils/date.js';
 import { ref, computed } from 'vue';
 import {
   X,
@@ -14,6 +15,9 @@ import {
   Sparkles
 } from 'lucide-vue-next';
 import { parseSalesCsv } from '../utils/salesCsv.js';
+import { useToast } from '../composables/useToast.js';
+
+const toast = useToast();
 
 const props = defineProps({
   isOpen: {
@@ -198,15 +202,17 @@ async function handleImport() {
         : `Successfully imported all ${savedTotal.toLocaleString()} sales records! File has been archived.`,
     };
 
+    toast.success(`Import complete: ${savedTotal.toLocaleString()} new, ${duplicateTotal.toLocaleString()} skipped as duplicates.`, 6000);
     emit('imported', parsedRows.value);
     setTimeout(() => {
       handleClose();
-    }, 1200);
+    }, 2500);
   } catch (err) {
     uploadStatus.value = {
       success: false,
       message: err.message || 'Network error while uploading transactions.',
     };
+    toast.error(`Upload failed: ${uploadStatus.value.message}`);
   } finally {
     isUploading.value = false;
   }
@@ -390,7 +396,7 @@ function handleClose() {
                 <tbody class="divide-y divide-slate-100">
                   <tr v-for="(row, idx) in parsedRows.slice(0, 6)" :key="idx" class="hover:bg-slate-50/70">
                     <td class="py-2 px-3 text-[11px] text-slate-600 whitespace-nowrap">
-                      {{ row.sales_date_in ? String(row.sales_date_in).split(' ')[0] : '-' }}
+                      {{ row.sales_date_in ? fmtDate(String(row.sales_date_in).split(' ')[0]) : '-' }}
                     </td>
                     <td class="py-2 px-3">
                       <span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700">

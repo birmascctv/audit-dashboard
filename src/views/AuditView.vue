@@ -3,7 +3,9 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useAuditStore } from '../composables/useAuditStore.js';
 import { useScanner } from '../composables/useScanner.js';
 import { useAuth } from '../composables/useAuth.js';
-import { playScanMatchSound, playScanSuccessSound, playScanErrorSound } from '../utils/audio.js';
+import EmptyState from '../components/EmptyState.vue';
+import SkeletonBlock from '../components/SkeletonBlock.vue';
+import { useToast } from '../composables/useToast.js';
 import { formatDateTime } from '../utils/storage.js';
 import AddBarcodeModal from '../components/AddBarcodeModal.vue';
 
@@ -41,15 +43,18 @@ import {
   Key,
   Eye,
   EyeOff,
-  Copy
+  Copy,
+  Undo2
 } from 'lucide-vue-next';
 
 const { currentUser } = useAuth();
+const toast = useToast();
 const {
   stores,
   selectedStoreId,
   currentStore,
   wpConfig,
+  isInitialized,
   auditItems,
   scanLogs,
   totalWpExpected,
@@ -85,6 +90,22 @@ const {
 const searchQuery = ref('');
 const statusFilter = ref('ALL');
 const brandFilter = ref('ALL');
+const categoryFilter = ref('ALL');
+const mismatchesOnly = ref(false);
+const undoStack = ref([]);
+const pageOpenedAt = Date.now();
+const clockNow = ref(Date.now());
+const sessionElapsedSeconds = computed(() => {
+  const firstScan = scanLogs.value.length ? scanLogs.value[scanLogs.value.length - 1]?.timestamp : null;
+  const started = firstScan ? new Date(firstScan).getTime() : pageOpenedAt;
+  return Math.max(0, Math.floor((clockNow.value - started) / 1000));
+});
+const sessionTimerLabel = computed(() => {
+  const hours = Math.floor(sessionElapsedSeconds.value / 3600);
+  const minutes = Math.floor((sessionElapsedSeconds.value % 3600) / 60);
+  const seconds = sessionElapsedSeconds.value % 60;
+  return [hours, minutes, seconds].map((n) => String(n).padStart(2, '0')).join(':');
+});
 
 const isUnlockModalOpen = ref(false);
 const isUnlocking = ref(false);
@@ -331,7 +352,6 @@ const lastScannedKey = ref(null);
 
 // Hardware scanner hook for USB / Wireless Barcode Scanner
 const { scanFeedback, processBarcode } = useScanner({
-  soundEnabled: true,
   onScan: async (scannedBarcode) => {
     // While Add Barcode is open, a scan only fills the barcode box; it must not count
     if (isAddBarcodeModalOpen.value) {
@@ -339,17 +359,15 @@ const { scanFeedback, processBarcode } = useScanner({
       return { success: true, message: `Barcode ${scannedBarcode} captured for linking` };
     }
     const result = await registerAuditScan(scannedBarcode, undefined, currentUser.value?.name || 'Auditor');
-    if (result.success) {
+    if (result.success && !isAddBarcodeModalOpen.value) {
       lastScannedKey.value = result.item?.scanKey || null;
-      if (result.isMatchedNow) {
-        playScanMatchSound();
-      } else if (result.isOvercount) {
-        playScanErrorSound();
-      } else {
-        playScanSuccessSound();
+      const scannedItem = result.item || auditItems.value.find((item) => item.barcode === scannedBarcode);
+      if (scannedItem) {
+        undoStack.value.push({ barcode: scannedItem.barcode, wpId: scannedItem.wpId });
+        if (undoStack.value.length > 30) undoStack.value.shift();
       }
     } else {
-      playScanErrorSound();
+      toast.error(result.message || `Barcode ${scannedBarcode} could not be counted.`);
       if (result.unknownBarcode) {
         pendingUnknownBarcode.value = result.unknownBarcode;
       }
@@ -371,18 +389,28 @@ watch(
   }
 );
 
+const availableBrands = computed(() => [...new Set(auditItems.value.map((item) => item.brand).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
+const availableCategories = computed(() => [...new Set(auditItems.value.map((item) => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
+const openingStockProducts = computed(() => auditItems.value.filter((item) => item.wpExpectedQty > 0));
+const scannedOpeningStockProducts = computed(() => openingStockProducts.value.filter((item) => item.scannedCount > 0).length);
+const openingStockProgress = computed(() => openingStockProducts.value.length ? Math.round(scannedOpeningStockProducts.value / openingStockProducts.value.length * 100) : 0);
+
 const discrepancyVariantsCount = computed(() =>
   auditItems.value.filter((i) => i.scannedCount > 0 && i.scannedCount !== i.wpExpectedQty).length
 );
 
 // All items in catalog filtered for the main comparison table
+const PAGE_SIZE = 25;
+const page = ref(1);
+
 const filteredItems = computed(() => {
   return auditItems.value.slice().sort((a, b) =>
     String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' })
   ).filter((item) => {
-    if (brandFilter.value !== 'ALL' && (item.subCategory !== brandFilter.value && item.brand !== brandFilter.value)) {
-      return false;
-    }
+    if (brandFilter.value !== 'ALL' && item.brand !== brandFilter.value) return false;
+    if (categoryFilter.value !== 'ALL' && item.category !== categoryFilter.value) return false;
+    if (mismatchesOnly.value && !(item.scannedCount > 0 && item.scannedCount !== item.wpExpectedQty)) return false;
+    if (statusFilter.value === 'ALL' && !(Number(item.wpExpectedQty) > 0 || item.scannedCount > 0)) return false;
     if (statusFilter.value === 'discrepancy' && !(item.scannedCount > 0 && item.scannedCount !== item.wpExpectedQty)) return false;
     if (statusFilter.value === 'matched' && item.status !== 'matched') return false;
     if (statusFilter.value === 'unscanned' && item.status !== 'unscanned') return false;
@@ -403,6 +431,10 @@ const filteredItems = computed(() => {
     return true;
   });
 });
+const totalPages = computed(() => Math.max(1, Math.ceil(filteredItems.value.length / PAGE_SIZE)));
+const pagedItems = computed(() => filteredItems.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE));
+watch([searchQuery, statusFilter, brandFilter, categoryFilter, mismatchesOnly], () => { page.value = 1; });
+watch(totalPages, (n) => { if (page.value > n) page.value = n; });
 
 const sortedAuditItems = computed(() => auditItems.value.slice().sort((a, b) =>
   String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' })));
@@ -439,7 +471,15 @@ function saveEdit(item) {
 function handleResetAuditSession() {
   if (confirm(`Clear all physically scanned counts for ${currentStore.value.name} and restart count?`)) {
     resetCurrentAudit();
+    undoStack.value = [];
   }
+}
+
+async function undoLastScan() {
+  const last = undoStack.value.pop();
+  if (!last) return;
+  await decrementAuditCount(last.barcode, last.wpId);
+  toast.info('Undid the last scan.');
 }
 
 async function handleFinalizeAudit() {
@@ -452,10 +492,12 @@ async function handleFinalizeAudit() {
     );
     isCompleteModalOpen.value = false;
     auditNotes.value = '';
+    undoStack.value = [];
+    toast.success('Audit completed and saved.');
     showAuditSuccess.value = true;
     setTimeout(() => { showAuditSuccess.value = false; }, 2600);
   } catch (err) {
-    alert('Failed to finalize audit: ' + err.message);
+    toast.error('Failed to finalize audit: ' + err.message);
   } finally {
     isFinalizing.value = false;
   }
@@ -474,6 +516,7 @@ onMounted(() => {
   if (document.documentElement) document.documentElement.scrollTop = 0;
   if (document.body) document.body.scrollTop = 0;
   loadBirmasConfig();
+  timerInterval = setInterval(() => { clockNow.value = Date.now(); }, 1000);
   // Keep stock fresh without any button: the server syncs from ESB, the page just re-reads it
   silentRefreshTimer = setInterval(() => {
     if (!document.hidden) refreshProductsSilently();
@@ -481,7 +524,9 @@ onMounted(() => {
 });
 
 let silentRefreshTimer = null;
-onUnmounted(() => clearInterval(silentRefreshTimer));
+let timerInterval = null;
+watch(selectedStoreId, () => { undoStack.value = []; });
+onUnmounted(() => { clearInterval(silentRefreshTimer); clearInterval(timerInterval); });
 
 const showAuditSuccess = ref(false);
 </script>
@@ -506,6 +551,10 @@ const showAuditSuccess = ref(false);
           <p class="text-xs text-slate-500 mt-0.5">
             Physical barcode scanner station, variant bottle count, and live inventory discrepancy verification against ESB records
           </p>
+          <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+            <span>Auditor: <strong class="text-slate-900">{{ currentUser?.name || 'Staff' }}</strong></span>
+            <span>Session: <strong class="font-mono text-slate-900">{{ sessionTimerLabel }}</strong></span>
+          </div>
         </div>
       </div>
 
@@ -529,7 +578,7 @@ const showAuditSuccess = ref(false);
         <button
           @click="openAddBarcodeWithPrefill()"
           type="button"
-          class="px-3.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+          class="px-3.5 py-2 min-h-12 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
           title="Add a new barcode based on variant or new product"
         >
           <Plus class="w-3.5 h-3.5 text-teal-700" />
@@ -540,7 +589,7 @@ const showAuditSuccess = ref(false);
         <button
           @click="isCompleteModalOpen = true"
           type="button"
-          class="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all cursor-pointer"
+          class="px-4 py-2 min-h-12 rounded-xl bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all cursor-pointer"
         >
           <CheckCircle2 class="w-4 h-4" />
           <span>Complete Audit</span>
@@ -690,6 +739,16 @@ const showAuditSuccess = ref(false);
       </div>
     </div>
 
+    <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <span class="font-bold text-slate-800">ESB products scanned</span>
+        <span class="font-mono font-bold text-teal-700">{{ scannedOpeningStockProducts }} / {{ openingStockProducts.length }} ({{ openingStockProgress }}%)</span>
+      </div>
+      <div class="mt-2 h-3 overflow-hidden rounded-full bg-slate-100" role="progressbar" :aria-valuenow="openingStockProgress" aria-valuemin="0" aria-valuemax="100" :aria-label="`${openingStockProgress}% of in-stock ESB products scanned`">
+        <div class="h-full rounded-full bg-teal-600 transition-all duration-500" :style="{ width: `${openingStockProgress}%` }"></div>
+      </div>
+    </div>
+
     <!-- Counting Station (Light theme with tosca accents) -->
     <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
       <div class="relative z-10 flex flex-col gap-4">
@@ -712,12 +771,15 @@ const showAuditSuccess = ref(false);
             </div>
           </div>
 
-          <!-- Reset session button -->
-          <div class="flex items-center gap-2">
+          <!-- Session controls -->
+          <div class="flex flex-wrap items-center gap-2">
+            <button @click="undoLastScan" :disabled="undoStack.length === 0 || isSessionLocked" type="button" class="px-3 py-2 min-h-12 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 disabled:opacity-40 text-xs font-semibold flex items-center gap-1.5">
+              <Undo2 class="w-4 h-4" /><span>Undo last scan</span>
+            </button>
             <button
               @click="handleResetAuditSession"
               type="button"
-              class="px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 text-slate-600 hover:text-rose-700 text-xs font-medium flex items-center gap-1.5 transition-colors"
+              class="px-3 py-2 min-h-12 rounded-lg bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 text-slate-600 hover:text-rose-700 text-xs font-medium flex items-center gap-1.5 transition-colors"
             >
               <RotateCcw class="w-3.5 h-3.5" />
               <span>Reset Physical Count</span>
@@ -737,7 +799,7 @@ const showAuditSuccess = ref(false);
             spellcheck="false"
             :disabled="isSessionLocked"
             :placeholder="isSessionLocked ? 'Audit Session is locked. Recounting requires Superadmin approval.' : 'Scan barcode with USB/Wireless scanner (aim and scan bottle)...'"
-            class="w-full pl-13 pr-28 py-3.5 text-slate-900 placeholder-slate-400 text-base font-mono rounded-xl border-2 transition-all shadow-inner"
+            class="w-full pl-13 pr-28 py-4 min-h-14 text-slate-900 placeholder-slate-400 text-lg font-mono rounded-xl border-2 transition-all shadow-inner"
             :class="isSessionLocked ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60' : 'bg-slate-50 border-slate-300 focus:border-teal-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-teal-100'"
           />
           <span class="absolute right-3 px-2.5 py-1 rounded bg-white border border-slate-300 text-[11px] font-mono text-teal-700 font-semibold shadow-sm">
@@ -748,7 +810,7 @@ const showAuditSuccess = ref(false);
         <!-- Unknown Barcode Notice & Quick Add Action -->
         <div
           v-if="pendingUnknownBarcode"
-          class="flex items-center justify-between p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs gap-3"
+          class="flex flex-wrap items-center justify-between p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs gap-3"
         >
           <div class="flex items-center gap-2">
             <AlertTriangle class="w-4 h-4 text-amber-600 shrink-0" />
@@ -759,7 +821,7 @@ const showAuditSuccess = ref(false);
           </div>
           <button
             @click="openAddBarcodeWithPrefill(pendingUnknownBarcode)"
-            class="px-3 py-1 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shrink-0 flex items-center gap-1 shadow-sm"
+            class="px-3 py-2 min-h-12 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shrink-0 flex items-center gap-1 shadow-sm"
           >
             <Plus class="w-3.5 h-3.5" />
             <span>Map Barcode Now</span>
@@ -769,11 +831,12 @@ const showAuditSuccess = ref(false);
         <!-- Feedback Alert -->
         <div
           v-if="scanFeedback.type !== 'idle'"
-          class="flex items-center gap-3 px-4 py-3 rounded-xl border transition-all"
+          :key="scanFeedback.timestamp"
+          class="flex items-center gap-3 px-4 py-4 min-h-14 rounded-xl border transition-all"
           :class="
             scanFeedback.type === 'success'
-              ? 'bg-teal-50 border-teal-300 text-teal-900'
-              : 'bg-rose-50 border-rose-300 text-rose-900'
+              ? 'bg-teal-50 border-teal-300 text-teal-900 scan-flash-success'
+              : 'bg-rose-50 border-rose-300 text-rose-900 scan-flash-error'
           "
         >
           <component
@@ -781,7 +844,7 @@ const showAuditSuccess = ref(false);
             class="w-5 h-5 shrink-0"
             :class="scanFeedback.type === 'success' ? 'text-teal-600' : 'text-rose-600'"
           />
-          <div class="flex-1 text-sm font-semibold">
+          <div class="flex-1 text-base font-semibold">
             {{ scanFeedback.message }}
           </div>
           <span class="text-xs font-mono font-bold" :class="scanFeedback.type === 'success' ? 'text-teal-700' : 'text-rose-700'">
@@ -791,7 +854,7 @@ const showAuditSuccess = ref(false);
 
         <!-- Dedicated Live Table of SCANNED PRODUCTS ONLY -->
         <div class="pt-2">
-          <div class="flex items-center justify-between mb-2.5">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
             <div class="flex items-center gap-2">
               <h3 class="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
                 <Package class="w-4 h-4 text-teal-600" />
@@ -806,7 +869,7 @@ const showAuditSuccess = ref(false);
             <div class="flex items-center gap-2">
               <select
                 @change="if ($event.target.value) { handleScanSimulate($event.target.value); $event.target.value = ''; }"
-                class="text-[11px] bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-slate-700 cursor-pointer focus:outline-none focus:border-teal-500"
+                class="min-h-12 text-sm bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-700 cursor-pointer focus:outline-none focus:border-teal-500"
               >
                 <option value="">+ Test Scan Item...</option>
                 <option v-for="item in sortedAuditItems" :key="item.barcode" :value="item.barcode">
@@ -818,19 +881,13 @@ const showAuditSuccess = ref(false);
 
           <!-- The Scanned Only Table -->
           <div class="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
-            <div v-if="scannedOnlyItems.length === 0" class="py-8 text-center px-4">
-              <div class="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 text-slate-400 flex items-center justify-center mx-auto mb-2">
-                <Barcode class="w-5 h-5" />
-              </div>
-              <p class="text-xs font-semibold text-slate-700">
-                No products scanned yet for {{ currentStore.name }}.
-              </p>
-              <p class="text-[11px] text-slate-500 mt-0.5">
-                Aim your barcode scanner at any bottle or can to start counting. (Belum ada produk yang dipindai).
-              </p>
-            </div>
-
-            <table v-else class="w-full text-left border-collapse text-xs">
+            <EmptyState
+              v-if="scannedOnlyItems.length === 0"
+              title="No products scanned yet"
+              :hint="`Scan a product for ${currentStore.name} to begin the physical count.`"
+            />
+            <div v-else class="overflow-x-auto">
+            <table class="min-w-[760px] w-full text-left border-collapse text-xs">
               <thead>
                 <tr class="bg-slate-100/90 border-b border-slate-200 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
                   <th class="py-2.5 px-3 w-10 text-center">No</th>
@@ -870,7 +927,7 @@ const showAuditSuccess = ref(false);
                     <div class="flex items-center justify-center gap-1.5">
                       <button
                         @click="decrementAuditCount(item.barcode, item.wpId)"
-                        class="w-5 h-5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors"
+                        class="min-w-12 min-h-12 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors"
                         title="Reduce 1"
                       >
                         <Minus class="w-3 h-3" />
@@ -886,7 +943,7 @@ const showAuditSuccess = ref(false);
                       />
                       <button
                         @click="registerAuditScan(item.barcode, item.wpId)"
-                        class="w-5 h-5 rounded bg-teal-600 hover:bg-teal-700 text-white flex items-center justify-center transition-colors shadow-sm"
+                        class="min-w-12 min-h-12 rounded bg-teal-600 hover:bg-teal-700 text-white flex items-center justify-center transition-colors shadow-sm"
                         title="Add 1"
                       >
                         <Plus class="w-3 h-3" />
@@ -919,6 +976,7 @@ const showAuditSuccess = ref(false);
                 </tr>
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       </div>
@@ -940,7 +998,7 @@ const showAuditSuccess = ref(false);
             </p>
           </div>
 
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <button
               @click="openAddBarcodeWithPrefill()"
               type="button"
@@ -953,12 +1011,12 @@ const showAuditSuccess = ref(false);
         </div>
 
         <!-- Filter tabs & search -->
-        <div class="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-200">
-          <div class="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 self-start">
+        <div class="mt-4 flex flex-col gap-3 pt-3 border-t border-slate-200">
+          <div class="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 self-start">
             <button
               @click="statusFilter = 'ALL'"
               type="button"
-              class="px-3 py-1 rounded-lg text-xs font-semibold transition-colors"
+              class="px-3 py-2 min-h-12 rounded-lg text-xs font-semibold transition-colors"
               :class="statusFilter === 'ALL' ? 'bg-teal-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
             >
               All ({{ auditItems.length }})
@@ -966,7 +1024,7 @@ const showAuditSuccess = ref(false);
             <button
               @click="statusFilter = 'discrepancy'"
               type="button"
-              class="px-3 py-1 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
+              class="px-3 py-2 min-h-12 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
               :class="statusFilter === 'discrepancy' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
             >
               <span>Discrepancies</span>
@@ -975,7 +1033,7 @@ const showAuditSuccess = ref(false);
             <button
               @click="statusFilter = 'matched'"
               type="button"
-              class="px-3 py-1 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
+              class="px-3 py-2 min-h-12 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
               :class="statusFilter === 'matched' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
             >
               <span>Matched</span>
@@ -984,12 +1042,27 @@ const showAuditSuccess = ref(false);
             <button
               @click="statusFilter = 'unscanned'"
               type="button"
-              class="px-3 py-1 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
+              class="px-3 py-2 min-h-12 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
               :class="statusFilter === 'unscanned' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
             >
               <span>Unscanned</span>
               <span class="px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 text-[10px] font-bold">{{ unscannedVariantsCount }}</span>
             </button>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <select v-model="brandFilter" class="min-h-12 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-800">
+              <option value="ALL">All brands</option>
+              <option v-for="brand in availableBrands" :key="brand" :value="brand">{{ brand }}</option>
+            </select>
+            <select v-model="categoryFilter" class="min-h-12 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-800">
+              <option value="ALL">All categories</option>
+              <option v-for="category in availableCategories" :key="category" :value="category">{{ category }}</option>
+            </select>
+            <label class="inline-flex min-h-12 items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm text-slate-700">
+              <input v-model="mismatchesOnly" type="checkbox" class="accent-rose-600" />
+              Show only mismatches
+            </label>
           </div>
 
           <!-- Search input -->
@@ -1006,8 +1079,12 @@ const showAuditSuccess = ref(false);
       </div>
 
       <!-- Main Audit Table (Sticky Header like Google Sheets) -->
-      <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[450px] flex-1 relative border-t border-slate-200">
-        <table class="w-full text-left border-collapse">
+      <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[280px] flex-1 relative border-t border-slate-200">
+        <div v-if="!isInitialized" class="p-5"><SkeletonBlock :rows="8" height="h-8" /></div>
+        <EmptyState v-else-if="filteredItems.length === 0" title="No matching products" hint="Adjust the search or filters to see products.">
+          <button @click="searchQuery = ''; statusFilter = 'ALL'; brandFilter = 'ALL'; categoryFilter = 'ALL'; mismatchesOnly = false" class="min-h-12 px-4 py-2 rounded-xl bg-teal-50 text-teal-800 font-semibold">Reset filters</button>
+        </EmptyState>
+        <table v-else class="min-w-[900px] w-full text-left border-collapse">
           <thead class="sticky top-0 z-20 shadow-sm">
             <tr class="bg-slate-100 border-b border-slate-300 text-[11px] font-bold text-slate-700 uppercase tracking-wider">
               <th class="py-3 px-4 w-12 text-center bg-slate-100">No</th>
@@ -1026,7 +1103,7 @@ const showAuditSuccess = ref(false);
           </thead>
           <tbody class="divide-y divide-slate-100 text-sm">
             <tr
-              v-for="(item, idx) in filteredItems"
+              v-for="(item, idx) in pagedItems"
               :key="item.barcode"
               class="hover:bg-slate-50/80 transition-colors"
               :class="
@@ -1040,12 +1117,12 @@ const showAuditSuccess = ref(false);
               "
             >
               <!-- No -->
-              <td class="py-3.5 px-4 text-center font-mono text-xs text-slate-400">
-                {{ idx + 1 }}
+              <td class="py-1 px-4 text-center font-mono text-xs text-slate-400">
+                {{ (page - 1) * PAGE_SIZE + idx + 1 }}
               </td>
 
               <!-- Barcode -->
-              <td class="py-3.5 px-4 font-mono text-xs text-teal-800">
+              <td class="py-1 px-4 font-mono text-xs text-teal-800">
                 <div class="flex items-center gap-1.5">
                   <Barcode class="w-4 h-4 text-slate-400 shrink-0" />
                   <span class="bg-slate-50 px-2 py-0.5 rounded border border-slate-200 tracking-wider font-semibold">
@@ -1055,10 +1132,10 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Product Name -->
-              <td class="py-3.5 px-4 font-semibold text-slate-900">
+              <td class="py-1 px-4 font-semibold text-slate-900">
                 <div class="flex flex-col">
                   <span class="text-sm font-bold text-slate-900">{{ item.productTitle || item.varian }}</span>
-                  <div class="flex items-center gap-2 mt-0.5 text-[11px] text-slate-500 font-normal">
+                  <div class="flex items-center gap-2 text-[11px] text-slate-500 font-normal">
                     <span v-if="item.defaultUnit" class="bg-slate-100 text-slate-700 font-bold px-1.5 py-0.2 rounded text-[10px]">{{ item.defaultUnit }}</span>
                     <span v-if="item.category" class="text-slate-400 font-medium">{{ item.category }}</span>
                     <span v-if="item.lastScannedAt" class="text-[10px] text-slate-400 font-mono">
@@ -1069,7 +1146,7 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Qty (ESB Expected) -->
-              <td class="py-3.5 px-4 text-center font-mono font-bold bg-slate-50/40 text-base">
+              <td class="py-1 px-4 text-center font-mono font-bold bg-slate-50/40 text-base">
                 <div class="flex flex-col items-center justify-center">
                   <span :class="item.wpExpectedQty < 0 ? 'text-rose-600 font-extrabold' : 'text-slate-800'">
                     {{ Math.round(Number(item.wpExpectedQty) || 0) }}
@@ -1085,7 +1162,7 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Scanned Count (Physical tally) -->
-              <td class="py-3.5 px-4 text-center bg-teal-50/30">
+              <td class="py-1 px-4 text-center bg-teal-50/30">
                 <div v-if="editingItemId === item.wpId" class="flex items-center justify-center gap-1">
                   <input
                     v-model.number="editCountValue"
@@ -1106,7 +1183,7 @@ const showAuditSuccess = ref(false);
                   <button
                     @click="decrementAuditCount(item.barcode, item.wpId)"
                     :disabled="item.scannedCount <= 0 || isSessionLocked"
-                    class="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 flex items-center justify-center transition-colors"
+                    class="w-7 h-7 !min-h-0 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 flex items-center justify-center transition-colors"
                     title="Undo 1 scan"
                   >
                     <Minus class="w-3 h-3" />
@@ -1114,7 +1191,7 @@ const showAuditSuccess = ref(false);
 
                   <span
                     @click="!isSessionLocked && startEdit(item)"
-                    class="w-12 text-center font-mono font-extrabold text-lg"
+                    class="w-12 text-center font-mono font-extrabold text-base"
                     :class="[
                       isSessionLocked ? 'cursor-not-allowed opacity-80' : 'cursor-pointer hover:underline',
                       item.status === 'matched'
@@ -1133,7 +1210,7 @@ const showAuditSuccess = ref(false);
                   <button
                     @click="registerAuditScan(item.barcode, item.wpId)"
                     :disabled="isSessionLocked"
-                    class="w-6 h-6 rounded bg-teal-100 hover:bg-teal-200 disabled:opacity-30 disabled:cursor-not-allowed text-teal-800 border border-teal-300 flex items-center justify-center transition-colors shadow-sm"
+                    class="w-7 h-7 !min-h-0 rounded bg-teal-100 hover:bg-teal-200 disabled:opacity-30 disabled:cursor-not-allowed text-teal-800 border border-teal-300 flex items-center justify-center transition-colors shadow-sm"
                     title="Scan/Count +1 bottle"
                   >
                     <Plus class="w-3 h-3" />
@@ -1142,7 +1219,7 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Discrepancy Column (Negative stock friendly) -->
-              <td class="py-3.5 px-4 text-center font-mono text-xs">
+              <td class="py-1 px-4 text-center font-mono text-xs">
                 <span
                   v-if="item.status === 'matched'"
                   class="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200"
@@ -1190,9 +1267,9 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Status Badge -->
-              <td class="py-3.5 px-4 text-center">
+              <td class="py-1 px-4 text-center">
                 <span
-                  class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold"
+                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold"
                   :class="
                     item.status === 'matched'
                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -1239,21 +1316,19 @@ const showAuditSuccess = ref(false);
 
             </tr>
 
-            <!-- Empty Filter State -->
-            <tr v-if="filteredItems.length === 0">
-              <td colspan="8" class="py-12 text-center text-slate-400">
-                <Package class="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p class="font-medium text-slate-600">No products matching your search</p>
-                <button
-                  @click="searchQuery = ''; statusFilter = 'ALL'; brandFilter = 'ALL'"
-                  class="mt-2 text-xs text-teal-700 hover:underline font-semibold"
-                >
-                  Reset search & filters
-                </button>
-              </td>
-            </tr>
+
           </tbody>
         </table>
+        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600">
+          <span>Showing {{ (page - 1) * PAGE_SIZE + 1 }}-{{ Math.min(page * PAGE_SIZE, filteredItems.length) }} of {{ filteredItems.length }}</span>
+          <div class="flex items-center gap-1">
+            <button type="button" class="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold disabled:opacity-40" :disabled="page <= 1" @click="page = 1">«</button>
+            <button type="button" class="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold disabled:opacity-40" :disabled="page <= 1" @click="page--">Prev</button>
+            <span class="px-2 font-bold">Page {{ page }} / {{ totalPages }}</span>
+            <button type="button" class="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold disabled:opacity-40" :disabled="page >= totalPages" @click="page++">Next</button>
+            <button type="button" class="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold disabled:opacity-40" :disabled="page >= totalPages" @click="page = totalPages">»</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1318,7 +1393,7 @@ const showAuditSuccess = ref(false);
             @click="handleFinalizeAudit"
             :disabled="isFinalizing"
             type="button"
-            class="px-5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-teal-600/20 disabled:opacity-50"
+            class="px-5 py-3 min-h-12 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-teal-600/20 disabled:opacity-50"
           >
             <CheckCircle2 class="w-4 h-4" />
             <span>{{ isFinalizing ? 'Saving Audit...' : 'Confirm & Save Audit Record' }}</span>
@@ -1674,7 +1749,7 @@ const showAuditSuccess = ref(false);
               @click="saveSessionFromCurl"
               :disabled="!rawCurlInput.trim() || isSavingSession"
               type="button"
-              class="px-5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-teal-600/20 disabled:opacity-50"
+              class="px-5 py-3 min-h-12 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-teal-600/20 disabled:opacity-50"
             >
               <CheckCircle2 class="w-4 h-4" />
               <span>{{ isSavingSession ? 'Updating & Syncing...' : 'Update Session' }}</span>
@@ -1771,4 +1846,8 @@ const showAuditSuccess = ref(false);
 .audit-success-check { stroke-dasharray: 40; stroke-dashoffset: 40; animation: audit-draw 0.4s 0.5s ease forwards; }
 @keyframes audit-draw { to { stroke-dashoffset: 0; } }
 @keyframes audit-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.scan-flash-success { animation: scan-success-flash 550ms ease-out; }
+.scan-flash-error { animation: scan-error-flash 550ms ease-out; }
+@keyframes scan-success-flash { 0% { box-shadow: 0 0 0 5px rgb(16 185 129 / 35%); } 100% { box-shadow: 0 0 0 0 rgb(16 185 129 / 0%); } }
+@keyframes scan-error-flash { 0% { box-shadow: 0 0 0 5px rgb(244 63 94 / 35%); } 100% { box-shadow: 0 0 0 0 rgb(244 63 94 / 0%); } }
 </style>

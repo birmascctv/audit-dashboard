@@ -3,6 +3,7 @@ import App from './App.vue';
 import router from './router/index.js';
 import './index.css';
 import axios from 'axios';
+import { markApiSuccess, markApiFailure } from './composables/useSyncStatus.js';
 import { getAuthToken, setAuthToken, AUTH_STORAGE_KEY } from './services/authFetch.js';
 
 // Attach the session token to every same-origin API call
@@ -19,8 +20,9 @@ window.fetch = (input, init = {}) => {
         sessionStorage.removeItem(AUTH_STORAGE_KEY);
         if (location.pathname !== '/login') location.replace('/login');
       }
+      if (res.ok) markApiSuccess();
       return res;
-    });
+    }, (err) => { markApiFailure(); throw err; });
   }
   return nativeFetch(input, init);
 };

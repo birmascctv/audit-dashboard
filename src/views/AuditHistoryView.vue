@@ -1,10 +1,15 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import DateField from '../components/DateField.vue';
+import { fmtDate, fmtDateTime } from '../utils/date.js';
+import { ref, computed, onMounted, nextTick } from 'vue';
 import { useAuditStore } from '../composables/useAuditStore.js';
 import { useAuth } from '../composables/useAuth.js';
 import { authFetchJson } from '../services/authFetch.js';
 import { fetchAuditHistory } from '../services/wordpressApi.js';
 import { formatDateTime, exportToCSV } from '../utils/storage.js';
+import { useToast } from '../composables/useToast.js';
+import EmptyState from '../components/EmptyState.vue';
+import SkeletonBlock from '../components/SkeletonBlock.vue';
 import {
   History,
   Download,
@@ -33,8 +38,13 @@ import {
 
 const { auditHistory, clearHistory, stores } = useAuditStore();
 const { isSuperAdmin } = useAuth();
+const toast = useToast();
 
-const searchQuery = ref('');
+const storeFilter = ref('');
+const dateFrom = ref('');
+const dateTo = ref('');
+const sortKey = ref('completedAt');
+const sortDirection = ref('desc');
 const expandedId = ref(null);
 const isLoadingHistory = ref(false);
 const editingAudit = ref(null);
@@ -249,8 +259,10 @@ async function saveEdit() {
     const idx = auditHistory.value.findIndex((a) => a.id === editForm.value.id);
     if (idx >= 0 && res.audit) auditHistory.value[idx] = res.audit;
     editingAudit.value = null;
+    toast.success('Audit session updated.');
   } catch (err) {
     editError.value = err.message;
+    toast.error(`Could not update audit session: ${err.message}`);
   } finally {
     isSaving.value = false;
   }
@@ -266,21 +278,58 @@ async function confirmDelete() {
     auditHistory.value = auditHistory.value.filter((a) => a.id !== target.id);
     if (expandedId.value === target.id) expandedId.value = null;
     deletingAudit.value = null;
+    toast.success('Audit session deleted.');
   } catch (err) {
     deleteError.value = err.message;
+    toast.error(`Could not delete audit session: ${err.message}`);
   } finally {
     isSaving.value = false;
   }
 }
 
+const storeNameOptions = computed(() => [...new Set((auditHistory.value || []).map((a) => a.storeName).filter(Boolean))].sort());
+
 const filteredHistory = computed(() => {
-  const q = searchQuery.value.toLowerCase();
-  return (auditHistory.value || []).filter((a) => !q || (a.storeName || '').toLowerCase().includes(q) || (a.auditorName || '').toLowerCase().includes(q));
+  return (auditHistory.value || [])
+    .filter((a) => {
+      const completedDate = String(a.completedAt || '').slice(0, 10);
+      return (!storeFilter.value || a.storeName === storeFilter.value)
+        && (!dateFrom.value || completedDate >= dateFrom.value)
+        && (!dateTo.value || completedDate <= dateTo.value);
+    })
+    .slice()
+    .sort((a, b) => {
+      const valueFor = (audit) => {
+        if (sortKey.value === 'discrepancy') return num(audit.totalScanned) - num(audit.totalExpected);
+        if (sortKey.value === 'missing') return missingUnits(audit);
+        if (sortKey.value === 'accuracy') return sessionAccuracy(audit);
+        return audit[sortKey.value];
+      };
+      const left = valueFor(a);
+      const right = valueFor(b);
+      const comparison = sortKey.value === 'completedAt'
+        ? new Date(left || 0).getTime() - new Date(right || 0).getTime()
+        : typeof left === 'number' || typeof right === 'number'
+          ? num(left) - num(right)
+          : String(left ?? '').localeCompare(String(right ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+      return sortDirection.value === 'asc' ? comparison : -comparison;
+    });
 });
+
+function toggleSort(key) {
+  if (sortKey.value === key) sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc';
+  else {
+    sortKey.value = key;
+    sortDirection.value = key === 'completedAt' ? 'desc' : 'asc';
+  }
+}
+
+
 
 function handleClearHistory() {
   if (confirm('Are you sure you want to clear past audit logs?')) {
     clearHistory();
+    toast.success('Audit history cleared.');
   }
 }
 
@@ -290,8 +339,19 @@ function downloadSession(a) {
     ...matchedItems(a).map((i) => ({ Section: 'Matched', Product: i.productTitle || i.varian || '', Qty: num(i.scannedCount ?? i.count), ESB: num(i.wpExpectedQty), Difference: 0, Notes: i.note || '' })),
   ];
   const name = `${a.storeName}_${String(a.completedAt || '').slice(0, 10)}`.replace(/[^\w-]+/g, '_');
-  exportToCSV(`Audit_${name}.csv`, rows);
+  try {
+    exportToCSV(`Audit_${name}.csv`, rows);
+    toast.success('Audit session CSV downloaded.');
+  } catch (err) {
+    toast.error(`CSV download failed: ${err.message}`);
+  }
 }
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>\"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[char]));
+}
+
+
 
 function exportHistoryCSV() {
   const data = auditHistory.value.map((a, idx) => ({
@@ -308,7 +368,12 @@ function exportHistoryCSV() {
     'Surplus SKUs': a.surplusCount,
     Notes: a.notes || '',
   }));
-  exportToCSV(`Store_Audits_History_${new Date().toISOString().split('T')[0]}.csv`, data);
+  try {
+    exportToCSV(`Store_Audits_History_${new Date().toISOString().split('T')[0]}.csv`, data);
+    toast.success('Audit history CSV downloaded.');
+  } catch (err) {
+    toast.error(`History download failed: ${err.message}`);
+  }
 }
 
 </script>
@@ -550,6 +615,9 @@ function exportHistoryCSV() {
                   <span v-else class="text-slate-400 italic">No audits yet</span>
                 </td>
               </tr>
+              <tr v-if="shrinkageLeaderboard.length === 0">
+                <td colspan="7"><EmptyState title="No stores to rank" hint="Store audit records will appear here once available." /></td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -568,33 +636,33 @@ function exportHistoryCSV() {
               Chronological logs of completed physical counts. Use Details to see matched and discrepancy products.
             </p>
           </div>
-          <div class="relative w-full sm:w-64">
-            <Search class="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              v-model="searchQuery"
-              type="text"
-              placeholder="Search store or auditor..."
-              class="w-full pl-9 pr-3 py-1.5 rounded-xl border border-slate-300 text-xs focus:outline-none focus:border-teal-500"
-            />
+          <div class="flex flex-wrap items-center gap-2">
+            <select v-model="storeFilter" class="px-3 py-1.5 rounded-xl border border-slate-300 text-xs bg-white focus:outline-none focus:border-teal-500">
+              <option value="">All stores</option>
+              <option v-for="n in storeNameOptions" :key="n" :value="n">{{ n }}</option>
+            </select>
+            <label class="text-[11px] font-semibold text-slate-500">From <DateField v-model="dateFrom" class="ml-1 px-2 py-1.5 rounded-lg border border-slate-300 text-xs" /></label>
+            <label class="text-[11px] font-semibold text-slate-500">To <DateField v-model="dateTo" class="ml-1 px-2 py-1.5 rounded-lg border border-slate-300 text-xs" /></label>
           </div>
         </div>
 
-        <table class="w-full table-fixed text-left border-collapse text-xs">
+        <div class="overflow-x-auto">
+        <table class="w-full min-w-[900px] table-fixed text-left border-collapse text-xs">
           <thead>
             <tr class="bg-slate-50/80 border-b border-slate-200 text-[10px] font-bold text-slate-600 uppercase">
-              <th class="py-2 px-2 w-[14%]">Date & Time</th>
-              <th class="py-2 px-2 w-[16%]">Store</th>
-              <th class="py-2 px-2 w-[12%]">Auditor</th>
-              <th class="py-2 px-1 text-center w-[8%]">Expected</th>
-              <th class="py-2 px-1 text-center w-[8%]">Scanned</th>
-              <th class="py-2 px-1 text-center w-[9%]">Discrepancy</th>
-              <th class="py-2 px-1 text-center w-[7%]">Missing</th>
-              <th class="py-2 px-1 text-center w-[8%]">Accuracy</th>
+              <th class="py-2 px-2 w-[14%]"><button type="button" @click="toggleSort('completedAt')" class="inline-flex items-center gap-1">Date &amp; Time <span>{{ sortKey === 'completedAt' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</span></button></th>
+              <th class="py-2 px-2 w-[16%]"><button type="button" @click="toggleSort('storeName')" class="inline-flex items-center gap-1">Store <span>{{ sortKey === 'storeName' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</span></button></th>
+              <th class="py-2 px-2 w-[12%]"><button type="button" @click="toggleSort('auditorName')" class="inline-flex items-center gap-1">Auditor <span>{{ sortKey === 'auditorName' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</span></button></th>
+              <th class="py-2 px-1 text-center w-[8%]"><button type="button" @click="toggleSort('totalExpected')">Expected {{ sortKey === 'totalExpected' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
+              <th class="py-2 px-1 text-center w-[8%]"><button type="button" @click="toggleSort('totalScanned')">Scanned {{ sortKey === 'totalScanned' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
+              <th class="py-2 px-1 text-center w-[9%]"><button type="button" @click="toggleSort('discrepancy')">Discrepancy {{ sortKey === 'discrepancy' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
+              <th class="py-2 px-1 text-center w-[7%]"><button type="button" @click="toggleSort('missing')">Missing {{ sortKey === 'missing' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
+              <th class="py-2 px-1 text-center w-[8%]"><button type="button" @click="toggleSort('accuracy')">Accuracy {{ sortKey === 'accuracy' ? (sortDirection === 'asc' ? '↑' : '↓') : '↕' }}</button></th>
               <th class="py-2 px-2 text-right">Action</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
-            <template v-for="audit in filteredHistory" :key="audit.id">
+            <template v-for="audit in (isLoadingHistory ? [] : filteredHistory)" :key="audit.id">
               <tr
                 class="hover:bg-slate-50/80 transition-colors cursor-pointer align-top"
                 @click="expandedId = expandedId === audit.id ? null : audit.id"
@@ -637,6 +705,8 @@ function exportHistoryCSV() {
                       <Eye class="w-3 h-3" />
                       <span>{{ expandedId === audit.id ? 'Hide' : 'Details' }}</span>
                     </button>
+                    
+                    
                     <button
                       @click.stop="downloadSession(audit)"
                       type="button"
@@ -674,7 +744,7 @@ function exportHistoryCSV() {
                     <span class="font-bold text-slate-700">Session notes:</span> {{ audit.notes }}
                   </p>
                   <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <div class="border border-rose-200 rounded-xl bg-white overflow-hidden">
+                    <div :id="`audit-discrepancies-${audit.id}`" class="border border-rose-200 rounded-xl bg-white overflow-hidden">
                       <div class="px-3 py-1.5 bg-rose-50 text-rose-800 font-bold text-[11px] uppercase">
                         Discrepancies ({{ discrepancyItems(audit).length }})
                       </div>
@@ -701,9 +771,7 @@ function exportHistoryCSV() {
                               <td class="py-1.5 px-3 text-[11px] text-slate-600 break-words">{{ item.note || '-' }}</td>
                             </tr>
                             <tr v-if="discrepancyItems(audit).length === 0">
-                              <td colspan="4" class="px-3 py-3 text-slate-400 italic">
-                                {{ sessionItems(audit).length ? 'No discrepancies' : 'No item details stored for this session' }}
-                              </td>
+                              <td colspan="4"><EmptyState title="No discrepancies" :hint="sessionItems(audit).length ? 'All recorded products matched expected quantities.' : 'No item details are stored for this session.'" /></td>
                             </tr>
                           </tbody>
                         </table>
@@ -734,9 +802,7 @@ function exportHistoryCSV() {
                               <td class="py-1.5 px-3 text-[11px] text-slate-600 break-words">{{ item.note || '-' }}</td>
                             </tr>
                             <tr v-if="matchedItems(audit).length === 0">
-                              <td colspan="3" class="px-3 py-3 text-slate-400 italic">
-                                {{ sessionItems(audit).length ? 'No matched products' : 'No item details stored for this session' }}
-                              </td>
+                              <td colspan="3"><EmptyState title="No matched products" hint="This session has no matched product details." /></td>
                             </tr>
                           </tbody>
                         </table>
@@ -747,17 +813,15 @@ function exportHistoryCSV() {
               </tr>
             </template>
 
-            <tr v-if="filteredHistory.length === 0">
-              <td colspan="9" class="py-12 text-center text-slate-400">
-                <History class="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p class="font-bold text-slate-700">{{ auditHistory.length === 0 ? 'No completed audits in history yet' : 'No audits match your search' }}</p>
-                <p v-if="auditHistory.length === 0" class="text-xs text-slate-400 mt-0.5">
-                  Complete your first physical scan audit in the Stock Audit tab to see historical reconciliation reports here.
-                </p>
-              </td>
+            <tr v-if="isLoadingHistory">
+              <td colspan="9" class="p-6"><SkeletonBlock :rows="4" height="h-8" /></td>
+            </tr>
+            <tr v-else-if="filteredHistory.length === 0">
+              <td colspan="9"><EmptyState :title="auditHistory.length === 0 ? 'No completed audits in history yet' : 'No audits match these filters'" :hint="auditHistory.length === 0 ? 'Complete your first physical scan audit in the Stock Audit tab to see historical reconciliation reports here.' : 'Try a different search term or date range.'" /></td>
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
 

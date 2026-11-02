@@ -209,16 +209,14 @@
                 <div class="flex items-center gap-3 mt-1 text-xs text-slate-400">
                   <span>Target Passing Grade: <strong class="text-emerald-400">{{ item.passing_grade ?? '—' }}</strong></span>
                   <span>•</span>
-                  <span>Recorded Score: <strong :class="isNotPass(item) ? 'text-rose-400' : 'text-slate-200'">{{ item.score ?? 'None' }}</strong></span>
+                  <span>Recorded Score: <strong :class="scoreTextClass(item.score)">{{ item.score ?? 'None' }}</strong></span>
                 </div>
               </div>
 
               <!-- Right: Score Badge -->
               <div
                 class="w-12 h-12 rounded-xl flex flex-col items-center justify-center font-bold text-base flex-shrink-0"
-                :class="isNotPass(item)
-                  ? 'bg-rose-900/30 text-rose-300 border border-rose-700/50'
-                  : 'bg-emerald-900/30 text-emerald-300 border border-emerald-700/50'"
+                :class="scoreBadgeClass(item.score)"
               >
                 <span>{{ item.score !== null && item.score !== undefined ? item.score : '—' }}</span>
                 <span class="text-[9px] uppercase font-normal opacity-70">Score</span>
@@ -291,6 +289,18 @@ const monthNames = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
 ]
+
+function scoreTextClass(score) {
+  const value = Number(score)
+  if (score === null || score === undefined || !Number.isFinite(value)) return 'text-slate-400'
+  return value >= 80 ? 'text-emerald-300' : value >= 60 ? 'text-amber-300' : 'text-rose-300'
+}
+
+function scoreBadgeClass(score) {
+  const value = Number(score)
+  if (score === null || score === undefined || !Number.isFinite(value)) return 'bg-slate-800 text-slate-300 border border-slate-700'
+  return value >= 80 ? 'bg-emerald-900/30 text-emerald-300 border border-emerald-700/50' : value >= 60 ? 'bg-amber-900/30 text-amber-300 border border-amber-700/50' : 'bg-rose-900/30 text-rose-300 border border-rose-700/50'
+}
 
 function isNotPass(item) {
   const status = String(item.pass_fail || '').toLowerCase()

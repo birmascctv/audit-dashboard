@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue';
 import { useAuditStore } from '../composables/useAuditStore.js';
+import { useToast } from '../composables/useToast.js';
 import {
   Barcode,
   CheckCircle2,
@@ -27,6 +28,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'barcodeAdded']);
 
 const { wpProducts, addNewBarcode } = useAuditStore();
+const toast = useToast();
 const barcodeInputEl = ref(null);
 const searchInputEl = ref(null);
 const isClearing = ref(false);
@@ -42,8 +44,10 @@ async function clearBarcode() {
     prod.barcode = '';
     try { localStorage.setItem('birmas_products', JSON.stringify(wpProducts.value)); } catch (_) {}
     feedbackMessage.value = { type: 'success', text: `Barcode removed from "${prod.productTitle || prod.varian}".` };
+    toast.success('Barcode removed successfully.');
   } catch (err) {
     feedbackMessage.value = { type: 'error', text: err.message || 'Network error' };
+    toast.error(`Could not remove barcode: ${err.message || 'Network error'}`);
   } finally {
     isClearing.value = false;
   }
@@ -198,6 +202,7 @@ async function handleSubmit() {
         type: 'success',
         text: `Barcode ${cleanBarcode} linked to "${payload.productTitle}"! Future physical scans will match immediately.`,
       };
+      toast.success(`Barcode ${cleanBarcode} saved.`);
       emit('barcodeAdded', cleanBarcode);
       barcodeInput.value = '';
       productSearchQuery.value = '';
@@ -206,9 +211,11 @@ async function handleSubmit() {
       searchInputEl.value?.focus();
     } else {
       feedbackMessage.value = { type: 'error', text: res.message || 'Failed to save barcode' };
+      toast.error(res.message || 'Failed to save barcode');
     }
   } catch (err) {
     feedbackMessage.value = { type: 'error', text: err.message || 'Network error' };
+    toast.error(`Could not save barcode: ${err.message || 'Network error'}`);
   } finally {
     isSubmitting.value = false;
   }
@@ -267,7 +274,7 @@ async function handleSubmit() {
             required
             autofocus
             placeholder="Scan bottle barcode (e.g. 8997026800122)"
-            class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 font-mono text-base font-bold placeholder-slate-400 focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+            class="w-full px-3 py-3 min-h-12 bg-white border border-slate-300 rounded-xl text-slate-900 font-mono text-base font-bold placeholder-slate-400 focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
           />
           <p class="text-[11px] text-slate-500 mt-1">
             * Aim scanner at the bottle or manually enter the number under the barcode.
@@ -375,7 +382,7 @@ async function handleSubmit() {
           <button
             @click="emit('close')"
             type="button"
-            class="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold transition-colors cursor-pointer"
+            class="px-4 py-3 min-h-12 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold transition-colors cursor-pointer"
           >
             Cancel
           </button>
@@ -383,7 +390,7 @@ async function handleSubmit() {
           <button
             type="submit"
             :disabled="isSubmitting"
-            class="px-5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all cursor-pointer disabled:opacity-50"
+            class="px-5 py-3 min-h-12 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-extrabold flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all cursor-pointer disabled:opacity-50"
           >
             <Check class="w-4 h-4" />
             <span>{{ isSubmitting ? 'Saving Barcode...' : (hasRealBarcode(selectedProduct) ? 'Save New Barcode' : 'Save Barcode') }}</span>

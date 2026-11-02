@@ -1,10 +1,15 @@
 <script setup>
+import DateField from '../components/DateField.vue';
+import { fmtDate, fmtDateTime } from '../utils/date.js';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { BarChart3, Download, FileSpreadsheet, Package, RefreshCw, Store, Trash2, TrendingUp, UploadCloud } from 'lucide-vue-next';
 import UploadSalesCsvModal from '../components/UploadSalesCsvModal.vue';
 import AnalyticsPieChart, { PIE_CHART_COLORS } from '../components/AnalyticsPieChart.vue';
 import AnalyticsLineChart from '../components/AnalyticsLineChart.vue';
 import AnalyticsBarChart from '../components/AnalyticsBarChart.vue';
+import EmptyState from '../components/EmptyState.vue';
+import SkeletonBlock from '../components/SkeletonBlock.vue';
+import { useToast } from '../composables/useToast.js';
 
 const activeTab = ref('analytics');
 const period = ref('all');
@@ -52,6 +57,10 @@ const stockCompareError = ref('');
 const stockCompareLoading = ref(false);
 const hourTooltip = ref(null);
 const loading = ref(false);
+const toast = useToast();
+const compareEnabled = ref(true);
+const prevSummary = ref(null);
+const initialLoading = computed(() => loading.value && !Object.keys(summary.value).length);
 const error = ref('');
 const uploadOpen = ref(false);
 const deletingFile = ref(null);
@@ -101,6 +110,58 @@ const range = computed(() => {
     endDate: format(new Date(base.getFullYear(), base.getMonth() + 1, 0)),
   };
 });
+const shiftDate = (iso, days) => {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+const datePresets = computed(() => {
+  const today = jakartaToday();
+  const yesterday = shiftDate(today, -1);
+  return [
+    { id: 'today', label: 'Today', start: today, end: today },
+    { id: 'yesterday', label: 'Yesterday', start: yesterday, end: yesterday },
+    { id: 'last7', label: 'Last 7 Days', start: shiftDate(today, -6), end: today },
+    { id: 'thisMonth', label: 'This Month', start: `${today.slice(0, 8)}01`, end: today },
+  ];
+});
+const activePreset = computed(() => period.value === 'custom'
+  ? datePresets.value.find((p) => p.start === customStartDate.value && p.end === customEndDate.value)?.id
+  : null);
+function applyPreset(preset) {
+  customStartDate.value = preset.start;
+  customEndDate.value = preset.end;
+  period.value = 'custom';
+}
+const previousRange = computed(() => {
+  const { startDate, endDate } = range.value;
+  if (!startDate || !endDate || startDate > endDate) return null;
+  const days = Math.round((new Date(`${endDate}T12:00:00Z`) - new Date(`${startDate}T12:00:00Z`)) / 864e5) + 1;
+  return { startDate: shiftDate(startDate, -days), endDate: shiftDate(startDate, -1) };
+});
+function delta(current, previous) {
+  const cur = Number(current) || 0;
+  const prev = Number(previous) || 0;
+  if (!prev) return null;
+  const pct = ((cur - prev) / prev) * 100;
+  return { up: pct >= 0, text: `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%` };
+}
+const netSalesDelta = computed(() => compareEnabled.value ? delta(summary.value.totalNetSales, prevSummary.value?.totalNetSales) : null);
+const unitsDelta = computed(() => compareEnabled.value ? delta(summary.value.totalUnitsSold, prevSummary.value?.totalUnitsSold) : null);
+const rowsDelta = computed(() => compareEnabled.value ? delta(summary.value.totalLineItems, prevSummary.value?.totalLineItems) : null);
+async function loadPrevSummary(requestId) {
+  const prev = previousRange.value;
+  prevSummary.value = null;
+  if (!compareEnabled.value || !prev) return;
+  try {
+    const result = await getJson(`/api/sales/summary?${queryString({ ...prev, ...(selectedStores.value !== null ? { storeIds: selectedStores.value.join(',') } : {}) })}`);
+    if (requestId === reportRequestId) prevSummary.value = result.summary || {};
+  } catch { /* deltas are optional */ }
+}
+function selectPromotionStore(point) {
+  if (promotionChartStores.value === null) promotionChartStores.value = [point.name];
+}
+const csvMoney = (value) => Math.round(Number(value) || 0);
 const chartStoreOptions = computed(() => selectedStores.value === null
   ? stores.value
   : stores.value.filter((store) => selectedStores.value.includes(store.name)));
@@ -397,8 +458,8 @@ const visiblePromotionChartItems = computed(() => {
     sortDate: item.startDate,
     details: hasStoreFilter
       ? [...item.storeSales].map(([store, metrics]) => promotionChartStores.value.length > 1
-        ? `${store}: ${Number(metrics.units).toLocaleString('id-ID')} units · ${formatMoney(metrics.sales)} · ${metrics.startDate} – ${metrics.endDate}`
-        : `${metrics.startDate} – ${metrics.endDate}`).join('\n')
+        ? `${store}: ${Number(metrics.units).toLocaleString('id-ID')} units · ${formatMoney(metrics.sales)} · ${fmtDate(metrics.startDate)} – ${fmtDate(metrics.endDate)}`
+        : `${fmtDate(metrics.startDate)} – ${fmtDate(metrics.endDate)}`).join('\n')
       : '',
   })).sort((a, b) => a.sortDate.localeCompare(b.sortDate) || a.name.localeCompare(b.name));
 });
@@ -665,7 +726,7 @@ function formatPercent(value, total) {
 }
 function formatDateTime(value) {
   if (!value) return '-';
-  return String(value).replace('T', ' ').slice(0, 16);
+  return fmtDateTime(value);
 }
 function filters(includeSearch = false) {
   return {
@@ -709,12 +770,16 @@ async function loadReport() {
     ]);
     if (requestId !== reportRequestId) return;
     summary.value = summaryResult.summary || {};
+    loadPrevSummary(requestId);
     if (rawResult) {
       rows.value = rawResult.transactions || [];
       totalRows.value = rawResult.total || 0;
     }
   } catch (loadError) {
-    if (requestId === reportRequestId) error.value = loadError.message || 'Could not load sales data.';
+    if (requestId === reportRequestId) {
+      error.value = loadError.message || 'Could not load sales data.';
+      toast.error(error.value);
+    }
   } finally {
     if (requestId === reportRequestId) loading.value = false;
   }
@@ -789,6 +854,7 @@ async function deleteFile() {
   }
 }
 
+watch(compareEnabled, () => loadPrevSummary(reportRequestId));
 watch([period, anchorDate, customStartDate, customEndDate, selectedStores], () => {
   page.value = 1;
   loadReport();
@@ -855,7 +921,7 @@ onBeforeUnmount(() => {
         <div>
           <h1 class="text-xl font-black text-slate-900">Sales Report</h1>
           <p class="text-xs text-slate-500">Clean CSV-backed sales analytics and source columns</p>
-          <p v-if="summary.latestSaleAt" class="text-[11px] font-semibold text-teal-700">Latest sales data: {{ summary.latestSaleAt }}</p>
+          <p v-if="summary.latestSaleAt" class="text-[11px] font-semibold text-teal-700">Latest sales data: {{ fmtDateTime(summary.latestSaleAt) }}</p>
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -873,13 +939,18 @@ onBeforeUnmount(() => {
       <section class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><TrendingUp class="h-4 w-4 text-emerald-600" />Total net sales</p>
-          <p class="mt-2 text-2xl font-black text-slate-900">{{ formatMoney(summary.totalNetSales) }}</p>
+          <SkeletonBlock v-if="initialLoading" :rows="1" height="h-8" class="mt-2" />
+          <p v-else class="mt-2 flex flex-wrap items-baseline gap-2 text-2xl font-black text-slate-900">{{ formatMoney(summary.totalNetSales) }}
+            <span v-if="netSalesDelta" class="text-xs font-bold" :class="netSalesDelta.up ? 'text-emerald-600' : 'text-rose-600'" title="vs previous period">{{ netSalesDelta.text }}</span></p>
           <p class="mt-1 text-xs text-slate-500">Customer-paid amount after bill discount</p>
         </article>
         <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Package class="h-4 w-4 text-teal-600" />Units sold</p>
-          <p class="mt-2 text-2xl font-black text-slate-900">{{ Number(summary.totalUnitsSold || 0).toLocaleString('id-ID') }}</p>
-          <p class="mt-1 text-xs text-slate-500">{{ Number(summary.totalLineItems || 0).toLocaleString('id-ID') }} clean sales rows</p>
+          <SkeletonBlock v-if="initialLoading" :rows="1" height="h-8" class="mt-2" />
+          <p v-else class="mt-2 flex flex-wrap items-baseline gap-2 text-2xl font-black text-slate-900">{{ Number(summary.totalUnitsSold || 0).toLocaleString('id-ID') }}
+            <span v-if="unitsDelta" class="text-xs font-bold" :class="unitsDelta.up ? 'text-emerald-600' : 'text-rose-600'" title="vs previous period">{{ unitsDelta.text }}</span></p>
+          <p class="mt-1 text-xs text-slate-500">{{ Number(summary.totalLineItems || 0).toLocaleString('id-ID') }} clean sales rows
+            <span v-if="rowsDelta" class="font-bold" :class="rowsDelta.up ? 'text-emerald-600' : 'text-rose-600'">{{ rowsDelta.text }}</span></p>
         </article>
         <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Store class="h-4 w-4 text-blue-600" />Top Stores</p>
@@ -918,7 +989,7 @@ onBeforeUnmount(() => {
               <p class="text-[11px] text-slate-500">Top 5 products by quantity sold · Excludes package items</p>
             </div>
           </header>
-          <div class="overflow-x-auto rounded-xl border border-slate-100">
+<div class="overflow-x-auto rounded-xl border border-slate-100">
             <table class="w-full table-fixed text-xs">
               <colgroup>
                 <col class="w-10">
@@ -953,9 +1024,7 @@ onBeforeUnmount(() => {
                   </td>
                 </tr>
                 <tr v-if="!window.products.length">
-                  <td colspan="4" class="p-6 text-center text-xs text-slate-400">
-                    No product sales found for the selected stores in this period.
-                  </td>
+                  <td colspan="4" class="p-0"><EmptyState title="No product sales found for the selected stores in this period." /></td>
                 </tr>
               </tbody>
             </table>
@@ -973,7 +1042,7 @@ onBeforeUnmount(() => {
         @click="setTab(tab.id)">{{ tab.label }}</button>
     </nav>
 
-    <section class="flex flex-wrap items-end gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <section class="flex flex-col items-stretch gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end">
       <div>
         <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Period</label>
         <div class="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">
@@ -982,14 +1051,22 @@ onBeforeUnmount(() => {
             @click="period = option.id">{{ option.label }}</button>
         </div>
       </div>
+      <div>
+        <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Quick range</label>
+        <div class="flex flex-wrap gap-1">
+          <button v-for="preset in datePresets" :key="preset.id" type="button" class="rounded-lg border px-3 py-1.5 text-xs font-bold"
+            :class="activePreset === preset.id ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+            @click="applyPreset(preset)">{{ preset.label }}</button>
+        </div>
+      </div>
       <label v-if="period !== 'all'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
         {{ period === 'day' ? 'Day' : period === 'custom' ? 'Start date' : 'Reference date' }}
-        <input v-if="period === 'custom'" v-model="customStartDate" type="date" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
-        <input v-else v-model="anchorDate" type="date" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
+        <DateField v-if="period === 'custom'" v-model="customStartDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
+        <DateField v-else v-model="anchorDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
       </label>
       <label v-if="period === 'custom'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
         End date
-        <input v-model="customEndDate" type="date" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
+        <DateField v-model="customEndDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
       </label>
       <details class="relative text-[10px] font-bold uppercase tracking-wide text-slate-500">
         <summary class="flex min-w-40 cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
@@ -1000,8 +1077,11 @@ onBeforeUnmount(() => {
           <label v-for="store in stores" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="selectedStores === null || selectedStores.includes(store.name)" @change="toggleGlobalStore(store.name)">{{ store.name }}</label>
         </div>
       </details>
-      <p v-if="range.startDate || range.endDate" class="pb-2 text-xs text-slate-500">{{ range.startDate || 'Beginning' }} – {{ range.endDate || 'Latest' }}</p>
+      <label class="flex items-center gap-2 pb-2 text-xs font-semibold text-slate-600"><input v-model="compareEnabled" type="checkbox">Compare to previous period</label>
+      <p v-if="range.startDate || range.endDate" class="pb-2 text-xs text-slate-500">{{ fmtDate(range.startDate) || 'Beginning' }} – {{ fmtDate(range.endDate) || 'Latest' }}</p>
     </section>
+
+    <section v-if="initialLoading" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><SkeletonBlock :rows="8" height="h-6" /></section>
 
     <template v-if="activeTab === 'analytics'">
       <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1009,10 +1089,10 @@ onBeforeUnmount(() => {
           <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
             <div><h2 class="text-sm font-bold text-slate-900">Sales by Visit Purpose</h2><p class="text-[11px] text-slate-500">Current store selection: {{ selectedStoreLabel }}</p></div>
           </header>
-          <div class="overflow-x-auto">
+<div class="overflow-x-auto">
             <table class="sales-data-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Visit purpose</th><th class="px-4 py-2 text-right">Sales</th><th class="px-4 py-2 text-right">Share</th></tr></thead>
               <tbody class="sales-table-body"><tr v-for="item in visitPurposeRows" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td><td class="px-4 py-2 text-right">{{ formatPercent(item.sales, summary.totalNetSales) }}</td></tr>
-                <tr v-if="!visitPurposeRows.length"><td colspan="3" class="p-6 text-center text-slate-400">No visit-purpose sales in this period.</td></tr>
+                <tr v-if="!visitPurposeRows.length"><td colspan="3" class="p-0"><EmptyState title="No visit-purpose sales in this period." /></td></tr>
               </tbody>
             </table>
           </div>
@@ -1057,16 +1137,16 @@ onBeforeUnmount(() => {
           </div>
         </header>
         <div class="grid grid-cols-1 lg:grid-cols-2">
-          <div class="h-96 overflow-auto">
+<div class="h-96 overflow-auto">
             <table class="sales-data-table w-full table-fixed text-left text-xs"><colgroup><col class="w-[25%]"><col><col class="w-[12%]"><col class="w-[26%]"></colgroup><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-1 py-2">Store</th><th class="px-1 py-2">Promotion</th><th class="px-1 py-2 text-right">Units</th><th class="px-1 py-2 text-right">Sales</th></tr></thead>
               <tbody class="sales-table-body"><tr v-for="(item,index) in visiblePromotions" :key="`${item.branch}-${item.name}-${index}`"><td class="break-words px-1 py-2 font-semibold">{{ item.branch }}</td><td class="break-words px-1 py-2">{{ item.name }}</td><td class="break-all px-1 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="break-all px-1 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr>
-                <tr v-if="!visiblePromotions.length"><td colspan="4" class="p-6 text-center text-slate-400">No promotion sales for this store and period.</td></tr>
+                <tr v-if="!visiblePromotions.length"><td colspan="4" class="p-0"><EmptyState title="No promotion sales for this store and period." /></td></tr>
               </tbody>
             </table>
           </div>
           <div class="border-t border-slate-100 lg:col-span-1 lg:border-l lg:border-t-0">
-            <header class="px-4 pt-3 text-xs font-bold text-slate-700">Promotion Sales Share by Store</header>
-            <AnalyticsLineChart :items="visiblePromotionChartItems" metric="sales" :x-axis-label="promotionChartStores === null ? 'Store' : 'Promotion'" :x-axis-font-size="12" :line-color="promotionChartStores === null ? '#0f766e' : '#7c3aed'" :show-percent="false" :sort-items="false" empty-label="No promotion sales for this selection." />
+            <header class="px-4 pt-3 text-xs font-bold text-slate-700">Promotion Sales Share by Store<span v-if="promotionChartStores === null" class="ml-2 font-normal text-slate-400">click a point to filter by store</span></header>
+            <AnalyticsLineChart :items="visiblePromotionChartItems" :selectable="promotionChartStores === null" @select="selectPromotionStore" metric="sales" :x-axis-label="promotionChartStores === null ? 'Store' : 'Promotion'" :x-axis-font-size="12" :line-color="promotionChartStores === null ? '#0f766e' : '#7c3aed'" :show-percent="false" :sort-items="false" empty-label="No promotion sales for this selection." />
           </div>
         </div>
       </section>
@@ -1083,11 +1163,11 @@ onBeforeUnmount(() => {
           </details>
         </header>
         <div class="grid grid-cols-1 lg:grid-cols-2">
-          <div class="max-h-[24rem] overflow-auto">
+<div class="max-h-[24rem] overflow-auto">
             <table class="w-full text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Menu category</th><th class="px-4 py-2 text-right">Units</th><th class="px-4 py-2 text-right">Sales</th></tr></thead>
               <tbody class="sales-table-body">
                 <tr v-for="item in visibleCategoryTable" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right">{{ Number(item.units).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr>
-                <tr v-if="!visibleCategoryTable.length"><td colspan="3" class="p-6 text-center text-slate-400">No category sales for this store and period.</td></tr>
+                <tr v-if="!visibleCategoryTable.length"><td colspan="3" class="p-0"><EmptyState title="No category sales for this store and period." /></td></tr>
               </tbody>
             </table>
           </div>
@@ -1101,12 +1181,12 @@ onBeforeUnmount(() => {
       <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <header class="border-b border-slate-100 px-4 py-3"><h2 class="text-sm font-bold text-slate-900">Sales by Payment Method</h2><p class="text-[11px] text-slate-500">Amounts allocated across split tenders when a bill uses multiple methods</p></header>
-          <div class="min-h-[22rem] overflow-x-auto">
+<div class="min-h-[22rem] overflow-x-auto">
             <table class="w-full text-left text-xs">
               <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Payment method</th><th class="px-4 py-2 text-right">Sales</th><th class="px-4 py-2 text-right">Share</th></tr></thead>
               <tbody class="sales-table-body"><tr v-for="item in summary.payments || []" :key="item.name" class="border-t border-slate-100">
                 <td class="px-4 py-2.5 font-semibold text-slate-800">{{ item.name }}</td><td class="px-4 py-2.5 text-right font-mono">{{ formatMoney(item.sales) }}</td><td class="px-4 py-2.5 text-right font-mono">{{ formatPercent(item.sales, summary.totalNetSales) }}</td>
-              </tr></tbody>
+              </tr><tr v-if="!(summary.payments || []).length"><td colspan="3" class="p-0"><EmptyState title="No payment sales in this period." /></td></tr></tbody>
             </table>
           </div>
         </article>
@@ -1145,13 +1225,13 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </header>
-        <div class="max-h-[30rem] overflow-auto">
+<div class="max-h-[30rem] overflow-auto">
           <table class="sales-data-table w-full min-w-[720px] text-left text-[11px]"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="sticky left-0 bg-slate-50 px-3 py-2">Product</th><th v-for="method in pivotPaymentMethods" :key="method" class="whitespace-nowrap px-3 py-2 text-right">{{ method }}</th><th class="px-3 py-2 text-right">Total</th></tr></thead>
             <tbody class="sales-table-body"><tr v-for="item in visiblePivotRows" :key="item.item" tabindex="0" role="button" :aria-label="`Show payment mix for ${item.item}`" class="cursor-pointer border-t border-slate-100 hover:bg-teal-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-teal-600" :class="selectedPivotRow?.item === item.item ? 'outline outline-1 outline-teal-500' : ''" @click="choosePivotRow(item.item)" @keydown.enter="choosePivotRow(item.item)" @keydown.space.prevent="choosePivotRow(item.item)">
               <th class="sticky left-0 bg-white px-3 py-2 text-left font-semibold">{{ item.item }}</th>
               <td v-for="method in pivotPaymentMethods" :key="method" class="whitespace-nowrap px-3 py-2 text-right"><span class="block font-mono">{{ formatMoney(item.methods[method] || 0) }}</span><span class="text-[9px] text-slate-500">{{ formatPercent(item.methods[method] || 0, item.total) }}</span></td>
               <td class="whitespace-nowrap px-3 py-2 text-right font-bold font-mono">{{ formatMoney(item.total) }}</td>
-            </tr><tr v-if="!visiblePivotRows.length"><td :colspan="pivotPaymentMethods.length + 2" class="p-8 text-center text-slate-400">No matching product sales</td></tr></tbody>
+            </tr><tr v-if="!visiblePivotRows.length"><td :colspan="pivotPaymentMethods.length + 2" class="p-0"><EmptyState title="No matching product sales" /></td></tr></tbody>
           </table>
         </div>
         </article>
@@ -1182,9 +1262,9 @@ onBeforeUnmount(() => {
             </div>
           </details>
         </header>
-        <div class="max-h-[30rem] overflow-auto">
+<div class="max-h-[30rem] overflow-auto">
           <table class="sales-data-table w-full table-fixed text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="w-[22%] px-4 py-2 text-center">Store Scope</th><th class="px-4 py-2 text-center">Product</th><th class="w-[12%] px-4 py-2 text-center">Qty</th><th class="w-[22%] px-4 py-2 text-center">Sales</th></tr></thead>
-            <tbody class="sales-table-body"><tr v-for="(item,index) in visibleTopProducts" :key="`${item.branch}-${item.menu}-${index}`" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.branch }}</td><td class="px-4 py-2">{{ item.menu }}</td><td class="px-4 py-2 text-right font-mono">{{ Number(item.qty || 0).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr><tr v-if="!visibleTopProducts.length"><td colspan="4" class="p-6 text-center text-slate-400">No product sales for this store and period.</td></tr></tbody>
+            <tbody class="sales-table-body"><tr v-for="(item,index) in visibleTopProducts" :key="`${item.branch}-${item.menu}-${index}`" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.branch }}</td><td class="px-4 py-2">{{ item.menu }}</td><td class="px-4 py-2 text-right font-mono">{{ Number(item.qty || 0).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr><tr v-if="!visibleTopProducts.length"><td colspan="4" class="p-0"><EmptyState title="No product sales for this store and period." /></td></tr></tbody>
           </table>
         </div>
         </article>
@@ -1195,10 +1275,10 @@ onBeforeUnmount(() => {
           <div><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><BarChart3 class="h-4 w-4 text-indigo-600" />Sales by Time Range</h2><p class="text-[11px] text-slate-500">Hourly, weekday, weekly, and monthly revenue · business dates run 06:00–05:59 Jakarta time.</p></div>
           <div class="flex flex-wrap items-end gap-3">
             <label class="text-[10px] font-bold uppercase text-slate-500">From
-              <input v-model="timeRangeStart" type="date" class="mt-1 block rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-medium normal-case text-slate-800">
+              <DateField v-model="timeRangeStart" class="mt-1 block rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-medium normal-case text-slate-800" />
             </label>
             <label class="text-[10px] font-bold uppercase text-slate-500">To
-              <input v-model="timeRangeEnd" type="date" class="mt-1 block rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-medium normal-case text-slate-800">
+              <DateField v-model="timeRangeEnd" class="mt-1 block rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-medium normal-case text-slate-800" />
             </label>
             <details class="relative">
               <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">{{ checklistLabel(timeSelectedStores, 'All stores', 'stores') }} <span aria-hidden="true">▾</span></summary>
@@ -1281,17 +1361,17 @@ onBeforeUnmount(() => {
             <div><h3 class="text-sm font-bold text-slate-900">Stock vs Sold</h3><p class="text-[11px] text-slate-500">Products with opening stock (snapshot before 06:00) versus what was sold that business day.</p></div>
             <div class="flex flex-wrap gap-2">
               <label class="text-[10px] font-bold uppercase text-slate-500">Store<select v-model="stockCompareStore" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800"><option v-for="store in stores" :key="store.name" :value="store.name">{{ store.name }}</option></select></label>
-              <label class="text-[10px] font-bold uppercase text-slate-500">Business date<input v-model="stockCompareDate" type="date" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800"></label>
+              <label class="text-[10px] font-bold uppercase text-slate-500">Business date<DateField v-model="stockCompareDate" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800" /></label>
             </div>
           </header>
           <p v-if="stockCompareError" class="text-xs text-rose-700">{{ stockCompareError }}</p>
-          <p v-else-if="stockCompareLoading && !stockCompare.rows.length" class="text-xs text-slate-500">Loading stock comparison…</p>
+          <SkeletonBlock v-else-if="stockCompareLoading && !stockCompare.rows.length" :rows="4" />
           <p v-else-if="stockCompare.needsSnapshots" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">No opening stock snapshot for this date; snapshots are collected since {{ stockCompare.collectingSince || 'the next successful inventory sync' }}.</p>
-          <div v-else class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <div v-else>          <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
             <table class="w-full min-w-[760px] text-left text-xs"><thead class="bg-slate-100 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-3 py-2">Product (sales / stock)</th><th class="px-3 py-2 text-right">Opening</th><th class="px-3 py-2 text-right">Sold</th><th class="px-3 py-2 text-right">Expected closing</th><th class="px-3 py-2 text-right">Actual closing</th><th class="px-3 py-2 text-right">Difference</th><th class="px-3 py-2">Status</th></tr></thead>
               <tbody><tr v-for="(row,index) in stockCompare.rows" :key="`${row.product}-${index}`" class="border-t border-slate-100"><td class="px-3 py-2 font-medium">{{ row.product }}<span v-if="row.stockProduct && row.stockProduct !== row.product" class="block text-[10px] text-slate-500">Matched stock: {{ row.stockProduct }}</span></td><td class="px-3 py-2 text-right">{{ row.opening ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.sold ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.expectedClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.actualClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.difference ?? '—' }}</td><td class="px-3 py-2"><span :class="row.status === 'matched' ? 'text-emerald-700' : row.status === 'mismatch' ? 'text-amber-700' : 'text-slate-500'">{{ row.status }}</span></td></tr>
-                <tr v-if="!stockCompare.rows.length"><td colspan="7" class="p-5 text-center text-slate-400">No stock or sales products found for this store and date.</td></tr></tbody></table>
-          </div>
+                <tr v-if="!stockCompare.rows.length"><td colspan="7" class="p-0"><EmptyState title="No stock or sales products found for this store and date." /></td></tr></tbody></table>
+          </div></div>
         </section>
       </section>
     </template>
@@ -1302,8 +1382,9 @@ onBeforeUnmount(() => {
           <div><h2 class="text-sm font-bold text-slate-900">Raw Clean Sales Records</h2><p class="text-[11px] text-slate-500">Showing {{ totalRows.toLocaleString() }} matching rows · up to 100 records per page</p></div>
           <input v-model="rawSearch" type="search" placeholder="Search branch, menu, payment..." class="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs sm:w-72">
         </header>
-        <div>
-          <table class="w-full table-fixed text-left text-[10px] leading-tight">
+        <SkeletonBlock v-if="loading && !rows.length" :rows="8" height="h-5" class="p-4" />
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[900px] table-fixed text-left text-[10px] leading-tight">
             <colgroup>
               <col class="w-[12%]"><col class="w-[8%]"><col class="w-[9%]"><col class="w-[9%]">
               <col class="w-[9%]"><col class="w-[10%]"><col class="w-[12%]"><col class="w-[4%]">
@@ -1314,7 +1395,7 @@ onBeforeUnmount(() => {
             </tr></thead>
             <tbody><tr v-for="(row,index) in rows" :key="`${row.sales_date_in}-${index}`" class="border-t border-slate-100 hover:bg-slate-50/70">
               <td class="break-all px-1 py-1.5">{{ formatDateTime(row.sales_date_in) }}</td><td class="break-words px-1 py-1.5">{{ row.branch }}</td><td class="break-words px-1 py-1.5">{{ row.visit_purpose }}</td><td class="break-words px-1 py-1.5">{{ row.payment_method }}</td><td class="break-words px-1 py-1.5">{{ row.menu_category }}</td><td class="break-words px-1 py-1.5">{{ row.menu_category_detail }}</td><td class="break-words px-1 py-1.5 font-medium text-slate-900">{{ row.menu }}</td><td class="break-all px-1 py-1.5 text-right">{{ row.qty }}</td><td class="break-all px-1 py-1.5 text-right">{{ formatMoney(row.price) }}</td><td class="break-all px-1 py-1.5 text-right">{{ formatMoney(row.subtotal) }}</td><td class="break-all px-1 py-1.5 text-right font-semibold">{{ formatMoney(row.total_after_bill_discount) }}</td>
-            </tr><tr v-if="!rows.length"><td colspan="11" class="p-10 text-center text-slate-400">No sales rows found for these filters.</td></tr></tbody>
+            </tr><tr v-if="!rows.length"><td colspan="11" class="p-0"><EmptyState title="No sales rows found for these filters." /></td></tr></tbody>
           </table>
         </div>
         <footer class="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
@@ -1354,7 +1435,7 @@ onBeforeUnmount(() => {
           <table class="w-full min-w-[700px] text-left text-xs">
             <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">File</th><th class="px-4 py-2">Uploaded</th><th class="px-4 py-2">Stores</th><th class="px-4 py-2 text-right">Rows</th><th class="px-4 py-2 text-right">Net sales</th><th class="px-4 py-2 text-right">Actions</th></tr></thead>
             <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button class="rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50" title="Download clean CSV" @click="downloadFile(file)"><Download class="h-3.5 w-3.5" /></button><button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
-              <tr v-if="!files.length"><td colspan="6" class="p-8 text-center text-slate-400">No imported CSV batches.</td></tr></tbody>
+              <tr v-if="!files.length"><td colspan="6" class="p-0"><EmptyState title="No imported CSV batches." /></td></tr></tbody>
           </table>
         </div>
       </section>

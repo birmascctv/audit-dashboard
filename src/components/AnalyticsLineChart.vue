@@ -11,8 +11,10 @@ const props = defineProps({
   sortItems: { type: Boolean, default: true },
   emptyLabel: { type: String, default: 'No chart data for this selection.' },
   maxItems: { type: Number, default: 24 },
+  selectable: { type: Boolean, default: false },
 });
 
+const emit = defineEmits(['select']);
 const tooltip = ref(null);
 const hoveredPoint = ref(null);
 const filteredItems = computed(() => {
@@ -90,7 +92,8 @@ function moveTooltip(event) {
         <line v-if="points.length === 1" :x1="points[0].x" :x2="points[0].x" :y1="points[0].y" :y2="top + plotHeight" :stroke="lineColor" stroke-width="2" stroke-dasharray="4 4" />
         <g v-for="point in points" :key="point.name">
           <circle :cx="point.x" :cy="point.y" :r="hoveredPoint === point.name ? (points.length === 1 ? 10 : 7) : (points.length === 1 ? 7 : 3)" pointer-events="none" :style="{ transition: 'r 200ms ease' }" :fill="lineColor" stroke="#fff" stroke-width="1" />
-          <circle :cx="point.x" :cy="point.y" r="10" fill="transparent" tabindex="0"
+          <circle :cx="point.x" :cy="point.y" r="10" fill="transparent" tabindex="0" :style="{ cursor: selectable ? 'pointer' : undefined }"
+            @click="selectable && emit('select', point)" @keydown.enter="selectable && emit('select', point)"
             :aria-label="`${point.name}: ${point.percent.toFixed(1)}%, ${formatValue(point.value)}`"
             @pointerenter="hoveredPoint = point.name; showTooltip($event, point)" @pointermove="moveTooltip" @pointerleave="hoveredPoint = null; tooltip = null"
             @focus="hoveredPoint = point.name; showTooltip($event, point)" @blur="hoveredPoint = null; tooltip = null" />
