@@ -2526,6 +2526,18 @@ async function startServer() {
     }
   });
 
+  app.get('/api/audit/top-sold', (req, res) => {
+    try {
+      const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+      const store = db.getAllStores().find((s) => s.id === String(req.query.storeId || ''));
+      if (!store) return res.status(404).json({ success: false, error: 'Unknown store.' });
+      const key = String(store.name).replace(/^birmas\s+/i, '');
+      res.json({ success: true, days, products: salesDb.getTopSoldByQty(key, days, 10) });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.get('/api/sales/stock-compare', (req, res) => {
     try {
       const date = String(req.query.date || '').trim();

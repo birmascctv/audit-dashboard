@@ -355,6 +355,20 @@ function pivotRows(db, where, dimension, filters) {
   `, values);
 }
 
+export function getTopSoldByQty(branchLike, days = 30, limit = 10) {
+  const db = getSalesDb();
+  const since = new Date(`${jakartaToday()}T12:00:00Z`);
+  since.setUTCDate(since.getUTCDate() - (days - 1));
+  const norm = "REPLACE(REPLACE(LOWER(branch), ' ', ''), '-', '')";
+  return db.prepare(`
+    SELECT menu AS product, SUM(qty) AS qty
+    FROM sales_transactions
+    WHERE ${norm} LIKE ? AND ${BUSINESS_DATE_SQL} >= ? AND menu <> ''
+      AND ${RANKING_CATEGORY_SQL} AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)' AND UPPER(menu_category) NOT LIKE '%PROMO%' AND UPPER(TRIM(menu)) NOT LIKE 'PROMO %'
+    GROUP BY menu HAVING SUM(qty) > 0 ORDER BY qty DESC, menu LIMIT ?
+  `).all(`%${String(branchLike).toLowerCase().replace(/[^a-z0-9]/g, '')}%`, since.toISOString().slice(0, 10), limit);
+}
+
 export function getSalesSummary(filters = {}) {
   const db = getSalesDb();
   const where = makeWhere(filters);

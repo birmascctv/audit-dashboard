@@ -6,6 +6,7 @@ import { useAuth } from '../composables/useAuth.js';
 import EmptyState from '../components/EmptyState.vue';
 import SkeletonBlock from '../components/SkeletonBlock.vue';
 import { useToast } from '../composables/useToast.js';
+import { authFetchJson } from '../services/authFetch.js';
 import { formatDateTime } from '../utils/storage.js';
 import { fmtDateTime } from '../utils/date.js';
 import AddBarcodeModal from '../components/AddBarcodeModal.vue';
@@ -552,6 +553,16 @@ watch([brandFilter, categoryFilter], () => {
 });
 let silentRefreshTimer = null;
 let timerInterval = null;
+const topSold = ref([]);
+const topSoldDays = ref(30);
+async function loadTopSold() {
+  if (!selectedStoreId.value) return;
+  try {
+    const r = await authFetchJson(`/api/audit/top-sold?storeId=${encodeURIComponent(selectedStoreId.value)}&days=${topSoldDays.value}`);
+    topSold.value = r.products || [];
+  } catch { topSold.value = []; }
+}
+watch([selectedStoreId, topSoldDays], loadTopSold, { immediate: true });
 watch(selectedStoreId, () => { undoStack.value = []; });
 onUnmounted(() => { clearInterval(silentRefreshTimer); clearInterval(timerInterval); });
 
@@ -775,6 +786,25 @@ const showAuditSuccess = ref(false);
       <div class="mt-2 h-3 overflow-hidden rounded-full bg-slate-100" role="progressbar" :aria-valuenow="openingStockProgress" aria-valuemin="0" aria-valuemax="100" :aria-label="`${openingStockProgress}% of in-stock ESB products scanned`">
         <div class="h-full rounded-full bg-teal-600 transition-all duration-500" :style="{ width: `${openingStockProgress}%` }"></div>
       </div>
+    </div>
+
+    <!-- Top selling products by qty sold -->
+    <div class="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h3 class="text-sm font-extrabold text-slate-900">Top Products by Qty Sold <span class="font-semibold text-slate-500">· {{ currentStore.name }}</span></h3>
+        <select v-model.number="topSoldDays" class="min-h-8 px-3 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800">
+          <option :value="7">Last 7 days</option>
+          <option :value="30">Last 30 days</option>
+          <option :value="90">Last 90 days</option>
+        </select>
+      </div>
+      <p v-if="!topSold.length" class="text-xs text-slate-500">No sales found for this store in this period.</p>
+      <ol v-else class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <li v-for="(p, i) in topSold" :key="p.product" class="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+          <span class="truncate font-semibold text-slate-800"><span class="mr-1 text-teal-700">{{ i + 1 }}.</span>{{ p.product }}</span>
+          <span class="whitespace-nowrap rounded-lg bg-teal-600 px-2 py-0.5 font-mono font-bold text-white">{{ Number(p.qty).toLocaleString('id-ID') }}</span>
+        </li>
+      </ol>
     </div>
 
     <!-- Counting Station (Light theme with tosca accents) -->
