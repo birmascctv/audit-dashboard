@@ -947,14 +947,14 @@ onBeforeUnmount(() => {
           <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><TrendingUp class="h-4 w-4 text-emerald-600" />Total net sales</p>
           <SkeletonBlock v-if="initialLoading" :rows="1" height="h-8" class="mt-2" />
           <p v-else class="mt-2 flex flex-wrap items-baseline gap-2 text-2xl font-black text-slate-900">{{ formatMoney(summary.totalNetSales) }}
-            <span v-if="netSalesDelta" class="text-xs font-bold" :class="netSalesDelta.up ? 'text-emerald-600' : 'text-rose-600'" title="vs previous period">{{ netSalesDelta.text }}</span></p>
+            </p>
           <p class="mt-1 text-xs text-slate-500">Customer-paid amount after bill discount</p>
         </article>
         <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Package class="h-4 w-4 text-teal-600" />Units sold</p>
           <SkeletonBlock v-if="initialLoading" :rows="1" height="h-8" class="mt-2" />
           <p v-else class="mt-2 flex flex-wrap items-baseline gap-2 text-2xl font-black text-slate-900">{{ Number(summary.totalUnitsSold || 0).toLocaleString('id-ID') }}
-            <span v-if="unitsDelta" class="text-xs font-bold" :class="unitsDelta.up ? 'text-emerald-600' : 'text-rose-600'" title="vs previous period">{{ unitsDelta.text }}</span></p>
+            </p>
           <p class="mt-1 text-xs text-slate-500">{{ Number(summary.totalLineItems || 0).toLocaleString('id-ID') }} clean sales rows
             <span v-if="rowsDelta" class="font-bold" :class="rowsDelta.up ? 'text-emerald-600' : 'text-rose-600'">{{ rowsDelta.text }}</span></p>
         </article>
