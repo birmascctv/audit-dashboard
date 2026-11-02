@@ -96,10 +96,16 @@ export function useScanner(options = {}) {
     const currentTime = Date.now();
     const timeDiff = currentTime - lastKeyTime;
 
+    // A scanner types a full code in a few ms; stale or runaway digits from a bad read are discarded
+    if (isDedicatedScanInput && event.key.length === 1) {
+      if (target.value && (timeDiff > 500 || target.value.length >= 40)) target.value = '';
+      lastKeyTime = currentTime;
+    }
+
     if (event.key === 'Enter') {
       if (isDedicatedScanInput) {
         event.preventDefault();
-        const inputVal = target.value;
+        const inputVal = target.value.length > 40 ? '' : target.value;
         if (inputVal) {
           processBarcode(inputVal);
           target.value = '';

@@ -175,7 +175,8 @@ export function insertSalesRows(db, {
   // chunk of it, or a previous CSV altogether - is skipped instead of duplicated.
   const findDuplicate = db.prepare(`
     SELECT 1 FROM sales_transactions
-    WHERE sales_date_in = ? AND menu = ? AND NOT (import_id = ? AND source_row = ?)
+    WHERE sales_date_in = ? AND menu = ? AND branch = ? AND payment_method = ? AND qty = ?
+      AND total_after_bill_discount = ? AND NOT (import_id = ? AND source_row = ?)
     LIMIT 1
   `);
 
@@ -187,9 +188,9 @@ export function insertSalesRows(db, {
     rows.forEach((row, index) => {
       const clean = normalizeRow(row);
       const sourceRow = sourceRowOffset + index;
-      const dedupeKey = `${clean.sales_date_in}\u0000${clean.menu}`;
+      const dedupeKey = [clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, clean.total_after_bill_discount].join('\u0000');
       const isDuplicate = seenInBatch.has(dedupeKey) ||
-        Boolean(findDuplicate.get(clean.sales_date_in, clean.menu, fileId, sourceRow));
+        Boolean(findDuplicate.get(clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, clean.total_after_bill_discount, fileId, sourceRow));
       if (isDuplicate) {
         duplicateCount++;
         return;
@@ -471,10 +472,10 @@ export function getSalesSummary(filters = {}) {
     return aggregateRows(db, `
       SELECT branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales
       FROM sales_transactions ${rangeWhere.sql}
-        ${rangeWhere.sql ? 'AND' : 'WHERE'} UPPER(menu_category) NOT LIKE '%PROMO%'
-        AND UPPER(menu_category_detail) NOT LIKE '%PROMO%' AND menu <> ''
+        ${rangeWhere.sql ? 'AND' : 'WHERE'} UPPER(COALESCE(menu_category, '')) NOT LIKE '%PROMO%'
+        AND UPPER(COALESCE(menu_category_detail, '')) NOT LIKE '%PROMO%' AND COALESCE(menu, '') <> ''
         AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
-        AND ${RANKING_CATEGORY_SQL}
+        AND REPLACE(UPPER(TRIM(COALESCE(menu_category, ''))), '-', ' ') NOT IN ('LAIN LAIN', 'MIXER', 'SNACK')
       GROUP BY branch, menu
       ORDER BY branch, SUM(qty) DESC, SUM(total_after_bill_discount) DESC
     `, rangeWhere.values);

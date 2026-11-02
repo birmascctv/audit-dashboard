@@ -283,7 +283,8 @@ export function useAuditStore() {
       const prod = b && seenBarcodes.has(b) ? { ...rawProd, barcode: '' } : rawProd;
       if (b) seenBarcodes.add(b);
       const rawExpected = (prod.stockByStore && prod.stockByStore[storeId]) ?? 0;
-      const wpExpected = Math.round(Number(rawExpected) || 0);
+      // Negative ESB stock is ignored (treated as 0)
+      const wpExpected = Math.max(0, Math.round(Number(rawExpected) || 0));
       const scanKey = scanKeyFor(prod.barcode, prod.id);
       const count = scannedCounts.value[scanKey] ?? 0;
 

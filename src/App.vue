@@ -1,10 +1,25 @@
 <script setup>
-import { ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, onMounted, onUnmounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { useAuth } from './composables/useAuth.js';
+import { isSessionExpired } from './services/authFetch.js';
 import ChillerHeader from './components/ChillerHeader.vue';
 import ScannerGuideModal from './components/ScannerGuideModal.vue';
 
 const route = useRoute();
+const router = useRouter();
+const { currentUser, logout } = useAuth();
+
+// Force logout one hour after login
+let expiryTimer = null;
+function enforceExpiry() {
+  if (currentUser.value && isSessionExpired()) {
+    logout();
+    router.replace('/login');
+  }
+}
+onMounted(() => { enforceExpiry(); expiryTimer = setInterval(enforceExpiry, 5000); });
+onUnmounted(() => clearInterval(expiryTimer));
 const soundEnabled = ref(true);
 const isGuideOpen = ref(false);
 </script>

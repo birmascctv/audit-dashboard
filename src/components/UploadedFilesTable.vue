@@ -684,7 +684,7 @@ async function downloadAuditFile(f) {
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
   } catch (err) {
-    window.location.href = `/api/download-audit-file?audit_id=${f.audit_id}`;
+    alert('File download failed');
   }
 }
 </script>

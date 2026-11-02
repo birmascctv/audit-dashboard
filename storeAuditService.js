@@ -126,12 +126,10 @@ export function getDashboardStoreData(year = 2026) {
       WHERE year = ? AND year * 12 + month = ?
       LIMIT 1
     `).get(year, latest);
-    const now = new Date();
-    const currentMonthIndex = now.getFullYear() * 12 + now.getMonth() + 1;
     const recentStoreIds = db.prepare(`${dataAudits}
       SELECT DISTINCT store_id FROM data_audits
       WHERE year = ? AND year * 12 + month BETWEEN ? AND ?
-    `).all(year, currentMonthIndex - 2, currentMonthIndex).map((row) => row.store_id);
+    `).all(year, latest - 1, latest).map((row) => row.store_id);
     return {
       stores,
       recentStoreIds,

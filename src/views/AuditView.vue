@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useAuditStore } from '../composables/useAuditStore.js';
 import { useScanner } from '../composables/useScanner.js';
 import { useAuth } from '../composables/useAuth.js';
@@ -327,6 +327,8 @@ async function saveSessionFromCurl() {
 const editingItemId = ref(null);
 const editCountValue = ref(0);
 
+const lastScannedKey = ref(null);
+
 // Hardware scanner hook for USB / Wireless Barcode Scanner
 const { scanFeedback, processBarcode } = useScanner({
   soundEnabled: true,
@@ -338,6 +340,7 @@ const { scanFeedback, processBarcode } = useScanner({
     }
     const result = await registerAuditScan(scannedBarcode, undefined, currentUser.value?.name || 'Auditor');
     if (result.success) {
+      lastScannedKey.value = result.item?.scanKey || null;
       if (result.isMatchedNow) {
         playScanMatchSound();
       } else if (result.isOvercount) {
@@ -355,6 +358,23 @@ const { scanFeedback, processBarcode } = useScanner({
   },
 });
 
+// Keep the scan notification in sync when the count is edited in the table
+watch(
+  () => {
+    const it = auditItems.value.find((i) => i.scanKey === lastScannedKey.value);
+    return it ? `${it.scannedCount}/${it.wpExpectedQty}` : null;
+  },
+  (val) => {
+    if (val && scanFeedback.value.type === 'success') {
+      scanFeedback.value = { ...scanFeedback.value, message: scanFeedback.value.message.replace(/\(\d+\/\d+\)/, `(${val})`) };
+    }
+  }
+);
+
+const discrepancyVariantsCount = computed(() =>
+  auditItems.value.filter((i) => i.scannedCount > 0 && i.scannedCount !== i.wpExpectedQty).length
+);
+
 // All items in catalog filtered for the main comparison table
 const filteredItems = computed(() => {
   return auditItems.value.slice().sort((a, b) =>
@@ -363,7 +383,7 @@ const filteredItems = computed(() => {
     if (brandFilter.value !== 'ALL' && (item.subCategory !== brandFilter.value && item.brand !== brandFilter.value)) {
       return false;
     }
-    if (statusFilter.value === 'discrepancy' && !(item.status === 'missing' || item.status === 'surplus' || item.status === 'counting')) return false;
+    if (statusFilter.value === 'discrepancy' && !(item.scannedCount > 0 && item.scannedCount !== item.wpExpectedQty)) return false;
     if (statusFilter.value === 'matched' && item.status !== 'matched') return false;
     if (statusFilter.value === 'unscanned' && item.status !== 'unscanned') return false;
     if (searchQuery.value && searchQuery.value.trim()) {
@@ -569,6 +589,103 @@ const showAuditSuccess = ref(false);
 
 
 
+    <!-- KPI Summary Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- Card 1: ESB STOCK -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">ESB STOCK</span>
+        </div>
+        <div class="my-2">
+          <span class="text-3xl font-extrabold text-slate-900 font-mono">{{ Math.round(Number(totalWpExpected) || 0).toLocaleString('id-ID') }}</span>
+          <span class="text-xs text-slate-500 ml-1.5">units</span>
+        </div>
+        <p class="text-[11px] text-slate-500">
+          Expected in {{ currentStore.name }} store
+        </p>
+      </div>
+
+      <!-- Card 2: Physical Count (Scanned) -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Physical Count (Scanned)</span>
+        </div>
+        <div class="my-2 flex items-baseline gap-2">
+          <span class="text-3xl font-extrabold text-teal-700 font-mono">{{ Number(totalScanned).toLocaleString('id-ID') }}</span>
+          <span class="text-xs text-slate-500">units counted</span>
+        </div>
+        <p class="text-[11px] text-slate-500">
+          Recorded by barcode scanner
+        </p>
+      </div>
+
+      <!-- Card 3: Net Discrepancy -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Net Discrepancy</span>
+          <span
+            v-if="totalScanned === 0"
+            class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200"
+          >
+            Pending Scan
+          </span>
+        </div>
+        <div class="my-2">
+          <template v-if="totalScanned === 0">
+            <span class="text-3xl font-extrabold font-mono text-slate-400">0</span>
+            <span class="text-xs text-slate-400 ml-1.5">(Belum Ada Scan)</span>
+          </template>
+          <template v-else>
+            <span
+              class="text-3xl font-extrabold font-mono"
+              :class="
+                netDiscrepancyBottles === 0
+                  ? 'text-emerald-600'
+                  : netDiscrepancyBottles < 0
+                  ? 'text-rose-600'
+                  : 'text-amber-600'
+              "
+            >
+              {{ netDiscrepancyBottles > 0 ? `+${netDiscrepancyBottles}` : netDiscrepancyBottles }}
+            </span>
+            <span class="text-xs text-slate-500 ml-1.5">cans difference</span>
+          </template>
+        </div>
+        <p class="text-[11px] text-slate-500">
+          <template v-if="totalScanned === 0">
+            Pindai fisik untuk mulai verifikasi perbedaan stok
+          </template>
+          <template v-else>
+            {{ missingVariantsCount }} missing SKUs • {{ surplusVariantsCount }} surplus SKUs
+          </template>
+        </p>
+      </div>
+
+      <!-- Card 4: Audit Accuracy -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Audit Accuracy</span>
+          <span class="text-xs text-slate-800 font-mono font-bold">{{ matchedVariantsCount }} / {{ storeItemsCount || auditItems.length }} Matched</span>
+        </div>
+        <div class="my-2">
+          <div class="flex items-baseline gap-2">
+            <span class="text-3xl font-extrabold text-teal-700 font-mono">{{ totalScanned === 0 ? '0%' : `${accuracyPercentage}%` }}</span>
+            <span v-if="totalScanned === 0" class="text-xs text-slate-400 font-normal">(Belum Ada Scan)</span>
+          </div>
+          <div class="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden border border-slate-200">
+            <div
+              class="h-full rounded-full transition-all duration-500"
+              :class="totalScanned === 0 ? 'bg-slate-300' : (accuracyPercentage === 100 ? 'bg-emerald-500' : accuracyPercentage > 85 ? 'bg-teal-600' : 'bg-rose-500')"
+              :style="{ width: `${totalScanned === 0 ? 0 : accuracyPercentage}%` }"
+            ></div>
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-500">
+          {{ totalScanned === 0 ? 'Pindai barcode untuk menghitung akurasi' : 'Target: 100% matched with ESB stock' }}
+        </p>
+      </div>
+    </div>
+
     <!-- Counting Station (Light theme with tosca accents) -->
     <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
       <div class="relative z-10 flex flex-col gap-4">
@@ -754,9 +871,15 @@ const showAuditSuccess = ref(false);
                       >
                         <Minus class="w-3 h-3" />
                       </button>
-                      <span class="w-8 text-center font-mono font-extrabold text-base text-teal-800">
-                        {{ item.scannedCount }}
-                      </span>
+                      <input
+                        :value="item.scannedCount"
+                        :disabled="isSessionLocked"
+                        type="number"
+                        min="0"
+                        class="w-14 rounded border border-transparent bg-transparent text-center font-mono font-extrabold text-base text-teal-800 hover:border-slate-300 focus:border-teal-500 focus:bg-white focus:outline-none"
+                        @change="setAuditCount(item.barcode, item.wpId, Math.max(0, Math.floor(Number($event.target.value) || 0)))"
+                        @keydown.enter="$event.target.blur()"
+                      />
                       <button
                         @click="registerAuditScan(item.barcode, item.wpId)"
                         class="w-5 h-5 rounded bg-teal-600 hover:bg-teal-700 text-white flex items-center justify-center transition-colors shadow-sm"
@@ -794,103 +917,6 @@ const showAuditSuccess = ref(false);
             </table>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- KPI Summary Cards -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      <!-- Card 1: ESB STOCK -->
-      <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">ESB STOCK</span>
-        </div>
-        <div class="my-2">
-          <span class="text-3xl font-extrabold text-slate-900 font-mono">{{ Math.round(Number(totalWpExpected) || 0).toLocaleString('id-ID') }}</span>
-          <span class="text-xs text-slate-500 ml-1.5">units</span>
-        </div>
-        <p class="text-[11px] text-slate-500">
-          Expected in {{ currentStore.name }} store
-        </p>
-      </div>
-
-      <!-- Card 2: Physical Count (Scanned) -->
-      <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Physical Count (Scanned)</span>
-        </div>
-        <div class="my-2 flex items-baseline gap-2">
-          <span class="text-3xl font-extrabold text-teal-700 font-mono">{{ Number(totalScanned).toLocaleString('id-ID') }}</span>
-          <span class="text-xs text-slate-500">units counted</span>
-        </div>
-        <p class="text-[11px] text-slate-500">
-          Recorded by barcode scanner
-        </p>
-      </div>
-
-      <!-- Card 3: Net Discrepancy -->
-      <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Net Discrepancy</span>
-          <span
-            v-if="totalScanned === 0"
-            class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200"
-          >
-            Pending Scan
-          </span>
-        </div>
-        <div class="my-2">
-          <template v-if="totalScanned === 0">
-            <span class="text-3xl font-extrabold font-mono text-slate-400">0</span>
-            <span class="text-xs text-slate-400 ml-1.5">(Belum Ada Scan)</span>
-          </template>
-          <template v-else>
-            <span
-              class="text-3xl font-extrabold font-mono"
-              :class="
-                netDiscrepancyBottles === 0
-                  ? 'text-emerald-600'
-                  : netDiscrepancyBottles < 0
-                  ? 'text-rose-600'
-                  : 'text-amber-600'
-              "
-            >
-              {{ netDiscrepancyBottles > 0 ? `+${netDiscrepancyBottles}` : netDiscrepancyBottles }}
-            </span>
-            <span class="text-xs text-slate-500 ml-1.5">cans difference</span>
-          </template>
-        </div>
-        <p class="text-[11px] text-slate-500">
-          <template v-if="totalScanned === 0">
-            Pindai fisik untuk mulai verifikasi perbedaan stok
-          </template>
-          <template v-else>
-            {{ missingVariantsCount }} missing SKUs • {{ surplusVariantsCount }} surplus SKUs
-          </template>
-        </p>
-      </div>
-
-      <!-- Card 4: Audit Accuracy -->
-      <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Audit Accuracy</span>
-          <span class="text-xs text-slate-800 font-mono font-bold">{{ matchedVariantsCount }} / {{ storeItemsCount || auditItems.length }} Matched</span>
-        </div>
-        <div class="my-2">
-          <div class="flex items-baseline gap-2">
-            <span class="text-3xl font-extrabold text-teal-700 font-mono">{{ totalScanned === 0 ? '0%' : `${accuracyPercentage}%` }}</span>
-            <span v-if="totalScanned === 0" class="text-xs text-slate-400 font-normal">(Belum Ada Scan)</span>
-          </div>
-          <div class="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden border border-slate-200">
-            <div
-              class="h-full rounded-full transition-all duration-500"
-              :class="totalScanned === 0 ? 'bg-slate-300' : (accuracyPercentage === 100 ? 'bg-emerald-500' : accuracyPercentage > 85 ? 'bg-teal-600' : 'bg-rose-500')"
-              :style="{ width: `${totalScanned === 0 ? 0 : accuracyPercentage}%` }"
-            ></div>
-          </div>
-        </div>
-        <p class="text-[11px] text-slate-500">
-          {{ totalScanned === 0 ? 'Pindai barcode untuk menghitung akurasi' : 'Target: 100% matched with ESB stock' }}
-        </p>
       </div>
     </div>
 
@@ -940,7 +966,7 @@ const showAuditSuccess = ref(false);
               :class="statusFilter === 'discrepancy' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
             >
               <span>Discrepancies</span>
-              <span class="px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[10px] font-bold">{{ missingVariantsCount + surplusVariantsCount }}</span>
+              <span class="px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[10px] font-bold">{{ discrepancyVariantsCount }}</span>
             </button>
             <button
               @click="statusFilter = 'matched'"
@@ -992,7 +1018,6 @@ const showAuditSuccess = ref(false);
               <th class="py-3 px-4 text-center bg-slate-100">Discrepancy</th>
               <th class="py-3 px-4 text-center bg-slate-100">Audit Status</th>
               <th class="py-3 px-4 bg-slate-100 min-w-[180px]">Notes</th>
-              <th class="py-3 px-4 text-right bg-slate-100">Action</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100 text-sm">
@@ -1208,22 +1233,11 @@ const showAuditSuccess = ref(false);
                 />
               </td>
 
-              <!-- Action -->
-              <td class="py-3.5 px-4 text-right">
-                <button
-                  @click="registerAuditScan(item.barcode, item.wpId)"
-                  type="button"
-                  class="px-2.5 py-1 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-sm transition-all"
-                  title="Simulate 1 scan of this barcode"
-                >
-                  +1 Scan
-                </button>
-              </td>
             </tr>
 
             <!-- Empty Filter State -->
             <tr v-if="filteredItems.length === 0">
-              <td colspan="9" class="py-12 text-center text-slate-400">
+              <td colspan="8" class="py-12 text-center text-slate-400">
                 <Package class="w-8 h-8 text-slate-300 mx-auto mb-2" />
                 <p class="font-medium text-slate-600">No products matching your search</p>
                 <button

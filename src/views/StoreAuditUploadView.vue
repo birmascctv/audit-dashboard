@@ -16,7 +16,7 @@
             <span class="font-medium">Audit data saved to SQLite database. Dashboard charts and table below now reflect this update.</span>
           </div>
           <router-link
-            to="/dashboard"
+            to="/store-audit"
             class="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs whitespace-nowrap transition-colors text-center shadow-md shadow-teal-600/20"
           >
             View Dashboard →

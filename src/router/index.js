@@ -6,6 +6,7 @@ import AuditView from '../views/AuditView.vue';
 import AuditHistoryView from '../views/AuditHistoryView.vue';
 import SalesReportView from '../views/SalesReportView.vue';
 import LoginView from '../views/LoginView.vue';
+import { isSessionExpired } from '../services/authFetch.js';
 
 const routes = [
   {
@@ -18,35 +19,40 @@ const routes = [
           if (user.role === 'admin') return '/sales';
         }
       } catch {}
-      return '/dashboard';
+      return '/store-audit';
     },
   },
+  { path: '/dashboard', redirect: '/store-audit' },
+  { path: '/dashboard/2025', redirect: '/store-audit2025' },
+  { path: '/upload', redirect: '/upload-audits' },
+  { path: '/audit', redirect: '/stock-audit' },
+  { path: '/history', redirect: '/audit-records' },
   {
-    path: '/dashboard',
+    path: '/store-audit',
     name: 'StoreAudit',
     component: StoreAuditView,
     meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
   },
   {
-    path: '/dashboard/2025',
+    path: '/store-audit2025',
     name: 'StoreAudit2025',
     component: StoreAudit2025View,
     meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
   },
   {
-    path: '/upload',
+    path: '/upload-audits',
     name: 'StoreAuditUpload',
     component: StoreAuditUploadView,
     meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
   },
   {
-    path: '/audit',
+    path: '/stock-audit',
     name: 'StockAudit',
     component: AuditView,
     meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
   },
   {
-    path: '/history',
+    path: '/audit-records',
     name: 'AuditHistory',
     component: AuditHistoryView,
     meta: { requiresAuth: true, allowedRoles: ['auditor', 'superadmin'] },
@@ -80,7 +86,7 @@ router.beforeEach((to, from, next) => {
   let user = null;
   try {
     const session = sessionStorage.getItem('birmas_audit_session_v4');
-    if (session) {
+    if (session && !isSessionExpired()) {
       user = JSON.parse(session);
     }
   } catch {
@@ -98,7 +104,7 @@ router.beforeEach((to, from, next) => {
     if (userRole === 'admin') {
       return next('/sales');
     }
-    return next('/dashboard');
+    return next('/store-audit');
   }
 
   // Strict Role-Based Access Control check
@@ -107,7 +113,7 @@ router.beforeEach((to, from, next) => {
       return next('/sales');
     }
     if (userRole === 'auditor') {
-      return next('/dashboard');
+      return next('/store-audit');
     }
     return next('/login');
   }

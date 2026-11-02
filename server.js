@@ -1025,14 +1025,21 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-  // Global CORS headers for cross-origin sync from Birmas server & dashboards
-  app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    if (req.method === 'OPTIONS') {
-      return res.sendStatus(200);
-    }
+  // No CORS headers: the dashboard is same-origin, and server-to-server pushes do not need them.
+  // Every /api call needs a valid (1 hour) session token, except login/logout and the Birmas server push endpoints.
+  const PUBLIC_API = new Set(['/api/auth/login', '/api/auth/logout', '/api/stock/push', '/api/sync/push', '/api/sales/push', '/api/esb/webhook']);
+  app.use('/api', (req, res, next) => {
+    if (PUBLIC_API.has(req.originalUrl.split('?')[0])) return next();
+    const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '');
+    const session = match ? db.getAuthSession(match[1]) : null;
+    if (!session) return res.status(401).json({ success: false, error: 'Session expired - please log in again.' });
+    const url = req.originalUrl.split('?')[0];
+    const isConfig = /^\/api\/(wordpress|esb|birmas)\/(config|erp-config)$/.test(url) && req.method !== 'GET';
+    const salesOnly = url.startsWith('/api/sales') && session.role === 'auditor';
+    const stockOnly = !url.startsWith('/api/sales') && session.role === 'admin' && !url.startsWith('/api/stores');
+    if (isConfig && session.role !== 'superadmin') return res.status(403).json({ success: false, error: 'Superadmin only.' });
+    if (salesOnly || stockOnly) return res.status(403).json({ success: false, error: 'Access denied.' });
+    req.authUser = session;
     next();
   });
 
@@ -1237,7 +1244,13 @@ async function startServer() {
 
     const products = db.getAllProducts();
     let clean = (barcode || '').trim();
+    const normCode = (v) => String(v || '').replace(/[^0-9A-Za-z]/g, '').replace(/^0+(?=.)/, '').toLowerCase();
     let product = clean ? products.find((p) => p.barcode === clean) : null;
+    if (!product && clean && !clean.startsWith('id:')) {
+      const want = normCode(clean);
+      product = products.find((p) => p.barcode && normCode(p.barcode) === want) || null;
+      if (product) clean = String(product.barcode).trim();
+    }
     if (!product && productId) {
       product = products.find((p) => String(p.id) === String(productId));
       if (product && !clean) clean = `id:${product.id}`;
@@ -1386,6 +1399,18 @@ async function startServer() {
     };
 
     db.saveAuditHistoryRecord(auditRecord);
+
+    // Keep a queryable copy of the per-product notes written during this audit
+    try {
+      const sqlite = db.getDb();
+      sqlite.exec('CREATE TABLE IF NOT EXISTS audit_history_notes (audit_id TEXT NOT NULL, product_id TEXT, product_name TEXT, barcode TEXT, scanned_qty INTEGER, esb_qty INTEGER, note TEXT NOT NULL, created_at TEXT);');
+      const ins = sqlite.prepare('INSERT INTO audit_history_notes (audit_id, product_id, product_name, barcode, scanned_qty, esb_qty, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);');
+      for (const it of keptItems) {
+        if (it && it.note) ins.run(auditRecord.id, String(it.wpId ?? it.productId ?? ''), String(it.productTitle || it.varian || ''), String(it.barcode || ''), num(it.scannedCount), num(it.wpExpectedQty), String(it.note), nowIso);
+      }
+    } catch (err) {
+      console.warn('[Audit] could not save audit notes:', err.message);
+    }
 
     // Update stock in SQLite if pushed
     if (audit.pushedToWordPress && audit.items) {

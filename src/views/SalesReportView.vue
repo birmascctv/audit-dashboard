@@ -221,10 +221,10 @@ const topProductWindows = computed(() => [
   {
     title: 'This Month',
     key: 'topProductsThisMonth',
-    selectedStores: topProductsThisMonthStores.value,
-    toggleStore: toggleTopProductsMonthStore,
-    setStoresAll: setTopProductsMonthStoresAll,
-    products: getTop5Products(summary.value.topProductsThisMonth, topProductsThisMonthStores.value),
+    selectedStores: topProductsLastWeekStores.value,
+    toggleStore: toggleTopProductsWeekStore,
+    setStoresAll: setTopProductsWeekStoresAll,
+    products: getTop5Products(summary.value.topProductsThisMonth, topProductsLastWeekStores.value),
   },
 ]);
 const monthlyValues = computed(() => {
@@ -762,13 +762,17 @@ function handleImported() {
   loadReport();
   loadTimeSummary();
 }
-function downloadFile(file) {
+async function downloadFile(file) {
+  const res = await fetch(`/api/sales/files/${encodeURIComponent(file.id)}/download`);
+  if (!res.ok) return;
+  const url = URL.createObjectURL(await res.blob());
   const link = document.createElement('a');
-  link.href = `/api/sales/files/${encodeURIComponent(file.id)}/download`;
+  link.href = url;
   link.download = file.filename || 'sales_clean.csv';
   document.body.appendChild(link);
   link.click();
   link.remove();
+  URL.revokeObjectURL(url);
 }
 async function deleteFile() {
   if (!deletingFile.value) return;
@@ -828,7 +832,19 @@ onMounted(() => {
     loadStockCompare();
   }, 60000);
 });
-onBeforeUnmount(() => clearInterval(autoRefreshTimer));
+// Close every open dropdown when clicking anywhere outside it
+function closeDropdownsOnOutsideClick(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  document.querySelectorAll('.sales-report details[open]').forEach((details) => {
+    if (!details.contains(target)) details.open = false;
+  });
+  if (!target?.closest('[data-dropdown="pivot"]')) pivotDropdownOpen.value = false;
+}
+onMounted(() => document.addEventListener('click', closeDropdownsOnOutsideClick));
+onBeforeUnmount(() => {
+  clearInterval(autoRefreshTimer);
+  document.removeEventListener('click', closeDropdownsOnOutsideClick);
+});
 </script>
 
 <template>
@@ -875,6 +891,24 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
           </ol>
         </article>
       </section>
+      <div class="flex items-center justify-end gap-2 text-xs font-semibold text-slate-600"><span>Stores (Last 7 Days &amp; This Month)</span>
+            <details class="relative">
+              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:border-slate-300">
+                <span>{{ checklistLabel(topProductsLastWeekStores, 'All stores', 'stores') }}</span>
+                <span aria-hidden="true" class="text-slate-400">▾</span>
+              </summary>
+              <div class="absolute right-0 z-30 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold text-slate-800">
+                  <input type="checkbox" :checked="topProductsLastWeekStores === null" @change="setTopProductsWeekStoresAll">
+                  All stores
+                </label>
+                <label v-for="store in chartStoreOptions" :key="store.name" class="flex gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-700 hover:bg-slate-50">
+                  <input type="checkbox" :checked="topProductsLastWeekStores === null || topProductsLastWeekStores.includes(store.name)" @change="toggleTopProductsWeekStore(store.name)">
+                  {{ store.name }}
+                </label>
+              </div>
+            </details>
+      </div>
       <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <article v-for="window in topProductWindows" :key="window.key" class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <header class="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
@@ -882,22 +916,6 @@ onBeforeUnmount(() => clearInterval(autoRefreshTimer));
               <h2 class="text-sm font-bold text-slate-900">Top 5 Products · {{ window.title }}</h2>
               <p class="text-[11px] text-slate-500">Top 5 products by quantity sold · Excludes package items</p>
             </div>
-            <details class="relative">
-              <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:border-slate-300">
-                <span>{{ checklistLabel(window.selectedStores, 'All stores', 'stores') }}</span>
-                <span aria-hidden="true" class="text-slate-400">▾</span>
-              </summary>
-              <div class="absolute right-0 z-30 mt-1 max-h-64 w-56 overflow-auto rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
-                <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold text-slate-800">
-                  <input type="checkbox" :checked="window.selectedStores === null" @change="window.setStoresAll">
-                  All stores
-                </label>
-                <label v-for="store in chartStoreOptions" :key="store.name" class="flex gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-700 hover:bg-slate-50">
-                  <input type="checkbox" :checked="window.selectedStores === null || window.selectedStores.includes(store.name)" @change="window.toggleStore(store.name)">
-                  {{ store.name }}
-                </label>
-              </div>
-            </details>
           </header>
           <div class="overflow-x-auto rounded-xl border border-slate-100">
             <table class="w-full table-fixed text-xs">

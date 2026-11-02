@@ -32,7 +32,7 @@ async function handleLogin() {
       if (result.user?.role === 'admin') {
         router.push('/sales');
       } else {
-        router.push('/dashboard');
+        router.push('/store-audit');
       }
     } else {
       errorMessage.value = result.message || 'Invalid username or password';

@@ -47,8 +47,8 @@ const cleanUserName = computed(() => {
   if (!currentUser.value?.name) return 'User';
   return currentUser.value.name.replace(/\s*\([^)]*\)/g, '').trim();
 });
-const isStoreAuditRoute = computed(() => route.path === '/dashboard' || route.path === '/dashboard/2025');
-const isAuditRoute = computed(() => isStoreAuditRoute.value || ['/upload', '/audit', '/history'].includes(route.path));
+const isStoreAuditRoute = computed(() => route.path === '/store-audit' || route.path === '/store-audit2025');
+const isAuditRoute = computed(() => isStoreAuditRoute.value || ['/upload-audits', '/stock-audit', '/audit-records'].includes(route.path));
 const canAccessAuditMenu = computed(() =>
   canAccessStoreAudit.value || canAccessUploadAudits.value || canAccessStockAudit.value || canAccessAuditRecords.value
 );
@@ -69,14 +69,23 @@ function updateDropdownPosition() {
   };
 }
 
+// Hover already opens the menu, so a click only needs to keep it open (touch devices open it here)
 function toggleAuditMenu() {
-  auditMenuOpen.value = !auditMenuOpen.value;
-  if (auditMenuOpen.value) {
+  hoverOpen();
+}
+
+let hoverTimer = null;
+function hoverOpen() {
+  clearTimeout(hoverTimer);
+  if (!auditMenuOpen.value) {
+    auditMenuOpen.value = true;
     storeSubmenuOpen.value = isStoreAuditRoute.value;
     updateDropdownPosition();
-  } else {
-    storeSubmenuOpen.value = false;
   }
+}
+function hoverClose() {
+  clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(closeMenus, 200);
 }
 
 function handleOutsidePointerDown(event) {
@@ -107,7 +116,7 @@ onUnmounted(() => {
     <div class="max-w-[1560px] mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
       <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div class="flex min-w-0 items-center gap-3">
-          <router-link :to="isAdmin ? '/sales' : '/dashboard'" class="flex min-w-0 items-center gap-2.5 group">
+          <router-link :to="isAdmin ? '/sales' : '/store-audit'" class="flex min-w-0 items-center gap-2.5 group">
             <div class="w-9 h-9 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform p-0.5 shrink-0">
               <img src="/birmas_logo.png" alt="Birmas Logo" class="w-full h-full object-contain" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
               <div class="w-full h-full rounded-lg bg-gradient-to-tr from-teal-600 to-cyan-600 hidden items-center justify-center text-white">
@@ -124,11 +133,11 @@ onUnmounted(() => {
           </router-link>
 
           <nav ref="menuRoot" class="relative flex shrink-0 items-center gap-2" aria-label="Main navigation">
-            <div v-if="canAccessAuditMenu" class="relative">
+            <div v-if="canAccessAuditMenu" class="relative" @mouseenter="hoverOpen" @mouseleave="hoverClose">
               <button
                 ref="auditButton"
                 type="button"
-                class="inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+                class="inline-flex w-40 items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
                 :class="isAuditRoute || auditMenuOpen ? 'border-teal-600 bg-teal-600 text-white shadow-xs' : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'"
                 aria-haspopup="true"
                 aria-controls="audit-navigation-menu"
@@ -139,6 +148,7 @@ onUnmounted(() => {
                 <ChevronDown class="w-4 h-4 transition-transform" :class="auditMenuOpen ? 'rotate-180' : ''" />
               </button>
 
+              <Transition name="menu-slide">
               <div
                 v-if="auditMenuOpen"
                 id="audit-navigation-menu"
@@ -159,15 +169,15 @@ onUnmounted(() => {
                   </button>
                   <div v-if="storeSubmenuOpen" id="store-audit-years" class="ml-7 border-l border-slate-200 py-1 pl-3">
                     <router-link
-                      to="/dashboard/2025"
+                      to="/store-audit2025"
                       class="block rounded-lg px-3 py-2 text-sm font-semibold transition-colors"
-                      :class="route.path === '/dashboard/2025' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'"
+                      :class="route.path === '/store-audit2025' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'"
                       @click="closeMenus"
                     >2025</router-link>
                     <router-link
-                      to="/dashboard"
+                      to="/store-audit"
                       class="mt-1 block rounded-lg px-3 py-2 text-sm font-semibold transition-colors"
-                      :class="route.path === '/dashboard' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'"
+                      :class="route.path === '/store-audit' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'"
                       @click="closeMenus"
                     >2026</router-link>
                   </div>
@@ -175,32 +185,33 @@ onUnmounted(() => {
 
                 <router-link
                   v-if="canAccessUploadAudits"
-                  to="/upload"
+                  to="/upload-audits"
                   class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
-                  :class="route.path === '/upload' ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                  :class="route.path === '/upload-audits' ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
                   @click="closeMenus"
                 ><UploadCloud class="h-4 w-4" />Upload Audits</router-link>
                 <router-link
                   v-if="canAccessStockAudit"
-                  to="/audit"
+                  to="/stock-audit"
                   class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
-                  :class="route.path === '/audit' ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                  :class="route.path === '/stock-audit' ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
                   @click="closeMenus"
                 ><ClipboardCheck class="h-4 w-4" />Stock Audit</router-link>
                 <router-link
                   v-if="canAccessAuditRecords"
-                  to="/history"
+                  to="/audit-records"
                   class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
-                  :class="route.path === '/history' ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                  :class="route.path === '/audit-records' ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
                   @click="closeMenus"
                 ><ClipboardCheck class="h-4 w-4" />Audit Records</router-link>
               </div>
+              </Transition>
             </div>
 
             <router-link
               v-if="canAccessSalesReport"
               to="/sales"
-              class="inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+              class="inline-flex w-40 items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
               :class="route.path === '/sales' ? 'border-teal-600 bg-teal-600 text-white shadow-xs' : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'"
             ><TrendingUp class="h-4 w-4" />Sales Report</router-link>
           </nav>
@@ -250,3 +261,10 @@ onUnmounted(() => {
     </div>
   </header>
 </template>
+
+<style scoped>
+.menu-slide-enter-active,
+.menu-slide-leave-active { transition: opacity 180ms ease, transform 180ms ease; }
+.menu-slide-enter-from,
+.menu-slide-leave-to { opacity: 0; transform: translateY(-10px); }
+</style>

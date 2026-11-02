@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue';
-import { getAuthToken, setAuthToken } from '../services/authFetch.js';
+import { getAuthToken, setAuthToken, isSessionExpired } from '../services/authFetch.js';
 
 const AUTH_STORAGE_KEY = 'birmas_audit_session_v4';
 
@@ -12,7 +12,6 @@ export const DEFAULT_ACCOUNTS = [
     role: 'superadmin',
     roleLabel: 'Super Admin',
     accessScope: 'Store Audit, Upload Audits, Stock Audit, Audit Records & Sales Report',
-    hint: 'Password: superadmin666',
   },
   {
     id: 'user-admin',
@@ -22,7 +21,6 @@ export const DEFAULT_ACCOUNTS = [
     role: 'admin',
     roleLabel: 'Sales Admin',
     accessScope: 'Sales Report Only',
-    hint: 'Password: admin666',
   },
   {
     id: 'user-chrisna',
@@ -32,7 +30,6 @@ export const DEFAULT_ACCOUNTS = [
     role: 'auditor',
     roleLabel: 'Store & Stock Auditor',
     accessScope: 'Store Audit, Upload Audits, Stock Audit & Audit Records',
-    hint: 'Password: auditor666',
   },
 ];
 
@@ -51,7 +48,7 @@ function getStoredUser() {
   if (typeof window === 'undefined') return null;
   try {
     const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
-    if (raw) {
+    if (raw && !isSessionExpired()) {
       return JSON.parse(raw);
     }
     return null;
@@ -89,25 +86,6 @@ export function useAuth() {
         };
       }
     } catch (err) {
-      // Local fallback if server unreachable
-      const cleanUser = usernameInput.trim().toLowerCase();
-      const matched = DEFAULT_ACCOUNTS.find(
-        (u) => u.username.toLowerCase() === cleanUser || u.email.toLowerCase() === cleanUser
-      );
-      if (
-        matched &&
-        ((cleanUser === 'superadmin' && passwordInput === 'superadmin666') ||
-         (cleanUser === 'admin' && passwordInput === 'admin666') ||
-         (cleanUser === 'chrisna' && passwordInput === 'auditor666') ||
-         (cleanUser === 'auditor' && passwordInput === 'auditor666'))
-      ) {
-        currentUser.value = matched;
-        if (typeof window !== 'undefined') {
-          sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(matched));
-          setAuthToken('');
-        }
-        return { success: true, message: 'Logged in successfully', user: matched };
-      }
       return { success: false, message: err.message || 'Invalid username or password' };
     }
   }

@@ -283,6 +283,15 @@ function handleClearHistory() {
   }
 }
 
+function downloadSession(a) {
+  const rows = [
+    ...discrepancyItems(a).map((i) => ({ Section: 'Discrepancy', Product: i.productTitle || i.varian || '', Qty: num(i.scannedCount ?? i.count), ESB: num(i.wpExpectedQty), Difference: num(i.discrepancy), Notes: i.note || '' })),
+    ...matchedItems(a).map((i) => ({ Section: 'Matched', Product: i.productTitle || i.varian || '', Qty: num(i.scannedCount ?? i.count), ESB: num(i.wpExpectedQty), Difference: 0, Notes: i.note || '' })),
+  ];
+  const name = `${a.storeName}_${String(a.completedAt || '').slice(0, 10)}`.replace(/[^\w-]+/g, '_');
+  exportToCSV(`Audit_${name}.csv`, rows);
+}
+
 function exportHistoryCSV() {
   const data = auditHistory.value.map((a, idx) => ({
     No: idx + 1,
@@ -441,9 +450,8 @@ function exportHistoryCSV() {
               <tr class="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase">
                 <th class="py-3 px-4 w-12 text-center">Rank</th>
                 <th class="py-3 px-4">Store Name</th>
-                <th class="py-3 px-4 text-center">Audits Filed</th>
-                <th class="py-3 px-4 text-center">Missing Cans (Shortage)</th>
-                <th class="py-3 px-4 text-center">Surplus Cans</th>
+                <th class="py-3 px-4 text-center">MISSING PRODUCTS</th>
+                <th class="py-3 px-4 text-center">SURPLUS</th>
                 <th class="py-3 px-4 text-center">Net Variance</th>
                 <th class="py-3 px-4 text-center w-40">Accuracy Rate</th>
                 <th class="py-3 px-4 text-center">Risk Assessment</th>
@@ -482,11 +490,6 @@ function exportHistoryCSV() {
                     <Building2 class="w-4 h-4 text-teal-600 shrink-0" />
                     <span>{{ store.storeName }}</span>
                   </div>
-                </td>
-
-                <!-- Audits Filed -->
-                <td class="py-3.5 px-4 text-center font-mono font-semibold text-slate-700">
-                  {{ store.totalAudits }}
                 </td>
 
                 <!-- Missing Cans -->
@@ -640,6 +643,15 @@ function exportHistoryCSV() {
                     >
                       <Eye class="w-3 h-3" />
                       <span>{{ expandedId === audit.id ? 'Hide' : 'Details' }}</span>
+                    </button>
+                    <button
+                      @click.stop="downloadSession(audit)"
+                      type="button"
+                      class="px-2 py-1 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                      title="Download discrepancies and matched products (CSV)"
+                    >
+                      <Download class="w-3 h-3" />
+                      <span>CSV</span>
                     </button>
                     <template v-if="isSuperAdmin">
                       <button
