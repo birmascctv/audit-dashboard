@@ -430,6 +430,12 @@ export function getSalesSummary(filters = {}) {
       AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
     GROUP BY menu ORDER BY sales DESC LIMIT 10
   `, productWhere.values);
+  const topProductsAllStoresQty = aggregateRows(db, `
+    SELECT 'All stores' AS branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales
+    FROM sales_transactions ${productWhere.sql} AND menu <> ''
+      AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
+    GROUP BY menu ORDER BY qty DESC, menu LIMIT 10
+  `, productWhere.values);
   const byStoreBrand = aggregateRows(db, `
     SELECT branch, menu_category_detail AS name,
       SUM(total_after_bill_discount) AS sales, SUM(qty) AS units
@@ -465,6 +471,16 @@ export function getSalesSummary(filters = {}) {
     SELECT branch, menu, qty, sales FROM (
       SELECT branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
         ROW_NUMBER() OVER (PARTITION BY branch ORDER BY SUM(total_after_bill_discount) DESC) AS rank
+      FROM sales_transactions ${productWhere.sql} AND menu <> ''
+        AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
+      GROUP BY branch, menu
+    ) WHERE rank <= 10 ORDER BY branch, rank
+  `, productWhere.values);
+
+  const topProductsByStoreQty = aggregateRows(db, `
+    SELECT branch, menu, qty, sales FROM (
+      SELECT branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
+        ROW_NUMBER() OVER (PARTITION BY branch ORDER BY SUM(qty) DESC, menu) AS rank
       FROM sales_transactions ${productWhere.sql} AND menu <> ''
         AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
       GROUP BY branch, menu
@@ -513,6 +529,8 @@ export function getSalesSummary(filters = {}) {
     storePayments,
     topProductsByStore,
     topProductsAllStores,
+    topProductsAllStoresQty,
+    topProductsByStoreQty,
     topProductsLastWeek,
     topProductsThisMonth,
     latestSaleAt: db.prepare(`SELECT MAX(sales_date_in) AS d FROM sales_transactions`).get()?.d || null,
