@@ -129,7 +129,7 @@ export function getDashboardStoreData(year = 2026) {
     const recentStoreIds = db.prepare(`${dataAudits}
       SELECT DISTINCT store_id FROM data_audits
       WHERE year = ? AND year * 12 + month BETWEEN ? AND ?
-    `).all(year, latest - 1, latest).map((row) => row.store_id);
+    `).all(year, latest - 2, latest).map((row) => row.store_id);
     return {
       stores,
       recentStoreIds,
@@ -802,7 +802,7 @@ function calculateMedian(values) {
 }
 
 // Helper to recompute aggregates for a store, year, month
-function recomputeStoreMonthAggregates(db, storeId, year, month) {
+export function recomputeStoreMonthAggregates(db, storeId, year, month) {
   try {
     // 1. store_monthly_median
     const storeScores = db.prepare(`
@@ -1137,6 +1137,10 @@ export function processAuditUpload({ storeName, year, month, fileName, fileBuffe
 
     let rawPassFail = (colIdx.passFail !== -1 ? r[colIdx.passFail] : '') || '';
     let passFailVal = rawPassFail.trim() || null;
+    // Newer exports put a numeric rating in this column; only a real Pass / Not Pass text counts
+    if (passFailVal && !/^(not\s*pass|pass|fail|failed|lulus|tidak\s*lulus)$/i.test(passFailVal)) passFailVal = null;
+    if (passFailVal && /^(fail|failed|tidak\s*lulus)$/i.test(passFailVal)) passFailVal = 'Not Pass';
+    if (passFailVal && /^lulus$/i.test(passFailVal)) passFailVal = 'Pass';
     if (!passFailVal && scoreVal !== null && pgVal !== null) {
       passFailVal = scoreVal >= pgVal ? 'Pass' : 'Not Pass';
     }

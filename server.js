@@ -2574,7 +2574,7 @@ async function startServer() {
         const expectedClosing = Number(match.stock.opening || 0) - Number(item.qty || 0);
         const actualClosing = match.stock.closing == null ? null : Number(match.stock.closing);
         const difference = actualClosing == null ? null : actualClosing - expectedClosing;
-        return { product: item.menu, stockProduct: match.stock.name, opening: Number(match.stock.opening || 0), sold: Number(item.qty || 0), expectedClosing, actualClosing, difference, status: difference === null ? 'unmatched' : difference === 0 ? 'matched' : 'mismatch' };
+        return { product: item.menu, stockProduct: match.stock.name, opening: Number(match.stock.opening || 0), sold: Number(item.qty || 0), expectedClosing, actualClosing, difference, status: difference === null ? 'unmatched' : difference === 0 ? 'matched' : difference > 0 ? 'Restocked' : 'Missing' };
       });
       for (const stock of stockNames) if (!used.has(stock.id)) rows.push({ product: stock.name, opening: Number(stock.opening || 0), sold: null, expectedClosing: null, actualClosing: stock.closing == null ? null : Number(stock.closing), difference: null, status: 'unmatched', stockProduct: stock.name });
       res.json({ success: true, needsSnapshots: false, storeId, rows });

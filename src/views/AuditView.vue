@@ -405,12 +405,12 @@ const page = ref(1);
 
 const filteredItems = computed(() => {
   return auditItems.value.slice().sort((a, b) =>
+    (Number(b.wpExpectedQty) > 0) - (Number(a.wpExpectedQty) > 0) ||
     String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' })
   ).filter((item) => {
     if (brandFilter.value !== 'ALL' && item.brand !== brandFilter.value) return false;
     if (categoryFilter.value !== 'ALL' && item.category !== categoryFilter.value) return false;
     if (mismatchesOnly.value && !(item.scannedCount > 0 && item.scannedCount !== item.wpExpectedQty)) return false;
-    if (statusFilter.value === 'ALL' && !(Number(item.wpExpectedQty) > 0 || item.scannedCount > 0)) return false;
     if (statusFilter.value === 'discrepancy' && !(item.scannedCount > 0 && item.scannedCount !== item.wpExpectedQty)) return false;
     if (statusFilter.value === 'matched' && item.status !== 'matched') return false;
     if (statusFilter.value === 'unscanned' && item.status !== 'unscanned') return false;
@@ -1012,20 +1012,20 @@ const showAuditSuccess = ref(false);
 
         <!-- Filter tabs & search -->
         <div class="mt-4 flex flex-col gap-3 pt-3 border-t border-slate-200">
-          <div class="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 self-start">
+          <div class="flex flex-wrap items-center gap-2 self-start">
             <button
               @click="statusFilter = 'ALL'"
               type="button"
-              class="px-3 py-2 min-h-12 rounded-lg text-xs font-semibold transition-colors"
-              :class="statusFilter === 'ALL' ? 'bg-teal-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+              class="px-3 py-2 min-h-12 rounded-lg border text-xs font-semibold transition-colors"
+              :class="statusFilter === 'ALL' ? 'bg-teal-600 border-teal-600 text-white shadow-sm' : 'bg-teal-50 border-teal-200 text-teal-800 hover:bg-teal-100'"
             >
               All ({{ auditItems.length }})
             </button>
             <button
               @click="statusFilter = 'discrepancy'"
               type="button"
-              class="px-3 py-2 min-h-12 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
-              :class="statusFilter === 'discrepancy' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+              class="px-3 py-2 min-h-12 rounded-lg border text-xs font-semibold transition-colors flex items-center gap-1"
+              :class="statusFilter === 'discrepancy' ? 'bg-rose-600 border-rose-600 text-white shadow-sm' : 'bg-rose-50 border-rose-200 text-rose-800 hover:bg-rose-100'"
             >
               <span>Discrepancies</span>
               <span class="px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[10px] font-bold">{{ discrepancyVariantsCount }}</span>
@@ -1033,8 +1033,8 @@ const showAuditSuccess = ref(false);
             <button
               @click="statusFilter = 'matched'"
               type="button"
-              class="px-3 py-2 min-h-12 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
-              :class="statusFilter === 'matched' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+              class="px-3 py-2 min-h-12 rounded-lg border text-xs font-semibold transition-colors flex items-center gap-1"
+              :class="statusFilter === 'matched' ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm' : 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'"
             >
               <span>Matched</span>
               <span class="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">{{ matchedVariantsCount }}</span>
@@ -1042,8 +1042,8 @@ const showAuditSuccess = ref(false);
             <button
               @click="statusFilter = 'unscanned'"
               type="button"
-              class="px-3 py-2 min-h-12 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1"
-              :class="statusFilter === 'unscanned' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+              class="px-3 py-2 min-h-12 rounded-lg border text-xs font-semibold transition-colors flex items-center gap-1"
+              :class="statusFilter === 'unscanned' ? 'bg-slate-700 border-slate-700 text-white shadow-sm' : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'"
             >
               <span>Unscanned</span>
               <span class="px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 text-[10px] font-bold">{{ unscannedVariantsCount }}</span>
@@ -1051,15 +1051,15 @@ const showAuditSuccess = ref(false);
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
-            <select v-model="brandFilter" class="min-h-12 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-800">
+            <select v-model="brandFilter" class="min-h-12 px-3 py-2 bg-sky-50 border border-sky-300 rounded-xl text-sm font-semibold text-sky-900">
               <option value="ALL">All brands</option>
               <option v-for="brand in availableBrands" :key="brand" :value="brand">{{ brand }}</option>
             </select>
-            <select v-model="categoryFilter" class="min-h-12 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-800">
+            <select v-model="categoryFilter" class="min-h-12 px-3 py-2 bg-violet-50 border border-violet-300 rounded-xl text-sm font-semibold text-violet-900">
               <option value="ALL">All categories</option>
               <option v-for="category in availableCategories" :key="category" :value="category">{{ category }}</option>
             </select>
-            <label class="inline-flex min-h-12 items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm text-slate-700">
+            <label class="inline-flex min-h-12 items-center gap-2 px-3 py-2 rounded-xl border border-rose-300 bg-rose-50 text-sm font-semibold text-rose-800">
               <input v-model="mismatchesOnly" type="checkbox" class="accent-rose-600" />
               Show only mismatches
             </label>
@@ -1079,13 +1079,13 @@ const showAuditSuccess = ref(false);
       </div>
 
       <!-- Main Audit Table (Sticky Header like Google Sheets) -->
-      <div class="overflow-x-auto overflow-y-auto max-h-[calc(100vh-280px)] min-h-[280px] flex-1 relative border-t border-slate-200">
+      <div class="overflow-x-auto flex-1 relative border-t border-slate-200">
         <div v-if="!isInitialized" class="p-5"><SkeletonBlock :rows="8" height="h-8" /></div>
         <EmptyState v-else-if="filteredItems.length === 0" title="No matching products" hint="Adjust the search or filters to see products.">
           <button @click="searchQuery = ''; statusFilter = 'ALL'; brandFilter = 'ALL'; categoryFilter = 'ALL'; mismatchesOnly = false" class="min-h-12 px-4 py-2 rounded-xl bg-teal-50 text-teal-800 font-semibold">Reset filters</button>
         </EmptyState>
         <table v-else class="min-w-[900px] w-full text-left border-collapse">
-          <thead class="sticky top-0 z-20 shadow-sm">
+          <thead class="shadow-sm">
             <tr class="bg-slate-100 border-b border-slate-300 text-[11px] font-bold text-slate-700 uppercase tracking-wider">
               <th class="py-3 px-4 w-12 text-center bg-slate-100">No</th>
               <th class="py-3 px-4 bg-slate-100">Kode Barcode</th>
@@ -1105,24 +1105,26 @@ const showAuditSuccess = ref(false);
             <tr
               v-for="(item, idx) in pagedItems"
               :key="item.barcode"
-              class="hover:bg-slate-50/80 transition-colors"
+              class="transition-colors border-l-4"
               :class="
                 item.status === 'matched'
-                  ? 'bg-emerald-50/20'
+                  ? 'bg-emerald-50 border-l-emerald-500 hover:bg-emerald-100/70'
                   : item.status === 'missing' && item.scannedCount > 0
-                  ? 'bg-rose-50/20'
-                  : item.status === 'surplus'
-                  ? 'bg-amber-50/20'
-                  : ''
+                  ? 'bg-rose-50 border-l-rose-500 hover:bg-rose-100/70'
+                  : item.status === 'counting' || item.status === 'surplus'
+                  ? 'bg-amber-50 border-l-amber-500 hover:bg-amber-100/70'
+                  : Number(item.wpExpectedQty) > 0
+                  ? (idx % 2 ? 'bg-slate-50 border-l-transparent hover:bg-slate-100' : 'bg-white border-l-transparent hover:bg-slate-50')
+                  : 'bg-slate-100/80 border-l-slate-300 text-slate-500 hover:bg-slate-100'
               "
             >
               <!-- No -->
-              <td class="py-1 px-4 text-center font-mono text-xs text-slate-400">
+              <td class="py-3.5 px-4 text-center font-mono text-xs text-slate-400">
                 {{ (page - 1) * PAGE_SIZE + idx + 1 }}
               </td>
 
               <!-- Barcode -->
-              <td class="py-1 px-4 font-mono text-xs text-teal-800">
+              <td class="py-3.5 px-4 font-mono text-xs text-teal-800">
                 <div class="flex items-center gap-1.5">
                   <Barcode class="w-4 h-4 text-slate-400 shrink-0" />
                   <span class="bg-slate-50 px-2 py-0.5 rounded border border-slate-200 tracking-wider font-semibold">
@@ -1132,7 +1134,7 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Product Name -->
-              <td class="py-1 px-4 font-semibold text-slate-900">
+              <td class="py-3.5 px-4 font-semibold text-slate-900">
                 <div class="flex flex-col">
                   <span class="text-sm font-bold text-slate-900">{{ item.productTitle || item.varian }}</span>
                   <div class="flex items-center gap-2 text-[11px] text-slate-500 font-normal">
@@ -1146,7 +1148,7 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Qty (ESB Expected) -->
-              <td class="py-1 px-4 text-center font-mono font-bold bg-slate-50/40 text-base">
+              <td class="py-3.5 px-4 text-center font-mono font-bold bg-slate-50/40 text-lg">
                 <div class="flex flex-col items-center justify-center">
                   <span :class="item.wpExpectedQty < 0 ? 'text-rose-600 font-extrabold' : 'text-slate-800'">
                     {{ Math.round(Number(item.wpExpectedQty) || 0) }}
@@ -1162,7 +1164,7 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Scanned Count (Physical tally) -->
-              <td class="py-1 px-4 text-center bg-teal-50/30">
+              <td class="py-3.5 px-4 text-center bg-teal-50/30">
                 <div v-if="editingItemId === item.wpId" class="flex items-center justify-center gap-1">
                   <input
                     v-model.number="editCountValue"
@@ -1183,7 +1185,7 @@ const showAuditSuccess = ref(false);
                   <button
                     @click="decrementAuditCount(item.barcode, item.wpId)"
                     :disabled="item.scannedCount <= 0 || isSessionLocked"
-                    class="w-7 h-7 !min-h-0 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 flex items-center justify-center transition-colors"
+                    class="w-9 h-9 !min-h-0 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed text-slate-700 flex items-center justify-center transition-colors"
                     title="Undo 1 scan"
                   >
                     <Minus class="w-3 h-3" />
@@ -1210,7 +1212,7 @@ const showAuditSuccess = ref(false);
                   <button
                     @click="registerAuditScan(item.barcode, item.wpId)"
                     :disabled="isSessionLocked"
-                    class="w-7 h-7 !min-h-0 rounded bg-teal-100 hover:bg-teal-200 disabled:opacity-30 disabled:cursor-not-allowed text-teal-800 border border-teal-300 flex items-center justify-center transition-colors shadow-sm"
+                    class="w-9 h-9 !min-h-0 rounded bg-teal-100 hover:bg-teal-200 disabled:opacity-30 disabled:cursor-not-allowed text-teal-800 border border-teal-300 flex items-center justify-center transition-colors shadow-sm"
                     title="Scan/Count +1 bottle"
                   >
                     <Plus class="w-3 h-3" />
@@ -1219,7 +1221,7 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Discrepancy Column (Negative stock friendly) -->
-              <td class="py-1 px-4 text-center font-mono text-xs">
+              <td class="py-3.5 px-4 text-center font-mono text-xs">
                 <span
                   v-if="item.status === 'matched'"
                   class="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200"
@@ -1267,7 +1269,7 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Status Badge -->
-              <td class="py-1 px-4 text-center">
+              <td class="py-3.5 px-4 text-center">
                 <span
                   class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold"
                   :class="

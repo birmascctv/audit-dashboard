@@ -13,6 +13,7 @@ import { useToast } from '../composables/useToast.js';
 
 const activeTab = ref('analytics');
 const period = ref('all');
+const quick = ref('all');
 const jakartaToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
 const anchorDate = ref(jakartaToday());
 const customStartDate = ref('');
@@ -54,6 +55,8 @@ const stockCompareStore = ref('');
 const stockCompareDate = ref(jakartaToday());
 const stockCompare = ref({ rows: [], needsSnapshots: true, collectingSince: null });
 const stockCompareError = ref('');
+const stockStatusFilter = ref('all');
+const stockCompareRows = computed(() => stockCompare.value.rows.filter((r) => stockStatusFilter.value === 'all' || r.status === stockStatusFilter.value));
 const stockCompareLoading = ref(false);
 const hourTooltip = ref(null);
 const loading = ref(false);
@@ -68,14 +71,6 @@ const deleting = ref(false);
 let reportRequestId = 0;
 let timeRequestId = 0;
 
-const periodOptions = [
-  { id: 'day', label: 'Day' },
-  { id: 'week', label: 'Week' },
-  { id: 'month', label: 'Month' },
-  { id: 'lastMonth', label: 'Last month' },
-  { id: 'custom', label: 'Date range' },
-  { id: 'all', label: 'All time' },
-];
 const range = computed(() => {
   if (period.value === 'all') return {};
   if (period.value === 'custom') {
@@ -125,13 +120,24 @@ const datePresets = computed(() => {
     { id: 'thisMonth', label: 'This Month', start: `${today.slice(0, 8)}01`, end: today },
   ];
 });
-const activePreset = computed(() => period.value === 'custom'
-  ? datePresets.value.find((p) => p.start === customStartDate.value && p.end === customEndDate.value)?.id
-  : null);
 function applyPreset(preset) {
   customStartDate.value = preset.start;
   customEndDate.value = preset.end;
   period.value = 'custom';
+  quick.value = preset.id;
+}
+function selectDateRange() {
+  if (!customStartDate.value && !customEndDate.value) {
+    const today = jakartaToday();
+    customStartDate.value = `${today.slice(0, 8)}01`;
+    customEndDate.value = today;
+  }
+  period.value = 'custom';
+  quick.value = 'range';
+}
+function selectAllTime() {
+  period.value = 'all';
+  quick.value = 'all';
 }
 const previousRange = computed(() => {
   const { startDate, endDate } = range.value;
@@ -1044,27 +1050,24 @@ onBeforeUnmount(() => {
 
     <section class="flex flex-col items-stretch gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end">
       <div>
-        <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Period</label>
-        <div class="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">
-          <button v-for="option in periodOptions" :key="option.id" type="button" class="rounded-lg px-3 py-1.5 text-xs font-bold"
-            :class="period === option.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'"
-            @click="period = option.id">{{ option.label }}</button>
-        </div>
-      </div>
-      <div>
         <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Quick range</label>
         <div class="flex flex-wrap gap-1">
           <button v-for="preset in datePresets" :key="preset.id" type="button" class="rounded-lg border px-3 py-1.5 text-xs font-bold"
-            :class="activePreset === preset.id ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+            :class="quick === preset.id ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
             @click="applyPreset(preset)">{{ preset.label }}</button>
+          <button type="button" class="rounded-lg border px-3 py-1.5 text-xs font-bold"
+            :class="quick === 'range' ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+            @click="selectDateRange">Date Range</button>
+          <button type="button" class="rounded-lg border px-3 py-1.5 text-xs font-bold"
+            :class="quick === 'all' ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+            @click="selectAllTime">All Time</button>
         </div>
       </div>
-      <label v-if="period !== 'all'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-        {{ period === 'day' ? 'Day' : period === 'custom' ? 'Start date' : 'Reference date' }}
-        <DateField v-if="period === 'custom'" v-model="customStartDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
-        <DateField v-else v-model="anchorDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
+      <label v-if="quick === 'range'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+        Start date
+        <DateField v-model="customStartDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
       </label>
-      <label v-if="period === 'custom'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+      <label v-if="quick === 'range'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
         End date
         <DateField v-model="customEndDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
       </label>
@@ -1361,6 +1364,7 @@ onBeforeUnmount(() => {
             <div><h3 class="text-sm font-bold text-slate-900">Stock vs Sold</h3><p class="text-[11px] text-slate-500">Products with opening stock (snapshot before 06:00) versus what was sold that business day.</p></div>
             <div class="flex flex-wrap gap-2">
               <label class="text-[10px] font-bold uppercase text-slate-500">Store<select v-model="stockCompareStore" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800"><option v-for="store in stores" :key="store.name" :value="store.name">{{ store.name }}</option></select></label>
+              <label class="text-[10px] font-bold uppercase text-slate-500">Status<select v-model="stockStatusFilter" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-800"><option value="all">All</option><option value="Restocked">Restocked</option><option value="Missing">Missing</option><option value="matched">Matched</option><option value="unmatched">Unmatched</option></select></label>
               <label class="text-[10px] font-bold uppercase text-slate-500">Business date<DateField v-model="stockCompareDate" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800" /></label>
             </div>
           </header>
@@ -1369,7 +1373,7 @@ onBeforeUnmount(() => {
           <p v-else-if="stockCompare.needsSnapshots" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">No opening stock snapshot for this date; snapshots are collected since {{ stockCompare.collectingSince || 'the next successful inventory sync' }}.</p>
           <div v-else>          <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
             <table class="w-full min-w-[760px] text-left text-xs"><thead class="bg-slate-100 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-3 py-2">Product (sales / stock)</th><th class="px-3 py-2 text-right">Opening</th><th class="px-3 py-2 text-right">Sold</th><th class="px-3 py-2 text-right">Expected closing</th><th class="px-3 py-2 text-right">Actual closing</th><th class="px-3 py-2 text-right">Difference</th><th class="px-3 py-2">Status</th></tr></thead>
-              <tbody><tr v-for="(row,index) in stockCompare.rows" :key="`${row.product}-${index}`" class="border-t border-slate-100"><td class="px-3 py-2 font-medium">{{ row.product }}<span v-if="row.stockProduct && row.stockProduct !== row.product" class="block text-[10px] text-slate-500">Matched stock: {{ row.stockProduct }}</span></td><td class="px-3 py-2 text-right">{{ row.opening ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.sold ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.expectedClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.actualClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.difference ?? '—' }}</td><td class="px-3 py-2"><span :class="row.status === 'matched' ? 'text-emerald-700' : row.status === 'mismatch' ? 'text-amber-700' : 'text-slate-500'">{{ row.status }}</span></td></tr>
+              <tbody><tr v-for="(row,index) in stockCompareRows" :key="`${row.product}-${index}`" class="border-t border-slate-100"><td class="px-3 py-2 font-medium">{{ row.product }}<span v-if="row.stockProduct && row.stockProduct !== row.product" class="block text-[10px] text-slate-500">Matched stock: {{ row.stockProduct }}</span></td><td class="px-3 py-2 text-right">{{ row.opening ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.sold ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.expectedClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.actualClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.difference ?? '—' }}</td><td class="px-3 py-2"><span class="font-semibold" :class="row.status === 'matched' ? 'text-emerald-700' : row.status === 'Restocked' ? 'text-sky-700' : row.status === 'Missing' ? 'text-rose-700' : 'text-slate-500'">{{ row.status }}</span></td></tr>
                 <tr v-if="!stockCompare.rows.length"><td colspan="7" class="p-0"><EmptyState title="No stock or sales products found for this store and date." /></td></tr></tbody></table>
           </div></div>
         </section>
