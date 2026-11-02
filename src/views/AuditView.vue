@@ -89,8 +89,10 @@ const {
 
 const searchQuery = ref('');
 const statusFilter = ref('ALL');
-const brandFilter = ref('ALL');
-const categoryFilter = ref('ALL');
+const FILTER_KEY = 'birmas_stock_filters_v1';
+const savedFilters = (() => { try { return JSON.parse(localStorage.getItem(FILTER_KEY) || '{}'); } catch { return {}; } })();
+const brandFilter = ref(savedFilters.brand || 'ALL');
+const categoryFilter = ref(savedFilters.category || 'ALL');
 const mismatchesOnly = ref(false);
 const undoStack = ref([]);
 const pageOpenedAt = Date.now();
@@ -110,14 +112,14 @@ const sessionTimerLabel = computed(() => {
 const isUnlockModalOpen = ref(false);
 const isUnlocking = ref(false);
 const unlockError = ref('');
-const isSuperAdmin = computed(() => currentUser.value?.role === 'superadmin');
+const isSuperAdmin = computed(() => currentUser.value?.username === 'bertha');
 
 async function handleUnlockConfirm() {
   if (!isSuperAdmin.value) return;
   isUnlocking.value = true;
   unlockError.value = '';
   try {
-    await unlockCurrentSession(currentUser.value?.name || 'Super Admin', currentUser.value?.role || 'superadmin');
+    await unlockCurrentSession(currentUser.value?.name || 'Bertha');
     isUnlockModalOpen.value = false;
   } catch (err) {
     unlockError.value = err.message || 'Failed to unlock audit session';
@@ -349,6 +351,13 @@ const editingItemId = ref(null);
 const editCountValue = ref(0);
 
 const lastScannedKey = ref(null);
+const scanOver = computed(() => {
+  const m = /\((\d+)\/(\d+)\)/.exec(scanFeedback.value?.message || '');
+  return !!m && Number(m[1]) > Number(m[2]);
+});
+const scanMode = ref(false);
+const mismatchCount = computed(() => auditItems.value.filter((i) => i.scannedCount > 0 && i.status !== 'matched').length);
+const unscannedCount = computed(() => auditItems.value.filter((i) => Number(i.wpExpectedQty) > 0 && !(i.scannedCount > 0)).length);
 
 // Hardware scanner hook for USB / Wireless Barcode Scanner
 const { scanFeedback, processBarcode } = useScanner({
@@ -523,6 +532,18 @@ onMounted(() => {
   }, 60000);
 });
 
+function onUndoKey(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !['INPUT', 'TEXTAREA'].includes(e.target?.tagName) && undoStack.value.length) {
+    e.preventDefault();
+    undoLastScan();
+  }
+  if (e.key === 'Escape' && scanMode.value) scanMode.value = false;
+}
+onMounted(() => document.addEventListener('keydown', onUndoKey));
+onUnmounted(() => document.removeEventListener('keydown', onUndoKey));
+watch([brandFilter, categoryFilter], () => {
+  try { localStorage.setItem(FILTER_KEY, JSON.stringify({ brand: brandFilter.value, category: categoryFilter.value })); } catch {}
+});
 let silentRefreshTimer = null;
 let timerInterval = null;
 watch(selectedStoreId, () => { undoStack.value = []; });
@@ -628,14 +649,14 @@ const showAuditSuccess = ref(false);
           class="px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-sm cursor-pointer transition-all"
         >
           <Unlock class="w-4 h-4" />
-          <span>Unlock Session (Superadmin Approval)</span>
+          <span>Unlock Session</span>
         </button>
         <span
           v-else
           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-amber-300 text-amber-900 text-xs font-bold shadow-2xs"
         >
           <ShieldAlert class="w-4 h-4 text-amber-600" />
-          <span>Superadmin Approval Required to Unlock</span>
+          <span>Only Bertha can unlock</span>
         </span>
       </div>
     </div>
@@ -647,7 +668,7 @@ const showAuditSuccess = ref(false);
       <!-- Card 1: ESB STOCK -->
       <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">ESB STOCK</span>
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider" title="Quantity the system (ESB) says should be in the store">System Stock (ESB) <span class="cursor-help text-slate-400">?</span></span>
         </div>
         <div class="my-2">
           <span class="text-3xl font-extrabold text-slate-900 font-mono">{{ Math.round(Number(totalWpExpected) || 0).toLocaleString('id-ID') }}</span>
@@ -661,7 +682,7 @@ const showAuditSuccess = ref(false);
       <!-- Card 2: Physical Count (Scanned) -->
       <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Physical Count (Scanned)</span>
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider" title="Quantity you scanned in the store">Physical Count (Scanned) <span class="cursor-help text-slate-400">?</span></span>
         </div>
         <div class="my-2 flex items-baseline gap-2">
           <span class="text-3xl font-extrabold text-teal-700 font-mono">{{ Number(totalScanned).toLocaleString('id-ID') }}</span>
@@ -675,7 +696,7 @@ const showAuditSuccess = ref(false);
       <!-- Card 3: Net Discrepancy -->
       <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Net Discrepancy</span>
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider" title="Scanned minus system stock. 0 means everything matches">Difference (Net) <span class="cursor-help text-slate-400">?</span></span>
           <span
             v-if="totalScanned === 0"
             class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200"
@@ -750,7 +771,7 @@ const showAuditSuccess = ref(false);
     </div>
 
     <!-- Counting Station (Light theme with tosca accents) -->
-    <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden">
+    <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden" :class="scanMode ? '!fixed inset-0 z-[60] !rounded-none overflow-y-auto scan-mode' : ''">
       <div class="relative z-10 flex flex-col gap-4">
         <!-- Top header of the counting station -->
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-3">
@@ -773,8 +794,11 @@ const showAuditSuccess = ref(false);
 
           <!-- Session controls -->
           <div class="flex flex-wrap items-center gap-2">
+            <button @click="scanMode = !scanMode" type="button" class="px-3 py-2 min-h-12 rounded-lg bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-800 text-xs font-semibold">
+              {{ scanMode ? 'Exit scan mode' : 'Scan mode (full screen)' }}
+            </button>
             <button @click="undoLastScan" :disabled="undoStack.length === 0 || isSessionLocked" type="button" class="px-3 py-2 min-h-12 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 disabled:opacity-40 text-xs font-semibold flex items-center gap-1.5">
-              <Undo2 class="w-4 h-4" /><span>Undo last scan</span>
+              <Undo2 class="w-4 h-4" /><span>Undo last scan</span><kbd class="hidden sm:inline rounded border border-amber-300 bg-white px-1 text-[10px] font-mono">Ctrl+Z</kbd>
             </button>
             <button
               @click="handleResetAuditSession"
@@ -798,7 +822,7 @@ const showAuditSuccess = ref(false);
             autocomplete="off"
             spellcheck="false"
             :disabled="isSessionLocked"
-            :placeholder="isSessionLocked ? 'Audit Session is locked. Recounting requires Superadmin approval.' : 'Scan barcode with USB/Wireless scanner (aim and scan bottle)...'"
+            :placeholder="isSessionLocked ? 'Audit Session is locked. Only Bertha can unlock it.' : 'Scan barcode with USB/Wireless scanner (aim and scan bottle)...'"
             class="w-full pl-13 pr-28 py-4 min-h-14 text-slate-900 placeholder-slate-400 text-lg font-mono rounded-xl border-2 transition-all shadow-inner"
             :class="isSessionLocked ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60' : 'bg-slate-50 border-slate-300 focus:border-teal-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-teal-100'"
           />
@@ -832,26 +856,34 @@ const showAuditSuccess = ref(false);
         <div
           v-if="scanFeedback.type !== 'idle'"
           :key="scanFeedback.timestamp"
-          class="flex items-center gap-3 px-4 py-4 min-h-14 rounded-xl border transition-all"
+          class="flex items-center gap-4 px-5 py-6 min-h-24 rounded-2xl border-2 transition-all"
           :class="
-            scanFeedback.type === 'success'
-              ? 'bg-teal-50 border-teal-300 text-teal-900 scan-flash-success'
-              : 'bg-rose-50 border-rose-300 text-rose-900 scan-flash-error'
+            scanFeedback.type !== 'success'
+              ? 'bg-rose-100 border-rose-500 text-rose-900 scan-flash-error'
+              : scanOver
+              ? 'bg-amber-100 border-amber-500 text-amber-900 scan-flash-error'
+              : 'bg-emerald-100 border-emerald-500 text-emerald-900 scan-flash-success'
           "
         >
           <component
             :is="scanFeedback.type === 'success' ? CheckCircle2 : AlertTriangle"
-            class="w-5 h-5 shrink-0"
-            :class="scanFeedback.type === 'success' ? 'text-teal-600' : 'text-rose-600'"
+            class="w-10 h-10 shrink-0"
+            :class="scanFeedback.type !== 'success' ? 'text-rose-600' : scanOver ? 'text-amber-600' : 'text-emerald-600'"
           />
-          <div class="flex-1 text-base font-semibold">
+          <div class="flex-1 text-xl sm:text-2xl font-extrabold leading-tight">
             {{ scanFeedback.message }}
           </div>
-          <span class="text-xs font-mono font-bold" :class="scanFeedback.type === 'success' ? 'text-teal-700' : 'text-rose-700'">
-            {{ scanFeedback.type === 'success' ? 'Recorded' : 'Alert' }}
+          <span class="text-sm font-extrabold uppercase" :class="scanFeedback.type !== 'success' ? 'text-rose-700' : scanOver ? 'text-amber-700' : 'text-emerald-700'">
+            {{ scanFeedback.type !== 'success' ? 'Alert' : scanOver ? 'Too many' : 'Recorded' }}
           </span>
         </div>
 
+        <p class="flex flex-wrap items-center gap-3 text-[11px] font-semibold text-slate-600">
+          <span class="inline-flex items-center gap-1"><i class="h-2.5 w-2.5 rounded-full bg-emerald-500"></i>Matched</span>
+          <span class="inline-flex items-center gap-1"><i class="h-2.5 w-2.5 rounded-full bg-amber-500"></i>Too many</span>
+          <span class="inline-flex items-center gap-1"><i class="h-2.5 w-2.5 rounded-full bg-rose-500"></i>Missing</span>
+          <span class="inline-flex items-center gap-1"><i class="h-2.5 w-2.5 rounded-full bg-slate-400"></i>Not scanned</span>
+        </p>
         <!-- Dedicated Live Table of SCANNED PRODUCTS ONLY -->
         <div class="pt-2">
           <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
@@ -1071,7 +1103,7 @@ const showAuditSuccess = ref(false);
             <input
               v-model="searchQuery"
               type="text"
-              placeholder="Search variant or barcode..."
+              placeholder="Search variant or barcode...  (press / to focus)"
               class="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
             />
           </div>
@@ -1373,6 +1405,9 @@ const showAuditSuccess = ref(false);
           </div>
         </div>
 
+        <p class="rounded-xl border px-3 py-2 text-xs font-semibold" :class="mismatchCount || unscannedCount ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'">
+          {{ mismatchCount }} product(s) with a difference, {{ unscannedCount }} product(s) not scanned. {{ mismatchCount || unscannedCount ? 'Finish anyway?' : 'Everything matches.' }}
+        </p>
         <div>
           <label class="block text-xs font-semibold text-slate-700 mb-1">Auditor Notes / Catatan Audit:</label>
           <textarea
@@ -1780,7 +1815,7 @@ const showAuditSuccess = ref(false);
               Unlock Audit Session?
             </h3>
             <p class="text-xs text-slate-500">
-              Superadmin Authorization Required
+              Bertha Authorization Required
             </p>
           </div>
         </div>

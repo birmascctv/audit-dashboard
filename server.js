@@ -2003,8 +2003,9 @@ async function startServer() {
   });
 
   app.post('/api/audit/session/:storeId/unlock', requireSuperadmin, (req, res) => {
+    if (req.authUser.userId !== 'user-bertha') return res.status(403).json({ success: false, error: 'Only Bertha can unlock an audit session.' });
     try {
-      const user = req.authUser.name || 'Super Admin';
+      const user = req.authUser.name || 'Bertha';
       const result = db.setSessionLockState(req.params.storeId, false, user);
       res.json(result);
     } catch (err) {

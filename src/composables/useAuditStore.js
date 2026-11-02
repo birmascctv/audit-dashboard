@@ -152,11 +152,8 @@ async function lockCurrentSession(user = 'Auditor') {
   } catch (_) {}
 }
 
-async function unlockCurrentSession(user = 'Super Admin', role = 'superadmin') {
+async function unlockCurrentSession(user = 'Bertha') {
   const storeId = selectedStoreId.value;
-  if (role !== 'superadmin') {
-    throw new Error('Only Superadmin can approve unlocking this audit session.');
-  }
 
   await authFetchJson(`/api/audit/session/${encodeURIComponent(storeId)}/unlock`, {
     method: 'POST',

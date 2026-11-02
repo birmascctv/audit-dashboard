@@ -145,6 +145,8 @@
           <div>
             <span class="font-extrabold text-rose-900 block text-sm">{{ mismatchError.title }}</span>
             <span class="text-rose-800 block mt-1 font-semibold leading-relaxed">{{ mismatchError.message }}</span>
+            <span v-if="FIX_HINTS[mismatchError.title]" class="block mt-1 text-rose-700 font-medium">{{ FIX_HINTS[mismatchError.title] }}</span>
+            <span class="block mt-1 text-rose-600">File names must contain the outlet and month, e.g. "Log Auditor OL Sudirman 4 Agustus 2026.csv".</span>
           </div>
         </div>
         <button
@@ -302,7 +304,19 @@ const isFileVerified = computed(() => {
   )
 })
 
+const FIX_HINTS = {
+  'File Type Must Be CSV': 'How to fix: export the audit as .csv and choose that file.',
+  'Outlet Mismatch': 'How to fix: pick the outlet written in the file name, or press Auto-Fix.',
+  'Month Mismatch': 'How to fix: pick the month written in the file name, or press Auto-Fix.',
+  'Outlet & Month Mismatch': 'How to fix: change both dropdowns to match the file name, or press Auto-Fix.',
+  'Unsupported Outlet in File': 'How to fix: only Sudirman, Kuningan and Kwitang files are accepted.',
+  'Unsupported Outlet': 'How to fix: only Sudirman, Kuningan and Kwitang files are accepted.',
+  'File Structure Is Incorrect': 'How to fix: use the original audit export without deleting or renaming columns.',
+  'Empty File': 'How to fix: open the file and check that it has rows, then upload again.',
+  'Missing Required Fields': 'How to fix: make sure Outlet, Year, Month and the file are all selected.',
+}
 function setNotification(type, title, text) {
+  if (type === 'error' && FIX_HINTS[title] && !text.includes('How to fix')) text = `${text} ${FIX_HINTS[title]}`
   message.value = text
   messageTitle.value = title
   if (type === 'error') {

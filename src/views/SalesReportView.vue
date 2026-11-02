@@ -14,11 +14,28 @@ import { useToast } from '../composables/useToast.js';
 const activeTab = ref('analytics');
 const period = ref('all');
 const quick = ref('all');
+const SALES_FILTER_KEY = 'birmas_sales_filters_v1';
 const jakartaToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
 const anchorDate = ref(jakartaToday());
 const customStartDate = ref('');
 const customEndDate = ref('');
 const selectedStores = ref(null);
+try {
+  const saved = JSON.parse(localStorage.getItem(SALES_FILTER_KEY) || 'null');
+  if (saved) {
+    quick.value = saved.quick || 'all';
+    period.value = quick.value === 'all' ? 'all' : 'custom';
+    customStartDate.value = saved.start || '';
+    customEndDate.value = saved.end || '';
+    selectedStores.value = Array.isArray(saved.stores) ? saved.stores : null;
+  }
+} catch { /* ignore broken saved filters */ }
+function resetFilters() {
+  selectAllTime();
+  customStartDate.value = '';
+  customEndDate.value = '';
+  selectedStores.value = null;
+}
 const stores = ref([]);
 const summary = ref({});
 const files = ref([]);
@@ -348,6 +365,19 @@ const allPivotRows = computed(() => {
 const pivotRows = computed(() => allPivotRows.value.filter((item) =>
   !pivotSearch.value || pivotSearch.value === 'ALL PRODUCT' || item.item.toLowerCase().includes(pivotSearch.value.toLowerCase())));
 const pages = computed(() => Math.max(1, Math.ceil(totalRows.value / pageSize)));
+const insightText = computed(() => {
+  const net = Number(summary.value.totalNetSales) || 0;
+  if (initialLoading.value || !net) return '';
+  const parts = [];
+  const top = (summary.value.byStore || [])[0];
+  if (top) parts.push(`${top.name} is the best store with ${formatMoney(top.sales)}.`);
+  const prev = Number(prevSummary.value?.totalNetSales) || 0;
+  if (prev) {
+    const pct = ((net - prev) / prev) * 100;
+    parts.unshift(`Sales are ${Math.abs(pct).toFixed(0)}% ${pct >= 0 ? 'higher' : 'lower'} than the previous period.`);
+  }
+  return parts.join(' ');
+});
 const topStores = computed(() => (summary.value.byStore || []).slice(0, 3));
 const brandOptions = computed(() => [...new Set((summary.value.byStoreBrand || []).map((item) => item.name))].sort());
 const selectedBrandRows = computed(() => (summary.value.byStoreBrand || [])
@@ -861,6 +891,9 @@ async function deleteFile() {
 }
 
 watch(compareEnabled, () => loadPrevSummary(reportRequestId));
+watch([quick, customStartDate, customEndDate, selectedStores], () => {
+  try { localStorage.setItem(SALES_FILTER_KEY, JSON.stringify({ quick: quick.value, start: customStartDate.value, end: customEndDate.value, stores: selectedStores.value })); } catch {}
+}, { deep: true });
 watch([period, anchorDate, customStartDate, customEndDate, selectedStores], () => {
   page.value = 1;
   loadReport();
@@ -942,6 +975,7 @@ onBeforeUnmount(() => {
 
 
     <template v-if="activeTab === 'analytics'">
+      <p v-if="insightText" class="rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm font-semibold text-teal-900">💡 {{ insightText }}</p>
       <section class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><TrendingUp class="h-4 w-4 text-emerald-600" />Total net sales</p>
@@ -1080,6 +1114,7 @@ onBeforeUnmount(() => {
           <label v-for="store in stores" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="selectedStores === null || selectedStores.includes(store.name)" @change="toggleGlobalStore(store.name)">{{ store.name }}</label>
         </div>
       </details>
+      <button type="button" class="mb-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="resetFilters">Reset filters</button>
       <label class="flex items-center gap-2 pb-2 text-xs font-semibold text-slate-600"><input v-model="compareEnabled" type="checkbox">Compare to previous period</label>
       <p v-if="range.startDate || range.endDate" class="pb-2 text-xs text-slate-500">{{ fmtDate(range.startDate) || 'Beginning' }} – {{ fmtDate(range.endDate) || 'Latest' }}</p>
     </section>

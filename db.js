@@ -223,6 +223,7 @@ function initTables(db) {
       role = excluded.role;
   `);
   upsertUser.run('user-superadmin', 'superadmin', 'superadmin@birmas.id', hashPassword('superadmin666'), 'Super Admin', 'superadmin');
+  upsertUser.run('user-bertha', 'bertha', 'bertha@birmas.id', hashPassword('evania'), 'Bertha', 'superadmin');
   upsertUser.run('user-admin', 'admin', 'admin@birmas.id', hashPassword('admin666'), 'Admin', 'admin');
   upsertUser.run('user-chrisna', 'chrisna', 'chrisna@birmas.id', hashPassword('auditor666'), 'Chrisna', 'auditor');
   upsertUser.run('user-auditor', 'auditor', 'auditor@birmas.id', hashPassword('auditor666'), 'Auditor Staff', 'auditor');
