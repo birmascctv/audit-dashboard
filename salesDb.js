@@ -433,6 +433,7 @@ export function getSalesSummary(filters = {}) {
   const topProductsAllStoresQty = aggregateRows(db, `
     SELECT 'All stores' AS branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales
     FROM sales_transactions ${productWhere.sql} AND menu <> ''
+      AND ${RANKING_CATEGORY_SQL}
       AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
     GROUP BY menu ORDER BY qty DESC, menu LIMIT 10
   `, productWhere.values);
@@ -482,6 +483,7 @@ export function getSalesSummary(filters = {}) {
       SELECT branch, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales,
         ROW_NUMBER() OVER (PARTITION BY branch ORDER BY SUM(qty) DESC, menu) AS rank
       FROM sales_transactions ${productWhere.sql} AND menu <> ''
+        AND ${RANKING_CATEGORY_SQL}
         AND UPPER(TRIM(menu)) NOT LIKE '%(PACKAGE)'
       GROUP BY branch, menu
     ) WHERE rank <= 10 ORDER BY branch, rank
