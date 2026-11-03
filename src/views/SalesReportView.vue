@@ -868,7 +868,7 @@ watch([period, anchorDate, customStartDate, customEndDate, selectedStores], () =
   timeRangeStart.value = range.value.startDate || '';
   timeRangeEnd.value = range.value.endDate || '';
 });
-watch(selectedStores, (selection) => {
+function syncChartStores(selection) {
   const selected = selection === null ? null : [...selection];
   paymentBarStores.value = selected;
   promotionChartStores.value = selected;
@@ -877,7 +877,8 @@ watch(selectedStores, (selection) => {
   visitPurposeChartStores.value = selected;
   productChartStores.value = selected;
   timeSelectedStores.value = selected;
-}, { deep: true });
+}
+watch(selectedStores, syncChartStores, { deep: true });
 watch([rawSearch, page], () => {
   if (activeTab.value === 'raw') loadReport();
 });
@@ -893,6 +894,10 @@ watch([pivotRows, allPivotRows], ([filteredItems, allItems]) => {
 });
 
 onMounted(() => {
+  // Restored (saved) global filters never trigger the watchers, so push them to the time-range panel and charts
+  syncChartStores(selectedStores.value);
+  timeRangeStart.value = range.value.startDate || '';
+  timeRangeEnd.value = range.value.endDate || '';
   loadStores();
   loadFiles();
   loadReport();
