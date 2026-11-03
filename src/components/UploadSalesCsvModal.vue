@@ -151,6 +151,7 @@ async function handleImport() {
 
     let savedTotal = 0;
     let duplicateTotal = 0;
+    let updatedTotal = 0;
 
     for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
       const start = chunkIdx * CHUNK_SIZE;
@@ -189,7 +190,8 @@ async function handleImport() {
         throw new Error(data.message || data.error || `Server rejected batch ${chunkIdx + 1} (HTTP ${res.status})`);
       }
 
-      savedTotal += chunkRows.length - (data.duplicateCount || 0);
+      savedTotal += chunkRows.length - (data.duplicateCount || 0) - (data.updatedCount || 0);
+      updatedTotal += data.updatedCount || 0;
       duplicateTotal += data.duplicateCount || 0;
     }
 
@@ -197,12 +199,12 @@ async function handleImport() {
     uploadProgressText.value = 'Completed!';
     uploadStatus.value = {
       success: true,
-      message: duplicateTotal > 0
-        ? `Successfully imported ${savedTotal.toLocaleString()} new sales records. ${duplicateTotal.toLocaleString()} row(s) were already in the database (same date/time and product variant) and were skipped.`
+      message: duplicateTotal > 0 || updatedTotal > 0
+        ? `Successfully imported ${savedTotal.toLocaleString()} new sales records, updated price/total on ${updatedTotal.toLocaleString()} existing row(s). ${duplicateTotal.toLocaleString()} row(s) were already in the database (same date/time and product variant) and were skipped.`
         : `Successfully imported all ${savedTotal.toLocaleString()} sales records! File has been archived.`,
     };
 
-    toast.success(`Import complete: ${savedTotal.toLocaleString()} new, ${duplicateTotal.toLocaleString()} skipped as duplicates.`, 6000);
+    toast.success(`Import complete: ${savedTotal.toLocaleString()} new, ${updatedTotal.toLocaleString()} price/total updated, ${duplicateTotal.toLocaleString()} skipped as duplicates.`, 6000);
     emit('imported', parsedRows.value);
     setTimeout(() => {
       handleClose();

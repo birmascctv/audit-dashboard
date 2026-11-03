@@ -173,14 +173,18 @@ export function insertSalesRows(db, {
   // slot be resubmitted/updated in place via the ON CONFLICT clause above (e.g. a
   // retried chunk), while any other matching row - from this import, an earlier
   // chunk of it, or a previous CSV altogether - is skipped instead of duplicated.
-  const findDuplicate = db.prepare(`
-    SELECT 1 FROM sales_transactions
+  // Same row identity (date, menu, branch, payment, qty) but a different price/total: update the stored values
+  const findExisting = db.prepare(`
+    SELECT id, price, subtotal, discount, total_after_bill_discount FROM sales_transactions
     WHERE sales_date_in = ? AND menu = ? AND branch = ? AND payment_method = ? AND qty = ?
-      AND total_after_bill_discount = ? AND NOT (import_id = ? AND source_row = ?)
+      AND NOT (import_id = ? AND source_row = ?)
+    ORDER BY (total_after_bill_discount = ?) DESC
     LIMIT 1
   `);
+  const updatePrice = db.prepare('UPDATE sales_transactions SET price = ?, subtotal = ?, discount = ?, total_after_bill_discount = ? WHERE id = ?');
 
   let duplicateCount = 0;
+  let updatedCount = 0;
   db.exec('BEGIN');
   try {
     insertImport.run(fileId, filename || 'sales.csv', fileSize, uploadedAt, uploadedBy);
@@ -188,11 +192,22 @@ export function insertSalesRows(db, {
     rows.forEach((row, index) => {
       const clean = normalizeRow(row);
       const sourceRow = sourceRowOffset + index;
-      const dedupeKey = [clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, clean.total_after_bill_discount].join('\u0000');
-      const isDuplicate = seenInBatch.has(dedupeKey) ||
-        Boolean(findDuplicate.get(clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, clean.total_after_bill_discount, fileId, sourceRow));
-      if (isDuplicate) {
+      const dedupeKey = [clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty].join('\u0000');
+      if (seenInBatch.has(dedupeKey)) {
         duplicateCount++;
+        return;
+      }
+      const existing = findExisting.get(clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, fileId, sourceRow, clean.total_after_bill_discount);
+      if (existing) {
+        seenInBatch.add(dedupeKey);
+        const changed = Number(existing.price) !== Number(clean.price) || Number(existing.subtotal) !== Number(clean.subtotal) ||
+          Number(existing.discount) !== Number(clean.discount) || Number(existing.total_after_bill_discount) !== Number(clean.total_after_bill_discount);
+        if (changed) {
+          updatePrice.run(clean.price, clean.subtotal, clean.discount, clean.total_after_bill_discount, existing.id);
+          updatedCount++;
+        } else {
+          duplicateCount++;
+        }
         return;
       }
       seenInBatch.add(dedupeKey);
@@ -212,7 +227,7 @@ export function insertSalesRows(db, {
     SELECT COUNT(*) AS row_count, COALESCE(SUM(total_after_bill_discount), 0) AS total_revenue
     FROM sales_transactions WHERE import_id = ?
   `).get(fileId);
-  return { ...summary, duplicate_count: duplicateCount };
+  return { ...summary, duplicate_count: duplicateCount, updated_count: updatedCount };
 }
 
 // Idempotent live sync: replaces the rows of one rolling window under a fixed import id

@@ -1846,6 +1846,7 @@ async function startServer() {
         count: rawList.length,
         rowCount: result.row_count,
         duplicateCount: result.duplicate_count,
+        updatedCount: result.updated_count,
         fileId,
         receivedAt: new Date().toISOString(),
       });

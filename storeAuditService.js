@@ -127,8 +127,10 @@ export function getDashboardStoreData(year = 2026) {
       LIMIT 1
     `).get(year, latest);
     const recentStoreIds = db.prepare(`${dataAudits}
-      SELECT DISTINCT store_id FROM data_audits
+      SELECT store_id FROM data_audits
       WHERE year = ? AND year * 12 + month BETWEEN ? AND ?
+      GROUP BY store_id
+      HAVING COUNT(DISTINCT year * 12 + month) = 3
     `).all(year, latest - 2, latest).map((row) => row.store_id);
     return {
       stores,
