@@ -16,9 +16,6 @@
           <span v-if="periodLabel" class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
             {{ periodLabel }}
           </span>
-          <span v-if="latestDataMonth" class="text-[10px] text-slate-500 font-medium">
-            Ranked using data in the last 3 months through {{ latestDataMonth }}
-          </span>
         </div>
       </div>
 
