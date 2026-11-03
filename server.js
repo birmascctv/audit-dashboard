@@ -1051,7 +1051,13 @@ async function startServer() {
       const accepted = [process.env.STOCK_INGEST_TOKEN, db.getConfig('birmas_server_token')].map((t) => String(t || '').trim()).filter(Boolean);
       if (accepted.length) {
         const given = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim() || String(req.headers['x-ingest-token'] || '').trim();
-        if (!given || !accepted.includes(given)) return res.status(401).json({ success: false, error: 'Unauthorized' });
+        const tokenOk = given && accepted.includes(given);
+        // The Upload CSV screen sends the user's session token instead of the ingest token
+        const userSession = !tokenOk && pubUrl === '/api/sales/push' && /^Bearer\s+\S+$/i.test(req.headers.authorization || '')
+          ? db.getAuthSession(given) : null;
+        if (!tokenOk && !userSession) return res.status(401).json({ success: false, error: 'Unauthorized' });
+        if (userSession && !['owner', 'admin', 'superadmin'].includes(userSession.role)) return res.status(403).json({ success: false, error: 'Access denied.' });
+        if (userSession) req.authUser = userSession;
       }
       return next();
     }
