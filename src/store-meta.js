@@ -7,8 +7,8 @@ import criteriaMetrics from './data/criteriaMetrics.json'
  */
 
 export const STORE_META = {
-  1: {
-    id: 1,
+  4: {
+    id: 4,
     name: 'Birmas Lebak Bulus',
     shortName: 'Lebak Bulus',
     color: '#FF00FF', // Magenta / Fuchsia
@@ -23,8 +23,8 @@ export const STORE_META = {
     iconColor: '#FF00FF',
     mascotImg: '/mascots/lebak_bulus_cupang.png'
   },
-  2: {
-    id: 2,
+  1: {
+    id: 1,
     name: 'Birmas Kelapa Gading',
     shortName: 'Kelapa Gading',
     color: '#00FFFF', // Cyan / Aqua
@@ -39,8 +39,8 @@ export const STORE_META = {
     iconColor: '#00FFFF',
     mascotImg: '/mascots/kelapa_gading_mammoth.png'
   },
-  3: {
-    id: 3,
+  2: {
+    id: 2,
     name: 'Birmas Kuningan',
     shortName: 'Kuningan',
     color: '#FFFF00', // Yellow
@@ -55,8 +55,8 @@ export const STORE_META = {
     iconColor: '#FFFF00',
     mascotImg: '/mascots/kuningan_horse.png'
   },
-  4: {
-    id: 4,
+  3: {
+    id: 3,
     name: 'Birmas Kwitang',
     shortName: 'Kwitang',
     color: '#00FF00', // Lime Green
