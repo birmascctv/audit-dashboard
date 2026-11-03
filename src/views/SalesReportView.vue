@@ -748,7 +748,7 @@ function queryString(values) {
   return params.toString();
 }
 async function getJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const response = await fetch(url, { cache: 'no-store', ...options });
   const result = await response.json();
   if (!response.ok || !result.success) throw new Error(result.error || `Request failed (HTTP ${response.status}).`);
   return result;
@@ -830,6 +830,7 @@ function handleImported() {
   loadFiles();
   loadReport();
   loadTimeSummary();
+  loadStockCompare();
 }
 async function downloadFile(file) {
   const res = await fetch(`/api/sales/files/${encodeURIComponent(file.id)}/download`);
