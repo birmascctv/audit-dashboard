@@ -25,7 +25,7 @@ let database;
 
 // Categories excluded from qty-based product rankings (tolerates 'LAIN-LAIN' / 'LAIN LAIN').
 const RANKING_CATEGORY_SQL = "REPLACE(UPPER(TRIM(menu_category)), '-', ' ') NOT IN ('LAIN LAIN', 'MIXER', 'SNACK')";
-const BUSINESS_DATE_SQL = "date(sales_date_in, '-6 hours')";
+const BUSINESS_DATE_SQL = 'date(sales_date_in)';
 function jakartaToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   return `${parts.find((part) => part.type === 'year').value}-${parts.find((part) => part.type === 'month').value}-${parts.find((part) => part.type === 'day').value}`;
