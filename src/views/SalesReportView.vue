@@ -78,8 +78,6 @@ const stockCompareLoading = ref(false);
 const hourTooltip = ref(null);
 const loading = ref(false);
 const toast = useToast();
-const compareEnabled = ref(true);
-const prevSummary = ref(null);
 const initialLoading = computed(() => loading.value && !Object.keys(summary.value).length);
 const error = ref('');
 const uploadOpen = ref(false);
@@ -155,31 +153,6 @@ function selectDateRange() {
 function selectAllTime() {
   period.value = 'all';
   quick.value = 'all';
-}
-const previousRange = computed(() => {
-  const { startDate, endDate } = range.value;
-  if (!startDate || !endDate || startDate > endDate) return null;
-  const days = Math.round((new Date(`${endDate}T12:00:00Z`) - new Date(`${startDate}T12:00:00Z`)) / 864e5) + 1;
-  return { startDate: shiftDate(startDate, -days), endDate: shiftDate(startDate, -1) };
-});
-function delta(current, previous) {
-  const cur = Number(current) || 0;
-  const prev = Number(previous) || 0;
-  if (!prev) return null;
-  const pct = ((cur - prev) / prev) * 100;
-  return { up: pct >= 0, text: `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%` };
-}
-const netSalesDelta = computed(() => compareEnabled.value ? delta(summary.value.totalNetSales, prevSummary.value?.totalNetSales) : null);
-const unitsDelta = computed(() => compareEnabled.value ? delta(summary.value.totalUnitsSold, prevSummary.value?.totalUnitsSold) : null);
-const rowsDelta = computed(() => compareEnabled.value ? delta(summary.value.totalLineItems, prevSummary.value?.totalLineItems) : null);
-async function loadPrevSummary(requestId) {
-  const prev = previousRange.value;
-  prevSummary.value = null;
-  if (!compareEnabled.value || !prev) return;
-  try {
-    const result = await getJson(`/api/sales/summary?${queryString({ ...prev, ...(selectedStores.value !== null ? { storeIds: selectedStores.value.join(',') } : {}) })}`);
-    if (requestId === reportRequestId) prevSummary.value = result.summary || {};
-  } catch { /* deltas are optional */ }
 }
 function selectPromotionStore(point) {
   if (promotionChartStores.value === null) promotionChartStores.value = [point.name];
@@ -371,11 +344,6 @@ const insightText = computed(() => {
   const parts = [];
   const top = (summary.value.byStore || [])[0];
   if (top) parts.push(`${top.name} is the best store with ${formatMoney(top.sales)}.`);
-  const prev = Number(prevSummary.value?.totalNetSales) || 0;
-  if (prev) {
-    const pct = ((net - prev) / prev) * 100;
-    parts.unshift(`Sales are ${Math.abs(pct).toFixed(0)}% ${pct >= 0 ? 'higher' : 'lower'} than the previous period.`);
-  }
   return parts.join(' ');
 });
 const topStores = computed(() => (summary.value.byStore || []).slice(0, 3));
@@ -807,7 +775,6 @@ async function loadReport() {
     ]);
     if (requestId !== reportRequestId) return;
     summary.value = summaryResult.summary || {};
-    loadPrevSummary(requestId);
     if (rawResult) {
       rows.value = rawResult.transactions || [];
       totalRows.value = rawResult.total || 0;
@@ -891,7 +858,6 @@ async function deleteFile() {
   }
 }
 
-watch(compareEnabled, () => loadPrevSummary(reportRequestId));
 watch([quick, customStartDate, customEndDate, selectedStores], () => {
   try { localStorage.setItem(SALES_FILTER_KEY, JSON.stringify({ quick: quick.value, start: customStartDate.value, end: customEndDate.value, stores: selectedStores.value })); } catch {}
 }, { deep: true });
@@ -990,8 +956,7 @@ onBeforeUnmount(() => {
           <SkeletonBlock v-if="initialLoading" :rows="1" height="h-8" class="mt-2" />
           <p v-else class="mt-2 flex flex-wrap items-baseline gap-2 text-2xl font-black text-slate-900">{{ Number(summary.totalUnitsSold || 0).toLocaleString('id-ID') }}
             </p>
-          <p class="mt-1 text-xs text-slate-500">{{ Number(summary.totalLineItems || 0).toLocaleString('id-ID') }} clean sales rows
-            <span v-if="rowsDelta" class="font-bold" :class="rowsDelta.up ? 'text-emerald-600' : 'text-rose-600'">{{ rowsDelta.text }}</span></p>
+          <p class="mt-1 text-xs text-slate-500">{{ Number(summary.totalLineItems || 0).toLocaleString('id-ID') }} clean sales rows</p>
         </article>
         <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p class="flex items-center gap-2 text-xs font-bold uppercase text-slate-500"><Store class="h-4 w-4 text-blue-600" />Top Stores</p>
@@ -1116,7 +1081,6 @@ onBeforeUnmount(() => {
         </div>
       </details>
       <button type="button" class="mb-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="resetFilters">Reset filters</button>
-      <label class="flex items-center gap-2 pb-2 text-xs font-semibold text-slate-600"><input v-model="compareEnabled" type="checkbox">Compare to previous period</label>
       <p v-if="range.startDate || range.endDate" class="pb-2 text-xs text-slate-500">{{ fmtDate(range.startDate) || 'Beginning' }} – {{ fmtDate(range.endDate) || 'Latest' }}</p>
     </section>
 
