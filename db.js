@@ -109,7 +109,17 @@ function initTables(db) {
       last_synced TEXT,
       PRIMARY KEY (store_id, product_id)
     );
+    CREATE TABLE IF NOT EXISTS stock_changes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      old_qty REAL,
+      new_qty REAL,
+      changed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_stock_changes_store ON stock_changes (store_id, product_id, changed_at);
   `);
+  try { db.exec(`ALTER TABLE store_stocks ADD COLUMN changed_at TEXT;`); } catch (_) {}
 
   try { db.exec(`ALTER TABLE store_stocks ADD COLUMN available_qty REAL DEFAULT 0;`); } catch (_) {}
   try { db.exec(`ALTER TABLE store_stocks ADD COLUMN booked_qty REAL DEFAULT 0;`); } catch (_) {}
@@ -422,16 +432,37 @@ export function saveProduct(product) {
   }
 }
 
+// Saves the ESB quantity and, when it differs from what we had, records WHEN the ESB figure changed
 export function setProductStock(storeId, productId, qty) {
   const db = getDb();
-  const stmt = db.prepare(`
+  const now = new Date().toISOString();
+  const next = Number(qty || 0);
+  const prev = db.prepare('SELECT stock_qty FROM store_stocks WHERE store_id = ? AND product_id = ?').get(storeId, productId);
+  const changed = prev && Number(prev.stock_qty) !== next;
+  db.prepare(`
     INSERT INTO store_stocks (store_id, product_id, stock_qty, last_synced)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(store_id, product_id) DO UPDATE SET
       stock_qty = excluded.stock_qty,
       last_synced = excluded.last_synced;
-  `);
-  stmt.run(storeId, productId, Number(qty || 0), new Date().toISOString());
+  `).run(storeId, productId, next, now);
+  if (changed) {
+    db.prepare('UPDATE store_stocks SET changed_at = ? WHERE store_id = ? AND product_id = ?').run(now, storeId, productId);
+    db.prepare('INSERT INTO stock_changes (store_id, product_id, old_qty, new_qty, changed_at) VALUES (?, ?, ?, ?, ?)').run(storeId, productId, Number(prev.stock_qty), next, now);
+  }
+}
+
+export function getStockFreshness(storeId) {
+  const db = getDb();
+  const row = db.prepare('SELECT MAX(last_synced) AS lastPulledAt, MAX(changed_at) AS lastChangedAt FROM store_stocks WHERE store_id = ?').get(storeId) || {};
+  // Sales also lower ESB stock all day, so stock-in (increases) are reported separately
+  const stockIn = db.prepare('SELECT MAX(changed_at) AS t FROM stock_changes WHERE store_id = ? AND new_qty > old_qty').get(storeId) || {};
+  const recent = db.prepare(`
+    SELECT c.product_id AS productId, COALESCE(p.product_title, c.product_id) AS name, c.old_qty AS oldQty, c.new_qty AS newQty, c.changed_at AS changedAt
+    FROM stock_changes c LEFT JOIN products p ON p.id = c.product_id
+    WHERE c.store_id = ? ORDER BY c.changed_at DESC LIMIT 15
+  `).all(storeId);
+  return { lastPulledAt: row.lastPulledAt || null, lastChangedAt: row.lastChangedAt || null, lastStockInAt: stockIn.t || null, recentChanges: recent };
 }
 
 // Scans Queries

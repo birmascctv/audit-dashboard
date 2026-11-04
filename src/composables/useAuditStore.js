@@ -526,7 +526,16 @@ export function useAuditStore() {
     await adjustAuditCount(clean, selectedStoreId.value, { delta, productId: wpId });
   }
 
+  // Keeps what the auditor is typing in the table (re-renders would otherwise wipe it) and saves shortly after typing stops
+  const noteTimers = {};
+  function setProductNoteDraft(productId, value) {
+    productNotes.value[productId] = value;
+    clearTimeout(noteTimers[productId]);
+    noteTimers[productId] = setTimeout(() => setProductNote(productId, productNotes.value[productId]), 700);
+  }
+
   async function setProductNote(productId, note) {
+    clearTimeout(noteTimers[productId]);
     const clean = String(note || '').trim();
     if (clean) productNotes.value[productId] = clean;
     else delete productNotes.value[productId];
@@ -956,6 +965,7 @@ export function useAuditStore() {
     registerAuditScan,
     productNotes,
     setProductNote,
+    setProductNoteDraft,
     refreshProductsSilently,
     decrementAuditCount,
     addBatchAuditCount,

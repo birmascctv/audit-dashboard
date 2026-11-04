@@ -52,6 +52,13 @@ const routes = [
     meta: { requiresAuth: true, allowedRoles: ['auditor', 'owner'] },
   },
   {
+    path: '/stock-audit-crew',
+    name: 'StockAuditCrew',
+    component: AuditView,
+    props: { mode: 'crew' },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'owner'] },
+  },
+  {
     path: '/audit-records',
     name: 'AuditHistory',
     component: AuditHistoryView,

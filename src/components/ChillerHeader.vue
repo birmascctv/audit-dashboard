@@ -59,7 +59,7 @@ const cleanUserName = computed(() => {
   return currentUser.value.name.replace(/\s*\([^)]*\)/g, '').trim();
 });
 const isStoreAuditRoute = computed(() => route.path === '/store-audit' || route.path === '/store-audit2025');
-const isAuditRoute = computed(() => isStoreAuditRoute.value || ['/upload-audits', '/stock-audit', '/audit-records'].includes(route.path));
+const isAuditRoute = computed(() => isStoreAuditRoute.value || ['/upload-audits', '/stock-audit', '/stock-audit-crew', '/audit-records'].includes(route.path));
 const canAccessAuditMenu = computed(() =>
   canAccessStoreAudit.value || canAccessUploadAudits.value || canAccessStockAudit.value || canAccessAuditRecords.value
 );
@@ -208,7 +208,7 @@ onUnmounted(() => {
                   v-if="canAccessStockAudit"
                   to="/stock-audit"
                   class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
-                  :class="route.path === '/stock-audit' ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                  :class="['/stock-audit', '/stock-audit-crew'].includes(route.path) ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
                   @click="closeMenus"
                 ><ClipboardCheck class="h-4 w-4" />Stock Audit</router-link>
                 <router-link

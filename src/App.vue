@@ -18,6 +18,7 @@ const pageNames = {
   '/store-audit2025': ['Audit', 'Store Audit', '2025'],
   '/upload-audits': ['Audit', 'Upload Audits'],
   '/stock-audit': ['Audit', 'Stock Audit'],
+  '/stock-audit-crew': ['Audit', 'Stock Audit', 'Crew'],
   '/audit-records': ['Audit', 'Audit Records'],
   '/sales': ['Sales Report'],
 };

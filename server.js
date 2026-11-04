@@ -1069,7 +1069,7 @@ async function startServer() {
     const salesOnly = url.startsWith('/api/sales') && session.role === 'auditor';
     const stockOnly = !url.startsWith('/api/sales') && session.role === 'admin' && !url.startsWith('/api/stores');
     if (isConfig && !['superadmin', 'owner'].includes(session.role)) return res.status(403).json({ success: false, error: 'Superadmin only.' });
-    const stockWork = session.role === 'superadmin' && req.method !== 'GET' && /^\/api\/(upload|products|audit\/(scan|adjust|reset|finalize|notes))(\/|$)/.test(url);
+    const stockWork = session.role === 'superadmin' && req.method !== 'GET' && /^\/api\/(upload|products|audit\/(scan|adjust|reset|finalize|notes)|crew)(\/|$)/.test(url);
     if (stockWork) return res.status(403).json({ success: false, error: 'Access denied.' });
     if (salesOnly || stockOnly) return res.status(403).json({ success: false, error: 'Access denied.' });
     req.authUser = session;
@@ -1501,6 +1501,173 @@ async function startServer() {
     ensureNotesTable();
     db.getDb().prepare('DELETE FROM audit_product_notes WHERE store_id = ?;').run(String(req.query.storeId || ''));
     res.json({ success: true });
+  });
+
+  // ESB freshness: when the ESB quantities last actually changed (not just when we last pulled them)
+  app.get('/api/audit/esb-freshness', (req, res) => {
+    res.json({ success: true, ...db.getStockFreshness(String(req.query.storeId || '')) });
+  });
+
+  // ---- Crew: deliveries that arrive at one store and are split across branches ----
+  const ensureCrewTables = () => db.getDb().exec(`
+    CREATE TABLE IF NOT EXISTS crew_deliveries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, source_store_id TEXT NOT NULL, arrived_on TEXT NOT NULL,
+      note TEXT, created_by TEXT, created_at TEXT NOT NULL, source_esb_on TEXT
+    );
+    CREATE TABLE IF NOT EXISTS crew_delivery_lines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id INTEGER NOT NULL, product_id TEXT NOT NULL,
+      product_name TEXT NOT NULL, qty_total REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS crew_allocations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, line_id INTEGER NOT NULL, delivery_id INTEGER NOT NULL,
+      dest_store_id TEXT NOT NULL, qty REAL NOT NULL, status TEXT NOT NULL DEFAULT 'planned',
+      sent_on TEXT, received_on TEXT, source_esb_on TEXT, updated_by TEXT, updated_at TEXT
+    );
+  `);
+  const isoDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+  const todayJakarta = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+  const daysBetween = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000);
+
+  // Has ESB shown a stock increase for this store/product since the event date? (ESB entries are often 1-3 days late)
+  const esbStockInSince = (storeId, productId, sinceDate) => {
+    const row = db.getDb().prepare(
+      'SELECT changed_at AS at, new_qty - old_qty AS delta FROM stock_changes WHERE store_id = ? AND product_id = ? AND new_qty > old_qty AND changed_at >= ? ORDER BY changed_at LIMIT 1'
+    ).get(storeId, productId, `${sinceDate}T00:00:00`);
+    return row || null;
+  };
+  const esbState = (storeId, productId, eventDate) => {
+    if (!eventDate) return { state: 'not_yet' };
+    const hit = esbStockInSince(storeId, productId, eventDate);
+    if (hit) return { state: 'updated', at: hit.at, delta: hit.delta, lagDays: Math.max(0, daysBetween(eventDate, hit.at.slice(0, 10))) };
+    const waiting = Math.max(0, daysBetween(eventDate, todayJakarta()));
+    return { state: waiting > 3 ? 'overdue' : 'waiting', waitingDays: waiting };
+  };
+
+  const loadDeliveries = (storeId) => {
+    ensureCrewTables();
+    const sqlite = db.getDb();
+    const ids = sqlite.prepare(
+      'SELECT id FROM crew_deliveries WHERE source_store_id = ? OR id IN (SELECT delivery_id FROM crew_allocations WHERE dest_store_id = ?) ORDER BY arrived_on DESC, id DESC LIMIT 60'
+    ).all(storeId, storeId).map((r) => r.id);
+    return ids.map((id) => {
+      const d = sqlite.prepare('SELECT * FROM crew_deliveries WHERE id = ?').get(id);
+      const lines = sqlite.prepare('SELECT * FROM crew_delivery_lines WHERE delivery_id = ? ORDER BY product_name').all(id).map((l) => {
+        const allocs = sqlite.prepare('SELECT * FROM crew_allocations WHERE line_id = ? ORDER BY dest_store_id').all(l.id).map((a) => ({
+          id: a.id, destStoreId: a.dest_store_id, qty: a.qty, status: a.status, sentOn: a.sent_on, receivedOn: a.received_on,
+          sourceEsbOn: a.source_esb_on, destEsb: esbState(a.dest_store_id, l.product_id, a.received_on),
+        }));
+        const forOthers = allocs.reduce((sum, a) => sum + a.qty, 0);
+        return {
+          id: l.id, productId: l.product_id, productName: l.product_name, qtyTotal: l.qty_total,
+          keepQty: l.qty_total - forOthers, sourceEsb: esbState(d.source_store_id, l.product_id, d.arrived_on), allocations: allocs,
+        };
+      });
+      return {
+        id: d.id, sourceStoreId: d.source_store_id, arrivedOn: d.arrived_on, note: d.note, createdBy: d.created_by,
+        createdAt: d.created_at, lines,
+      };
+    });
+  };
+
+  app.get('/api/crew/deliveries', (req, res) => {
+    res.json({ success: true, deliveries: loadDeliveries(String(req.query.storeId || '')) });
+  });
+
+  app.post('/api/crew/deliveries', (req, res) => {
+    ensureCrewTables();
+    const sqlite = db.getDb();
+    const { sourceStoreId, lines } = req.body || {};
+    const arrivedOn = isoDate(req.body?.arrivedOn) || todayJakarta();
+    const stores = new Set(db.getAllStores().map((st) => st.id));
+    if (!stores.has(sourceStoreId)) return res.status(400).json({ success: false, error: 'Choose the store the products arrived at.' });
+    if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ success: false, error: 'Add at least one product.' });
+    for (const l of lines) {
+      const total = Number(l.qtyTotal);
+      const others = (l.allocations || []).reduce((sum, a) => sum + Number(a.qty || 0), 0);
+      if (!l.productId || !(total > 0)) return res.status(400).json({ success: false, error: 'Every product needs a quantity above 0.' });
+      if (others > total) return res.status(400).json({ success: false, error: `${l.productName || l.productId}: more is assigned to other stores than arrived.` });
+      for (const a of l.allocations || []) {
+        if (Number(a.qty) > 0 && (!stores.has(a.destStoreId) || a.destStoreId === sourceStoreId)) {
+          return res.status(400).json({ success: false, error: 'Invalid destination store.' });
+        }
+      }
+    }
+    sqlite.exec('BEGIN');
+    try {
+      const d = sqlite.prepare('INSERT INTO crew_deliveries (source_store_id, arrived_on, note, created_by, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(sourceStoreId, arrivedOn, String(req.body?.note || '').slice(0, 300), req.authUser?.name || 'Crew', new Date().toISOString());
+      const deliveryId = Number(d.lastInsertRowid);
+      for (const l of lines) {
+        const li = sqlite.prepare('INSERT INTO crew_delivery_lines (delivery_id, product_id, product_name, qty_total) VALUES (?, ?, ?, ?)')
+          .run(deliveryId, String(l.productId), String(l.productName || l.productId).slice(0, 200), Number(l.qtyTotal));
+        for (const a of l.allocations || []) {
+          if (!(Number(a.qty) > 0)) continue;
+          sqlite.prepare('INSERT INTO crew_allocations (line_id, delivery_id, dest_store_id, qty) VALUES (?, ?, ?, ?)')
+            .run(Number(li.lastInsertRowid), deliveryId, a.destStoreId, Number(a.qty));
+        }
+      }
+      sqlite.exec('COMMIT');
+      res.json({ success: true, id: deliveryId });
+    } catch (err) {
+      sqlite.exec('ROLLBACK');
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Move one store's share along: planned -> sent -> received (dates are entered by the crew, not guessed)
+  app.patch('/api/crew/allocations/:id', (req, res) => {
+    ensureCrewTables();
+    const sqlite = db.getDb();
+    const row = sqlite.prepare('SELECT * FROM crew_allocations WHERE id = ?').get(Number(req.params.id));
+    if (!row) return res.status(404).json({ success: false, error: 'Not found.' });
+    const action = String(req.body?.action || '');
+    const date = isoDate(req.body?.date) || todayJakarta();
+    const by = req.authUser?.name || 'Crew';
+    const now = new Date().toISOString();
+    if (action === 'sent') {
+      sqlite.prepare("UPDATE crew_allocations SET status = 'sent', sent_on = ?, updated_by = ?, updated_at = ? WHERE id = ?").run(date, by, now, row.id);
+    } else if (action === 'received') {
+      sqlite.prepare("UPDATE crew_allocations SET status = 'received', sent_on = COALESCE(sent_on, ?), received_on = ?, updated_by = ?, updated_at = ? WHERE id = ?").run(date, date, by, now, row.id);
+    } else if (action === 'undo') {
+      const back = row.status === 'received' ? 'sent' : 'planned';
+      sqlite.prepare('UPDATE crew_allocations SET status = ?, received_on = NULL, sent_on = CASE WHEN ? = \'planned\' THEN NULL ELSE sent_on END, updated_by = ?, updated_at = ? WHERE id = ?').run(back, back, by, now, row.id);
+    } else if (action === 'source_esb_done') {
+      sqlite.prepare('UPDATE crew_allocations SET source_esb_on = ?, updated_by = ?, updated_at = ? WHERE id = ?').run(date, by, now, row.id);
+    } else {
+      return res.status(400).json({ success: false, error: 'Unknown action.' });
+    }
+    res.json({ success: true });
+  });
+
+  app.delete('/api/crew/deliveries/:id', (req, res) => {
+    ensureCrewTables();
+    const sqlite = db.getDb();
+    const id = Number(req.params.id);
+    const received = sqlite.prepare("SELECT 1 FROM crew_allocations WHERE delivery_id = ? AND status <> 'planned' LIMIT 1").get(id);
+    if (received) return res.status(409).json({ success: false, error: 'Some of this delivery was already sent, so it cannot be deleted.' });
+    sqlite.prepare('DELETE FROM crew_allocations WHERE delivery_id = ?').run(id);
+    sqlite.prepare('DELETE FROM crew_delivery_lines WHERE delivery_id = ?').run(id);
+    sqlite.prepare('DELETE FROM crew_deliveries WHERE id = ?').run(id);
+    res.json({ success: true });
+  });
+
+  // Products that physically arrived at a store but have not shown up in ESB yet
+  app.get('/api/crew/pending-esb', (req, res) => {
+    const storeId = String(req.query.storeId || '');
+    const out = {};
+    for (const d of loadDeliveries(storeId)) {
+      for (const l of d.lines) {
+        if (d.sourceStoreId === storeId && l.sourceEsb.state !== 'updated') {
+          out[l.productId] = { name: l.productName, qty: (out[l.productId]?.qty || 0) + l.qtyTotal };
+        }
+        for (const a of l.allocations) {
+          if (a.destStoreId === storeId && a.status === 'received' && a.destEsb.state !== 'updated') {
+            out[l.productId] = { name: l.productName, qty: (out[l.productId]?.qty || 0) + a.qty };
+          }
+        }
+      }
+    }
+    res.json({ success: true, pending: out });
   });
 
   // 9. Audit History
@@ -2528,18 +2695,6 @@ async function startServer() {
         importId: req.query.importId,
       };
       res.json({ success: true, timeSeries: salesDb.getSalesTimeSeries(filters) });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  app.get('/api/audit/top-sold', (req, res) => {
-    try {
-      const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
-      const store = db.getAllStores().find((s) => s.id === String(req.query.storeId || ''));
-      if (!store) return res.status(404).json({ success: false, error: 'Unknown store.' });
-      const key = String(store.name).replace(/^birmas\s+/i, '');
-      res.json({ success: true, days, products: salesDb.getTopSoldByQty(key, days, 10) });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
