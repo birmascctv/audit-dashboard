@@ -2136,7 +2136,7 @@ async function startServer() {
       if (!file) {
         return res.status(404).send('Sales file not found');
       }
-      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
       res.send(file.content);
     } catch (err) {

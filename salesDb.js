@@ -636,8 +636,7 @@ function csvCell(value) {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export function getSalesFileCsv(fileId) {
-  const db = getSalesDb();
+export function getSalesFileCsv(fileId, db = getSalesDb()) {
   const file = db.prepare('SELECT filename FROM sales_imports WHERE id = ?').get(fileId);
   if (!file) return null;
   const rows = db.prepare(`
@@ -647,7 +646,8 @@ export function getSalesFileCsv(fileId) {
   `).all(fileId);
   return {
     filename: file.filename,
-    content: [
+    content: '\uFEFF' + [
+      'sep=,',
       CSV_COLUMNS.map(([, label]) => csvCell(label)).join(','),
       ...rows.map((row) => CSV_COLUMNS.map(([key]) => csvCell(row[key])).join(',')),
     ].join('\r\n'),

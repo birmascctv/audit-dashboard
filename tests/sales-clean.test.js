@@ -6,12 +6,46 @@ import { parseLocalizedNumber, parseSalesCsv } from '../src/utils/salesCsv.js';
 import {
   allocatePaymentSales,
   CSV_COLUMNS,
+  getSalesFileCsv,
   initializeSalesDatabase,
   insertSalesRows,
   makeWhere,
 } from '../salesDb.js';
 
 const headings = CSV_COLUMNS.map(([, label]) => label).join(',');
+
+test('downloaded sales CSV opens as separate Excel columns and preserves quoted values', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    insertSalesRows(db, {
+      fileId: 'csv-test',
+      filename: 'sales.csv',
+      rows: [{
+        sales_date_in: '2026-01-02 10:15:00',
+        branch: 'KUNINGAN',
+        visit_purpose: 'DINE IN',
+        payment_method: 'CASH',
+        menu_category: 'DRINK',
+        menu_category_detail: 'Café',
+        menu: 'Cola, "Large"\nSpecial',
+        qty: 2,
+        price: 25000,
+        discount: 1000,
+        total_after_bill_discount: 49000,
+      }],
+    });
+    const file = getSalesFileCsv('csv-test', db);
+    assert.ok(file.content.startsWith('\uFEFFsep=,\r\n' + headings + '\r\n'));
+    const [row] = parseSalesCsv(file.content);
+    assert.equal(row.menu, 'Cola, "Large"\nSpecial');
+    assert.equal(row.menu_category_detail, 'Café');
+    assert.equal(row.total_after_bill_discount, 49000);
+    assert.equal(getSalesFileCsv('missing', db), null);
+  } finally {
+    db.close();
+  }
+});
 
 test('parses the checked-in clean CSV with the selected schema and full rupiah values', () => {
   const csv = fs.readFileSync(new URL('../data/sales_clean.csv', import.meta.url), 'utf8');
