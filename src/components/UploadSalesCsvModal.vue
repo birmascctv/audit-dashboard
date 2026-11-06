@@ -200,7 +200,7 @@ async function handleImport() {
     uploadStatus.value = {
       success: true,
       message: duplicateTotal > 0 || updatedTotal > 0
-        ? `Successfully imported ${savedTotal.toLocaleString()} new sales records, updated price/total on ${updatedTotal.toLocaleString()} existing row(s). ${duplicateTotal.toLocaleString()} row(s) were already in the database (same date/time and product variant) and were skipped.`
+        ? `Successfully imported ${savedTotal.toLocaleString()} new sales records, updated price/total on ${updatedTotal.toLocaleString()} existing row(s). ${duplicateTotal.toLocaleString()} row(s) matched another uploaded file and were skipped.`
         : `Successfully imported all ${savedTotal.toLocaleString()} sales records! File has been archived.`,
     };
 

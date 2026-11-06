@@ -164,6 +164,43 @@ test('skips rows that already exist in the database (same Sales Date In and Menu
   }
 });
 
+test('keeps repeated rows within a file across chunks and retries, but matches other files', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const row = {
+      sales_date_in: '2026-01-02 10:15:00', branch: 'TEBET', menu: 'BEER',
+      payment_method: 'CASH', qty: 1, price: 60000, total_after_bill_discount: 60000,
+    };
+    const first = insertSalesRows(db, { fileId: 'one', filename: 'one.csv', rows: [row, row] });
+    assert.equal(first.row_count, 2);
+    assert.equal(first.duplicate_count, 0);
+    const next = insertSalesRows(db, { fileId: 'one', filename: 'one.csv', sourceRowOffset: 2, rows: [row] });
+    assert.equal(next.row_count, 3);
+    assert.equal(next.duplicate_count, 0);
+    const retry = insertSalesRows(db, { fileId: 'one', filename: 'one.csv', sourceRowOffset: 2, rows: [row] });
+    assert.equal(retry.row_count, 3);
+    const sameFilePrice = insertSalesRows(db, {
+      fileId: 'one', filename: 'one.csv', sourceRowOffset: 3,
+      rows: [{ ...row, price: 65000, total_after_bill_discount: 65000 }],
+    });
+    assert.equal(sameFilePrice.row_count, 4);
+    assert.equal(sameFilePrice.updated_count, 0);
+
+    const other = insertSalesRows(db, { fileId: 'two', filename: 'two.csv', rows: [row] });
+    assert.equal(other.duplicate_count, 1);
+    assert.equal(other.row_count, 0);
+    const changed = insertSalesRows(db, {
+      fileId: 'three', filename: 'three.csv',
+      rows: [{ ...row, price: 70000, total_after_bill_discount: 70000 }],
+    });
+    assert.equal(changed.updated_count, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sales_transactions WHERE price = 70000').get().count, 1);
+  } finally {
+    db.close();
+  }
+});
+
 test('filters sales by multiple selected stores, no stores, and custom date ranges', () => {
   const db = new DatabaseSync(':memory:');
   try {

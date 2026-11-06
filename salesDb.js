@@ -167,17 +167,11 @@ export function insertSalesRows(db, {
       discount = excluded.discount,
       total_after_bill_discount = excluded.total_after_bill_discount
   `);
-  // A row is a duplicate of an already-imported transaction when its exact Sales
-  // Date In timestamp and Menu (product variant) match one already stored in a
-  // *different* row slot - this still lets the exact same (import_id, source_row)
-  // slot be resubmitted/updated in place via the ON CONFLICT clause above (e.g. a
-  // retried chunk), while any other matching row - from this import, an earlier
-  // chunk of it, or a previous CSV altogether - is skipped instead of duplicated.
-  // Same row identity (date, menu, branch, payment, qty) but a different price/total: update the stored values
+  // Match only other imports; repeated rows within this file can represent distinct sales.
   const findExisting = db.prepare(`
     SELECT id, price, subtotal, discount, total_after_bill_discount FROM sales_transactions
     WHERE sales_date_in = ? AND menu = ? AND branch = ? AND payment_method = ? AND qty = ?
-      AND NOT (import_id = ? AND source_row = ?)
+      AND import_id <> ?
     ORDER BY (total_after_bill_discount = ?) DESC
     LIMIT 1
   `);
@@ -188,18 +182,11 @@ export function insertSalesRows(db, {
   db.exec('BEGIN');
   try {
     insertImport.run(fileId, filename || 'sales.csv', fileSize, uploadedAt, uploadedBy);
-    const seenInBatch = new Set();
     rows.forEach((row, index) => {
       const clean = normalizeRow(row);
       const sourceRow = sourceRowOffset + index;
-      const dedupeKey = [clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty].join('\u0000');
-      if (seenInBatch.has(dedupeKey)) {
-        duplicateCount++;
-        return;
-      }
-      const existing = findExisting.get(clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, fileId, sourceRow, clean.total_after_bill_discount);
+      const existing = findExisting.get(clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, fileId, clean.total_after_bill_discount);
       if (existing) {
-        seenInBatch.add(dedupeKey);
         const changed = Number(existing.price) !== Number(clean.price) || Number(existing.subtotal) !== Number(clean.subtotal) ||
           Number(existing.discount) !== Number(clean.discount) || Number(existing.total_after_bill_discount) !== Number(clean.total_after_bill_discount);
         if (changed) {
@@ -210,7 +197,6 @@ export function insertSalesRows(db, {
         }
         return;
       }
-      seenInBatch.add(dedupeKey);
       insertTransaction.run(
         fileId,
         sourceRow,
