@@ -13,6 +13,7 @@ import AddBarcodeModal from '../components/AddBarcodeModal.vue';
 import CrewDeliveries from '../components/CrewDeliveries.vue';
 import StockComparisonTable from '../components/StockComparisonTable.vue';
 import { fmtJakarta } from '../utils/date.js';
+import { isDraftStockProduct } from '../utils/stockProducts.js';
 
 const props = defineProps({ mode: { type: String, default: 'auditor' } });
 const isDevMode = import.meta.env.DEV;
@@ -78,7 +79,6 @@ const {
   matchedVariantsCount,
   missingVariantsCount,
   surplusVariantsCount,
-  unscannedVariantsCount,
   netDiscrepancyBottles,
   isAutoCheckerActive,
   lastCheckedAt,
@@ -424,14 +424,15 @@ watch(
   }
 );
 
-const availableBrands = computed(() => [...new Set(auditItems.value.map((item) => item.brand).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
-const availableCategories = computed(() => [...new Set(auditItems.value.map((item) => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
+const tableItems = computed(() => auditItems.value.filter((item) => !isDraftStockProduct(item)));
+const availableBrands = computed(() => [...new Set(tableItems.value.map((item) => item.brand).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
+const availableCategories = computed(() => [...new Set(tableItems.value.map((item) => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b)));
 const openingStockProducts = computed(() => auditItems.value.filter((item) => item.wpExpectedQty > 0));
 const scannedOpeningStockProducts = computed(() => openingStockProducts.value.filter((item) => item.scannedCount > 0).length);
 const openingStockProgress = computed(() => openingStockProducts.value.length ? Math.round(scannedOpeningStockProducts.value / openingStockProducts.value.length * 100) : 0);
 
 const discrepancyVariantsCount = computed(() =>
-  auditItems.value.filter((i) => i.scannedCount > 0 && i.scannedCount !== i.wpExpectedQty).length
+  tableItems.value.filter((i) => i.scannedCount > 0 && i.scannedCount !== i.wpExpectedQty).length
 );
 
 // All items in catalog filtered for the main comparison table
@@ -439,7 +440,7 @@ const PAGE_SIZE = 25;
 const page = ref(1);
 
 const filteredItems = computed(() => {
-  return auditItems.value.slice().sort((a, b) =>
+  return tableItems.value.slice().sort((a, b) =>
     (Number(b.wpExpectedQty) > 0) - (Number(a.wpExpectedQty) > 0) ||
     String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' })
   ).filter((item) => {
@@ -471,12 +472,12 @@ const pagedItems = computed(() => filteredItems.value.slice((page.value - 1) * P
 watch([searchQuery, statusFilter, brandFilter, categoryFilter, mismatchesOnly], () => { page.value = 1; });
 watch(totalPages, (n) => { if (page.value > n) page.value = n; });
 
-const sortedAuditItems = computed(() => auditItems.value.filter((item) => !isDevMode || item.wpExpectedQty > 0).sort((a, b) =>
+const sortedAuditItems = computed(() => tableItems.value.filter((item) => !isDevMode || item.wpExpectedQty > 0).sort((a, b) =>
   String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' })));
 
 // ONLY products that have been physically scanned in this session (scannedCount > 0)
 const scannedOnlyItems = computed(() => {
-  return auditItems.value.filter((item) => isDevMode ? item.wpExpectedQty > 0 : item.scannedCount > 0).sort((a, b) =>
+  return tableItems.value.filter((item) => isDevMode ? item.wpExpectedQty > 0 : item.scannedCount > 0).sort((a, b) =>
     String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' }));
 });
 const scannedItemCount = computed(() => scannedOnlyItems.value.filter((item) => item.scannedCount > 0).length);
@@ -1203,7 +1204,7 @@ const showAuditSuccess = ref(false);
               class="px-3 py-1 min-h-8 rounded-lg border text-xs font-semibold transition-colors"
               :class="statusFilter === 'ALL' ? 'bg-teal-600 border-teal-600 text-white shadow-sm' : 'bg-teal-50 border-teal-200 text-teal-800 hover:bg-teal-100'"
             >
-              All ({{ auditItems.length }})
+              All ({{ tableItems.length }})
             </button>
             <button
               @click="statusFilter = 'discrepancy'"
@@ -1221,7 +1222,7 @@ const showAuditSuccess = ref(false);
               :class="statusFilter === 'matched' ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm' : 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100'"
             >
               <span>Matched</span>
-              <span class="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">{{ matchedVariantsCount }}</span>
+              <span class="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">{{ tableItems.filter((i) => i.status === 'matched').length }}</span>
             </button>
             <button
               @click="statusFilter = 'unscanned'"
@@ -1230,7 +1231,7 @@ const showAuditSuccess = ref(false);
               :class="statusFilter === 'unscanned' ? 'bg-slate-700 border-slate-700 text-white shadow-sm' : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'"
             >
               <span>Unscanned</span>
-              <span class="px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 text-[10px] font-bold">{{ unscannedVariantsCount }}</span>
+              <span class="px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 text-[10px] font-bold">{{ tableItems.filter((i) => i.status === 'unscanned').length }}</span>
             </button>
           </div>
 

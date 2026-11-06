@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 import { fmtJakarta } from '../utils/date.js';
+import { isDraftStockProduct } from '../utils/stockProducts.js';
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -12,7 +13,7 @@ const props = defineProps({
 });
 const search = ref('');
 const page = ref(1);
-const active = computed(() => props.items.some((item) => item.scannedCount > 0 && (!props.positiveStockOnly || Number(item.wpExpectedQty) > 0)));
+const active = computed(() => props.items.some((item) => !isDraftStockProduct(item) && item.scannedCount > 0 && (!props.positiveStockOnly || Number(item.wpExpectedQty) > 0)));
 const latest = computed(() => props.history.find((audit) => audit.storeId === props.storeId && (audit.items || audit.records)?.length));
 const archivedItems = computed(() => latest.value?.items || latest.value?.records || []);
 const rows = computed(() => {
@@ -22,7 +23,7 @@ const rows = computed(() => {
   const ids = new Set(inStock.map((item) => String(item.wpId)));
   const barcodes = new Set(inStock.filter((item) => item.barcode).map((item) => item.barcode));
   const names = new Set(inStock.filter((item) => !item.barcode).map((item) => item.productTitle || item.varian));
-  return source.filter((item) => (!props.positiveStockOnly || (Number(item.wpExpectedQty) > 0 && (item.wpId ? ids.has(String(item.wpId)) : item.barcode ? barcodes.has(item.barcode) : names.has(item.productTitle || item.varian)))) && (!query || `${item.productTitle || item.varian || ''} ${item.barcode || ''}`.toLowerCase().includes(query)))
+  return source.filter((item) => !isDraftStockProduct(item) && (!props.positiveStockOnly || (Number(item.wpExpectedQty) > 0 && (item.wpId ? ids.has(String(item.wpId)) : item.barcode ? barcodes.has(item.barcode) : names.has(item.productTitle || item.varian)))) && (!query || `${item.productTitle || item.varian || ''} ${item.barcode || ''}`.toLowerCase().includes(query)))
     .slice().sort((a, b) => String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' }));
 });
 const pages = computed(() => Math.max(1, Math.ceil(rows.value.length / 25)));
