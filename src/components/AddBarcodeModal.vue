@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue';
 import { useAuditStore } from '../composables/useAuditStore.js';
+import { useAuth } from '../composables/useAuth.js';
 import { useToast } from '../composables/useToast.js';
 import {
   Barcode,
@@ -28,6 +29,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'barcodeAdded']);
 
 const { wpProducts, addNewBarcode } = useAuditStore();
+const { currentUser } = useAuth();
 const toast = useToast();
 const barcodeInputEl = ref(null);
 const searchInputEl = ref(null);
@@ -62,7 +64,7 @@ const productSearchQuery = ref('');
 // Dynamic products from ESB Cloud
 const esbProductList = computed(() => {
   if (!wpProducts.value || wpProducts.value.length === 0) return [];
-  return [...wpProducts.value].sort((a, b) =>
+  return wpProducts.value.filter((p) => currentUser.value?.role !== 'crew' || Number(p.stockByStore?.[currentUser.value.storeId]) > 0).sort((a, b) =>
     (a.productTitle || a.varian || '').localeCompare(b.productTitle || b.varian || '')
   );
 });

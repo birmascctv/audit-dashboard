@@ -8,16 +8,21 @@ const props = defineProps({
   storeId: { type: String, default: '' },
   storeName: { type: String, default: '' },
   loading: { type: Boolean, default: false },
+  positiveStockOnly: { type: Boolean, default: false },
 });
 const search = ref('');
 const page = ref(1);
-const active = computed(() => props.items.some((item) => item.scannedCount > 0));
+const active = computed(() => props.items.some((item) => item.scannedCount > 0 && (!props.positiveStockOnly || Number(item.wpExpectedQty) > 0)));
 const latest = computed(() => props.history.find((audit) => audit.storeId === props.storeId && (audit.items || audit.records)?.length));
 const archivedItems = computed(() => latest.value?.items || latest.value?.records || []);
 const rows = computed(() => {
   const source = !active.value && latest.value ? archivedItems.value : props.items;
   const query = search.value.trim().toLowerCase();
-  return source.filter((item) => !query || `${item.productTitle || item.varian || ''} ${item.barcode || ''}`.toLowerCase().includes(query))
+  const inStock = props.items.filter((item) => Number(item.wpExpectedQty) > 0);
+  const ids = new Set(inStock.map((item) => String(item.wpId)));
+  const barcodes = new Set(inStock.filter((item) => item.barcode).map((item) => item.barcode));
+  const names = new Set(inStock.filter((item) => !item.barcode).map((item) => item.productTitle || item.varian));
+  return source.filter((item) => (!props.positiveStockOnly || (Number(item.wpExpectedQty) > 0 && (item.wpId ? ids.has(String(item.wpId)) : item.barcode ? barcodes.has(item.barcode) : names.has(item.productTitle || item.varian)))) && (!query || `${item.productTitle || item.varian || ''} ${item.barcode || ''}`.toLowerCase().includes(query)))
     .slice().sort((a, b) => String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' }));
 });
 const pages = computed(() => Math.max(1, Math.ceil(rows.value.length / 25)));

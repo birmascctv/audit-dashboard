@@ -558,6 +558,7 @@ export function useAuditStore() {
   }
 
   async function clearProductNotes() {
+    Object.values(noteTimers).forEach(clearTimeout);
     productNotes.value = {};
     try { await fetch(`/api/audit/notes?storeId=${encodeURIComponent(selectedStoreId.value)}`, { method: 'DELETE' }); } catch (_) {}
   }
@@ -793,8 +794,8 @@ export function useAuditStore() {
 
     if (res.success) {
       auditHistory.value.unshift(completedRecord);
-      await lockCurrentSession(auditorName);
       await clearProductNotes();
+      await lockCurrentSession(auditorName);
       scannedCounts.value = {};
       scanLogs.value = [];
 

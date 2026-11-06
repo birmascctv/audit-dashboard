@@ -1076,16 +1076,16 @@ async function startServer() {
     if (session.role === 'crew') {
       const crewAllowed =
         (req.method === 'GET' && ['/api/stores', '/api/products', '/api/audit/state', '/api/audit/notes', '/api/audit/history', '/api/audit/esb-freshness'].includes(url)) ||
-        (req.method === 'GET' && /^\/api\/audit\/session\/[^/]+\/lock$/.test(url)) ||
-        (req.method === 'POST' && ['/api/audit/scan', '/api/audit/adjust'].includes(url)) ||
+        (['GET', 'POST'].includes(req.method) && /^\/api\/audit\/session\/[^/]+\/lock$/.test(url)) ||
+        (req.method === 'POST' && ['/api/audit/scan', '/api/audit/adjust', '/api/audit/finalize', '/api/products/match-barcode'].includes(url)) ||
         (req.method === 'PUT' && url === '/api/audit/notes') ||
+        (req.method === 'DELETE' && (url === '/api/audit/notes' || /^\/api\/products\/[^/]+\/barcode$/.test(url))) ||
         url.startsWith('/api/crew/');
       if (!crewAllowed) return res.status(403).json({ success: false, error: 'Crew accounts can only use their Stock Audit crew page.' });
       if (!session.storeId) return res.status(403).json({ success: false, error: 'Crew account has no assigned store.' });
       req.authUser = session;
       const pathStoreId = /^\/api\/audit\/session\/([^/]+)\/lock$/.exec(url)?.[1];
-      const suppliedStore = req.body?.storeId || req.query?.storeId || pathStoreId;
-      if (suppliedStore && suppliedStore !== session.storeId) return res.status(403).json({ success: false, error: 'This crew account is assigned to another store.' });
+      if ([req.body?.storeId, req.query?.storeId, pathStoreId].some((id) => id && id !== session.storeId)) return res.status(403).json({ success: false, error: 'This crew account is assigned to another store.' });
       if (req.body && ['POST', 'PUT', 'PATCH'].includes(req.method) && !req.body.storeId) req.body.storeId = session.storeId;
       if (req.query && !req.query.storeId && ['GET', 'DELETE'].includes(req.method)) req.query.storeId = session.storeId;
       if (url.startsWith('/api/crew/allocations/')) {
@@ -1216,6 +1216,14 @@ async function startServer() {
       const existing = (payload.productId || payload.wpId)
         ? all.find(p => p.id === (payload.productId || payload.wpId))
         : (targetTitle ? all.find(p => (p.productTitle && p.productTitle.toLowerCase().trim() === targetTitle) || (p.varian && p.varian.toLowerCase().trim() === targetTitle)) : null);
+      if (req.authUser?.role === 'crew') {
+        if (!existing || !(Number(existing.stockByStore?.[req.authUser.storeId]) > 0)) {
+          return res.status(403).json({ success: false, message: 'Product is not in stock at your store.' });
+        }
+        if (all.some((p) => p.id !== existing.id && p.barcode === cleanBarcode)) {
+          return res.status(409).json({ success: false, message: 'Barcode is already assigned to another product.' });
+        }
+      }
 
       const productItem = {
         id: existing ? existing.id : (payload.wpId || `prod-${Date.now()}`),
@@ -1268,6 +1276,9 @@ async function startServer() {
     const sqliteDb = db.getDb();
     const prod = db.getAllProducts().find((p) => String(p.id) === String(req.params.id));
     if (!prod) return res.status(404).json({ success: false, message: 'Product not found' });
+    if (req.authUser?.role === 'crew' && !(Number(prod.stockByStore?.[req.authUser.storeId]) > 0)) {
+      return res.status(403).json({ success: false, message: 'Product is not in stock at your store.' });
+    }
     sqliteDb.prepare('UPDATE products SET barcode = NULL WHERE id = ?;').run(prod.id);
     if (prod.barcode) {
       sqliteDb.prepare('UPDATE audit_scans SET barcode = ? WHERE barcode = ?;').run(`id:${prod.id}`, prod.barcode);
@@ -1441,6 +1452,7 @@ async function startServer() {
   // 8. Finalize Audit
   app.post('/api/audit/finalize', (req, res) => {
     const audit = req.body;
+    if (req.authUser?.role === 'crew') audit.pushedToWordPress = false;
     if (!audit.storeId) return res.status(400).json({ error: 'Store ID required' });
 
     const allItems = Array.isArray(audit.items) ? audit.items : (Array.isArray(audit.records) ? audit.records : []);
@@ -1453,6 +1465,7 @@ async function startServer() {
     const keptItems = allItems
       .filter((it) => (Number(it.wpExpectedQty) || 0) !== 0 || (Number(it.scannedCount) || 0) !== 0)
       .map((it) => ({
+        wpId: it.wpId || it.productId || '',
         barcode: it.barcode || '',
         productTitle: it.productTitle || it.varian || '',
         varian: it.varian || '',

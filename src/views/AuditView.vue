@@ -471,15 +471,20 @@ const pagedItems = computed(() => filteredItems.value.slice((page.value - 1) * P
 watch([searchQuery, statusFilter, brandFilter, categoryFilter, mismatchesOnly], () => { page.value = 1; });
 watch(totalPages, (n) => { if (page.value > n) page.value = n; });
 
-const sortedAuditItems = computed(() => auditItems.value.slice().sort((a, b) =>
+const sortedAuditItems = computed(() => auditItems.value.filter((item) => !isDevMode || item.wpExpectedQty > 0).sort((a, b) =>
   String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' })));
 
 // ONLY products that have been physically scanned in this session (scannedCount > 0)
 const scannedOnlyItems = computed(() => {
-  return auditItems.value.filter((item) => isDevMode ? item.hasStoreStock || item.scannedCount > 0 : item.scannedCount > 0).sort((a, b) =>
+  return auditItems.value.filter((item) => isDevMode ? item.wpExpectedQty > 0 : item.scannedCount > 0).sort((a, b) =>
     String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' }));
 });
 const scannedItemCount = computed(() => scannedOnlyItems.value.filter((item) => item.scannedCount > 0).length);
+const countingPage = ref(1);
+const countingPages = computed(() => Math.max(1, Math.ceil(scannedOnlyItems.value.length / 25)));
+const countingRows = computed(() => isDevMode ? scannedOnlyItems.value.slice((countingPage.value - 1) * 25, countingPage.value * 25) : scannedOnlyItems.value);
+watch(selectedStoreId, () => { countingPage.value = 1; });
+watch(countingPages, (pages) => { countingPage.value = Math.min(countingPage.value, pages); });
 const transferItem = ref(null);
 const transferAllocations = ref({});
 const isTransferModalOpen = ref(false);
@@ -571,7 +576,7 @@ async function handleFinalizeAudit() {
     await finalizeAudit(
       currentUser.value?.name || 'Store Auditor',
       auditNotes.value,
-      pushToWordPressOnFinalize.value
+      isDevMode && isCrew.value ? false : pushToWordPressOnFinalize.value
     );
     isCompleteModalOpen.value = false;
     auditNotes.value = '';
@@ -647,7 +652,7 @@ const showAuditSuccess = ref(false);
 
 <template>
   <div class="space-y-6">
-    <nav v-if="canSeeAuditorPage || (isDevMode && canSeeCrewPage)" class="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs" aria-label="Stock audit view">
+    <nav v-if="canSeeAuditorPage && (isDevMode ? canSeeCrewPage : true)" class="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs" aria-label="Stock audit view">
       <router-link v-if="canSeeAuditorPage" to="/stock-audit" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="!isCrew ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-50'">Auditor</router-link>
       <router-link v-if="isDevMode && canSeeCrewPage" to="/stock-audit-crew" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="isCrew ? 'bg-violet-600 text-white' : 'text-slate-600 hover:bg-slate-50'">Crew</router-link>
     </nav>
@@ -666,7 +671,7 @@ const showAuditSuccess = ref(false);
               Station & Reconciliation
             </span>
           </div>
-          <p class="text-xs text-slate-500 mt-0.5">
+          <p v-if="!isDevMode" class="text-xs text-slate-500 mt-0.5">
             Physical barcode scanner station, variant bottle count, and live inventory discrepancy verification against ESB records
           </p>
           <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
@@ -678,9 +683,9 @@ const showAuditSuccess = ref(false);
             <span title="Latest observed increase or decrease in any product, including sales and transfers out.">Last stock change observed (in or out): <strong class="text-slate-900">{{ esbFreshness.lastChangedAt ? fmtJakarta(esbFreshness.lastChangedAt) : 'not seen yet' }}</strong></span>
             <span>Last pulled from ESB: <strong class="text-slate-900">{{ esbFreshness.lastPulledAt ? fmtJakarta(esbFreshness.lastPulledAt) : '—' }}</strong></span>
           </div>
-          <p v-if="esbFreshness" class="mt-1 text-[10px] text-slate-500">Change times are when this dashboard first detected a new quantity on sync, not the exact ESB edit time.</p>
-          <p v-else-if="freshnessError" class="mt-1 text-xs text-rose-700">{{ freshnessError }}</p>
-          <p v-else class="mt-1 text-xs text-slate-500">Loading ESB change times…</p>
+          <p v-if="esbFreshness && !isDevMode" class="mt-1 text-[10px] text-slate-500">Change times are when this dashboard first detected a new quantity on sync, not the exact ESB edit time.</p>
+          <p v-if="!esbFreshness && freshnessError" class="mt-1 text-xs text-rose-700">{{ freshnessError }}</p>
+          <p v-else-if="!esbFreshness" class="mt-1 text-xs text-slate-500">Loading ESB change times…</p>
         </div>
       </div>
 
@@ -704,7 +709,7 @@ const showAuditSuccess = ref(false);
 
         <!-- Add New Barcode Button -->
         <button
-          v-if="!isCrew && !readOnlyStock"
+          v-if="(!isCrew || isDevMode) && !readOnlyStock"
           @click="openAddBarcodeWithPrefill()"
           type="button"
           class="px-3.5 py-2 min-h-12 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
@@ -716,7 +721,7 @@ const showAuditSuccess = ref(false);
 
         <!-- Finalize Audit Button -->
         <button
-          v-if="!isCrew && !readOnlyStock"
+          v-if="(!isCrew || isDevMode) && !readOnlyStock"
           @click="isCompleteModalOpen = true"
           type="button"
           class="px-4 py-2 min-h-12 rounded-xl bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all cursor-pointer"
@@ -1050,12 +1055,12 @@ const showAuditSuccess = ref(false);
               </thead>
               <tbody class="divide-y divide-slate-200/80 bg-white">
                 <tr
-                  v-for="(item, sIdx) in scannedOnlyItems"
+                  v-for="(item, sIdx) in countingRows"
                   :key="item.wpId"
                   class="hover:bg-slate-50 transition-colors"
                 >
                   <td class="py-2 px-3 text-center font-mono text-slate-500 text-[11px]">
-                    {{ sIdx + 1 }}
+                    {{ sIdx + 1 + (isDevMode ? (countingPage - 1) * 25 : 0) }}
                   </td>
                   <td class="py-2 px-3 font-mono font-medium text-teal-800 text-[11px]">
                     {{ item.barcode }}
@@ -1149,6 +1154,10 @@ const showAuditSuccess = ref(false);
               </tbody>
             </table>
             </div>
+            <div v-if="isDevMode && scannedOnlyItems.length" class="flex items-center justify-between border-t border-slate-200 px-3 py-2 text-xs">
+              <span>Page {{ countingPage }} of {{ countingPages }} · {{ scannedOnlyItems.length }} products</span>
+              <div class="flex gap-2"><button type="button" class="rounded border px-3 py-1 disabled:opacity-40" :disabled="countingPage <= 1" @click="countingPage--">Previous</button><button type="button" class="rounded border px-3 py-1 disabled:opacity-40" :disabled="countingPage >= countingPages" @click="countingPage++">Next</button></div>
+            </div>
           </div>
         </div>
       </div>
@@ -1156,7 +1165,7 @@ const showAuditSuccess = ref(false);
     </template>
 
     <!-- Main Comparison Table (Physical Count vs ESB, light theme) -->
-    <StockComparisonTable v-if="isDevMode || readOnlyStock" :items="auditItems" :history="auditHistory" :store-id="selectedStoreId" :store-name="currentStore.name" :loading="!isInitialized" />
+    <StockComparisonTable v-if="isDevMode || readOnlyStock" :items="auditItems" :history="auditHistory" :store-id="selectedStoreId" :store-name="currentStore.name" :loading="!isInitialized" :positive-stock-only="isDevMode" />
     <div v-else class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
       <!-- Table Header & Filter Toolbar -->
       <div class="p-5 border-b border-slate-100 bg-slate-50/80">
@@ -1526,7 +1535,7 @@ const showAuditSuccess = ref(false);
 
     <!-- Modal: Complete Audit Session -->
     <div
-      v-if="isCompleteModalOpen && !isCrew"
+      v-if="isCompleteModalOpen && (!isCrew || isDevMode)"
       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
       @click.self="isCompleteModalOpen = false"
     >
@@ -1599,7 +1608,7 @@ const showAuditSuccess = ref(false);
 
     <!-- Modal: Add / Map New Barcode -->
     <AddBarcodeModal
-      :is-open="isAddBarcodeModalOpen && !isCrew"
+      :is-open="isAddBarcodeModalOpen && (!isCrew || isDevMode)"
       :prefilled-barcode="pendingUnknownBarcode"
       @close="isAddBarcodeModalOpen = false; pendingUnknownBarcode = ''"
       @barcode-added="pendingUnknownBarcode = ''"
