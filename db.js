@@ -683,6 +683,16 @@ export function getAuthSession(token) {
   return row;
 }
 
+export function getSignedInUsers(db = getDb(), now = new Date().toISOString()) {
+  return db.prepare(`
+    SELECT u.id, u.username, u.name, COUNT(*) AS sessionCount
+    FROM auth_sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.expires_at > ?
+    GROUP BY u.id, u.username, u.name
+    ORDER BY u.name COLLATE NOCASE, u.username COLLATE NOCASE
+  `).all(now);
+}
+
 export function deleteAuthSession(token) {
   if (!token || typeof token !== 'string') return;
   getDb().prepare('DELETE FROM auth_sessions WHERE token_hash = ?;').run(hashToken(token));

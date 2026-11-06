@@ -2,7 +2,7 @@
 import DateField from '../components/DateField.vue';
 import { fmtDate, fmtDateTime } from '../utils/date.js';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { BarChart3, Download, FileSpreadsheet, Package, RefreshCw, Store, Trash2, TrendingUp, UploadCloud } from 'lucide-vue-next';
+import { BarChart3, Download, FileSpreadsheet, LoaderCircle, Package, RefreshCw, Store, Trash2, TrendingUp, UploadCloud } from 'lucide-vue-next';
 import UploadSalesCsvModal from '../components/UploadSalesCsvModal.vue';
 import AnalyticsPieChart, { PIE_CHART_COLORS } from '../components/AnalyticsPieChart.vue';
 import AnalyticsLineChart from '../components/AnalyticsLineChart.vue';
@@ -83,6 +83,7 @@ const error = ref('');
 const uploadOpen = ref(false);
 const deletingFile = ref(null);
 const deleting = ref(false);
+const downloadingFileId = ref(null);
 let reportRequestId = 0;
 let timeRequestId = 0;
 
@@ -833,16 +834,24 @@ function handleImported() {
   loadStockCompare();
 }
 async function downloadFile(file) {
-  const res = await fetch(`/api/sales/files/${encodeURIComponent(file.id)}/download`);
-  if (!res.ok) return;
-  const url = URL.createObjectURL(await res.blob());
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = file.filename || 'sales_clean.csv';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  if (downloadingFileId.value) return;
+  downloadingFileId.value = file.id;
+  try {
+    const res = await fetch(`/api/sales/files/${encodeURIComponent(file.id)}/download`);
+    if (!res.ok) throw new Error(`Server returned HTTP ${res.status}.`);
+    const url = URL.createObjectURL(await res.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.filename || 'sales_clean.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (downloadError) {
+    toast.error(`Could not download CSV: ${downloadError.message}`);
+  } finally {
+    downloadingFileId.value = null;
+  }
 }
 async function deleteFile() {
   if (!deletingFile.value) return;
@@ -1450,7 +1459,7 @@ onBeforeUnmount(() => {
         <div class="overflow-x-auto">
           <table class="w-full min-w-[700px] text-left text-xs">
             <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">File</th><th class="px-4 py-2">Uploaded</th><th class="px-4 py-2">Stores</th><th class="px-4 py-2 text-right">Rows</th><th class="px-4 py-2 text-right">Net sales</th><th class="px-4 py-2 text-right">Actions</th></tr></thead>
-            <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button class="rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50" title="Download clean CSV" @click="downloadFile(file)"><Download class="h-3.5 w-3.5" /></button><button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
+            <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button class="flex items-center gap-1 rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50 disabled:opacity-50" title="Download clean CSV" :disabled="!!downloadingFileId" :aria-busy="downloadingFileId === file.id" @click="downloadFile(file)"><LoaderCircle v-if="downloadingFileId === file.id" class="h-3.5 w-3.5 animate-spin" /><Download v-else class="h-3.5 w-3.5" /><span v-if="downloadingFileId === file.id" role="status">Preparing download…</span></button><button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
               <tr v-if="!files.length"><td colspan="6" class="p-0"><EmptyState title="No imported CSV batches." /></td></tr></tbody>
           </table>
         </div>

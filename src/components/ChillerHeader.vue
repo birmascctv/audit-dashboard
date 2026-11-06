@@ -3,6 +3,7 @@ import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from '../composables/useAuth.js';
 import { online, lastUpdatedAt } from '../composables/useSyncStatus.js';
+import { authFetchJson } from '../services/authFetch.js';
 import {
   BookOpen,
   ChevronDown,
@@ -29,6 +30,23 @@ const router = useRouter();
 const now = ref(Date.now());
 let clockTimer = null;
 const profileOpen = ref(false);
+const signedInUsers = ref([]);
+const sessionsLoading = ref(false);
+const sessionsError = ref('');
+let sessionsTimer = null;
+async function loadSignedInUsers() {
+  if (sessionsLoading.value) return;
+  sessionsLoading.value = true;
+  try {
+    const data = await authFetchJson('/api/auth/signed-in-users');
+    signedInUsers.value = data.users;
+    sessionsError.value = '';
+  } catch {
+    sessionsError.value = 'Unable to load signed-in users.';
+  } finally {
+    sessionsLoading.value = false;
+  }
+}
 const updatedLabel = computed(() => {
   if (!lastUpdatedAt.value) return 'Waiting for data';
   const s = Math.max(0, Math.round((now.value - lastUpdatedAt.value) / 1000));
@@ -111,6 +129,13 @@ function handleLogout() {
 }
 
 watch(() => route.fullPath, closeMenus);
+watch(profileOpen, (open) => {
+  clearInterval(sessionsTimer);
+  if (open && currentUser.value?.id === 'user-bertha') {
+    loadSignedInUsers();
+    sessionsTimer = setInterval(loadSignedInUsers, 30000);
+  }
+});
 onMounted(() => {
   clockTimer = setInterval(() => { now.value = Date.now(); }, 5000);
   document.addEventListener('pointerdown', handleOutsidePointerDown);
@@ -119,6 +144,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   clearInterval(clockTimer);
+  clearInterval(sessionsTimer);
   document.removeEventListener('pointerdown', handleOutsidePointerDown);
   window.removeEventListener('resize', updateDropdownPosition);
   window.removeEventListener('scroll', updateDropdownPosition, true);
@@ -252,8 +278,20 @@ onUnmounted(() => {
               <ChevronDown class="h-3.5 w-3.5 text-slate-500 transition-transform" :class="profileOpen ? 'rotate-180' : ''" />
             </button>
             <Transition name="menu-slide">
-              <div v-if="profileOpen" class="absolute right-0 top-full z-[70] mt-2 w-48 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black/5">
+              <div v-if="profileOpen" class="absolute right-0 top-full z-[70] mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black/5">
                 <p class="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Signed in as {{ currentUser.username }}</p>
+                <div v-if="currentUser.id === 'user-bertha'" class="border-t border-slate-100 px-3 py-2" data-testid="signed-in-users">
+                  <div class="flex items-center justify-between gap-2">
+                    <p class="text-xs font-bold text-slate-800">Signed-in users: {{ signedInUsers.length }}</p>
+                    <button type="button" class="text-xs font-bold text-teal-700 disabled:opacity-50" :disabled="sessionsLoading" @click="loadSignedInUsers">Refresh</button>
+                  </div>
+                  <p v-if="sessionsError" class="mt-1 text-xs text-rose-700">{{ sessionsError }}</p>
+                  <p v-else-if="sessionsLoading && !signedInUsers.length" class="mt-1 text-xs text-slate-500">Loading…</p>
+                  <ul v-else class="mt-1 max-h-40 overflow-y-auto text-xs text-slate-700">
+                    <li v-for="user in signedInUsers" :key="user.id" class="py-1">{{ user.name }} ({{ user.username }})<span v-if="user.sessionCount > 1"> · {{ user.sessionCount }} sessions</span></li>
+                  </ul>
+                  <p class="mt-1 text-[10px] text-slate-500">Unexpired sessions, including inactive browsers; sessions expire after 1 hour or logout.</p>
+                </div>
                 <button type="button" class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50" @click="handleLogout"><LogOut class="h-4 w-4" />Logout</button>
               </div>
             </Transition>

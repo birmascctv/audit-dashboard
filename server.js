@@ -2695,6 +2695,12 @@ async function startServer() {
   });
 
   // 13. Auth endpoints
+  app.get('/api/auth/signed-in-users', (req, res) => {
+    if (req.authUser.userId !== 'user-bertha') return res.status(403).json({ success: false, error: 'Access denied.' });
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, users: db.getSignedInUsers() });
+  });
+
   app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
