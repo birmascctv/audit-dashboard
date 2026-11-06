@@ -106,6 +106,7 @@ export function useAuth() {
   const isAuditor = computed(() => role.value === 'auditor');
   const isAdmin = computed(() => role.value === 'admin');
   const isSuperAdmin = computed(() => role.value === 'superadmin' || role.value === 'owner');
+  const isCrew = computed(() => role.value === 'crew');
 
   // Strict RBAC Access Controls:
   // - Auditor: Store Audit, Upload Audits, Stock Audit, Audit Records
@@ -114,7 +115,8 @@ export function useAuth() {
   const isOwner = computed(() => role.value === 'owner');
   const canAccessStoreAudit = computed(() => ['auditor', 'superadmin', 'owner'].includes(role.value));
   const canAccessUploadAudits = computed(() => ['auditor', 'owner'].includes(role.value));
-  const canAccessStockAudit = computed(() => ['auditor', 'owner'].includes(role.value));
+  const canAccessStockAudit = computed(() => ['auditor', 'owner', 'crew'].includes(role.value));
+  const canAccessCrewPage = computed(() => ['owner', 'crew'].includes(role.value));
   const canAccessAuditRecords = computed(() => ['auditor', 'superadmin', 'owner'].includes(role.value));
   const canAccessSalesReport = computed(() => ['admin', 'superadmin', 'owner'].includes(role.value));
 
@@ -124,9 +126,11 @@ export function useAuth() {
     isAuditor,
     isAdmin,
     isSuperAdmin,
+    isCrew,
     canAccessStoreAudit,
     canAccessUploadAudits,
     canAccessStockAudit,
+    canAccessCrewPage,
     canAccessAuditRecords,
     canAccessSalesReport,
     isAuthenticated,

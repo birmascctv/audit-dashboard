@@ -10,7 +10,7 @@ import OnboardingCard from './components/OnboardingCard.vue';
 
 const route = useRoute();
 const router = useRouter();
-const { currentUser, logout, canAccessStoreAudit, canAccessUploadAudits, canAccessStockAudit, canAccessAuditRecords, canAccessSalesReport } = useAuth();
+const { currentUser, logout, canAccessStoreAudit, canAccessUploadAudits, canAccessStockAudit, canAccessCrewPage, canAccessAuditRecords, canAccessSalesReport } = useAuth();
 const toast = useToast();
 
 const pageNames = {
@@ -26,7 +26,7 @@ const crumbs = computed(() => pageNames[route.path] || []);
 const navItems = computed(() => [
   canAccessStoreAudit.value && { to: '/store-audit', label: 'Store' },
   canAccessUploadAudits.value && { to: '/upload-audits', label: 'Upload' },
-  canAccessStockAudit.value && { to: '/stock-audit', label: 'Stock' },
+  canAccessStockAudit.value && { to: canAccessCrewPage.value && currentUser.value?.role === 'crew' ? '/stock-audit-crew' : '/stock-audit', label: 'Stock' },
   canAccessAuditRecords.value && { to: '/audit-records', label: 'Records' },
   canAccessSalesReport.value && { to: '/sales', label: 'Sales' },
 ].filter(Boolean));

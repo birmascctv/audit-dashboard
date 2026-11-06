@@ -206,7 +206,7 @@ onUnmounted(() => {
                 ><UploadCloud class="h-4 w-4" />Upload Audits</router-link>
                 <router-link
                   v-if="canAccessStockAudit"
-                  to="/stock-audit"
+                  :to="currentUser?.role === 'crew' ? '/stock-audit-crew' : '/stock-audit'"
                   class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
                   :class="['/stock-audit', '/stock-audit-crew'].includes(route.path) ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
                   @click="closeMenus"

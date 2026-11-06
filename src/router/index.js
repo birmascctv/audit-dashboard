@@ -17,6 +17,7 @@ const routes = [
         if (session) {
           const user = JSON.parse(session);
           if (user.role === 'admin') return '/sales';
+          if (user.role === 'crew') return '/stock-audit-crew';
         }
       } catch {}
       return '/store-audit';
@@ -51,13 +52,13 @@ const routes = [
     component: AuditView,
     meta: { requiresAuth: true, allowedRoles: ['auditor', 'owner'] },
   },
-  {
+  ...(import.meta.env.DEV ? [{
     path: '/stock-audit-crew',
     name: 'StockAuditCrew',
     component: AuditView,
     props: { mode: 'crew' },
-    meta: { requiresAuth: true, allowedRoles: ['auditor', 'owner'] },
-  },
+    meta: { requiresAuth: true, allowedRoles: ['owner', 'crew'] },
+  }] : []),
   {
     path: '/audit-records',
     name: 'AuditHistory',
@@ -111,6 +112,7 @@ router.beforeEach((to, from, next) => {
     if (userRole === 'admin') {
       return next('/sales');
     }
+    if (userRole === 'crew') return next('/stock-audit-crew');
     return next('/store-audit');
   }
 
@@ -122,6 +124,7 @@ router.beforeEach((to, from, next) => {
     if (userRole === 'auditor') {
       return next('/store-audit');
     }
+    if (userRole === 'crew') return next('/stock-audit-crew');
     if (userRole === 'superadmin' || userRole === 'owner') {
       return next('/store-audit');
     }

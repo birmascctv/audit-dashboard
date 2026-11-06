@@ -55,11 +55,13 @@ const lastSyncStatus = ref({
 // Load state from backend
 async function initializeFromBackend() {
   try {
+    let crewSession = false;
+    try { crewSession = JSON.parse(sessionStorage.getItem('birmas_audit_session_v4') || 'null')?.role === 'crew'; } catch {}
     const [loadedStores, loadedConfig, loadedProducts, loadedHistory] = await Promise.all([
       fetchStores().catch(() => DEFAULT_STORES),
-      fetchWordPressConfig().catch(() => wpConfig.value),
+      crewSession ? Promise.resolve(wpConfig.value) : fetchWordPressConfig().catch(() => wpConfig.value),
       fetchProducts().catch(() => DEFAULT_WP_PRODUCTS),
-      fetchAuditHistory().catch(() => []),
+      crewSession ? Promise.resolve([]) : fetchAuditHistory().catch(() => []),
     ]);
 
     if (loadedStores && loadedStores.length > 0) {

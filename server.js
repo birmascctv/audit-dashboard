@@ -1071,8 +1071,37 @@ async function startServer() {
     if (isConfig && !['superadmin', 'owner'].includes(session.role)) return res.status(403).json({ success: false, error: 'Superadmin only.' });
     const stockWork = session.role === 'superadmin' && req.method !== 'GET' && /^\/api\/(upload|products|audit\/(scan|adjust|reset|finalize|notes)|crew)(\/|$)/.test(url);
     if (stockWork) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (url.startsWith('/api/crew') && process.env.NODE_ENV !== 'development') return res.status(404).json({ success: false, error: 'Crew workflows are not enabled in this environment.' });
+    if (url.startsWith('/api/crew') && !['owner', 'crew'].includes(session.role)) return res.status(403).json({ success: false, error: 'Crew access only.' });
+    if (session.role === 'crew') {
+      const crewAllowed =
+        (req.method === 'GET' && ['/api/stores', '/api/products', '/api/audit/state', '/api/audit/notes', '/api/audit/esb-freshness'].includes(url)) ||
+        /^\/api\/audit\/session\/[^/]+\/lock$/.test(url) ||
+        (req.method === 'POST' && ['/api/audit/scan', '/api/audit/adjust'].includes(url)) ||
+        (req.method === 'PUT' && url === '/api/audit/notes') ||
+        url.startsWith('/api/crew/');
+      if (!crewAllowed) return res.status(403).json({ success: false, error: 'Crew accounts can only use their Stock Audit crew page.' });
+      if (!session.storeId) return res.status(403).json({ success: false, error: 'Crew account has no assigned store.' });
+      req.authUser = session;
+      const pathStoreId = /^\/api\/audit\/session\/([^/]+)\/lock$/.exec(url)?.[1];
+      const suppliedStore = req.body?.storeId || req.query?.storeId || pathStoreId;
+      if (suppliedStore && suppliedStore !== session.storeId) return res.status(403).json({ success: false, error: 'This crew account is assigned to another store.' });
+      if (req.body && ['POST', 'PUT', 'PATCH'].includes(req.method) && !req.body.storeId) req.body.storeId = session.storeId;
+      if (req.query && !req.query.storeId && ['GET', 'DELETE'].includes(req.method)) req.query.storeId = session.storeId;
+      if (url.startsWith('/api/crew/allocations/')) {
+        const allocation = db.getDb().prepare(`
+          SELECT d.source_store_id AS sourceStoreId, a.dest_store_id AS destStoreId
+          FROM crew_allocations a JOIN crew_deliveries d ON d.id = a.delivery_id
+          WHERE a.id = ?
+        `).get(Number(req.params?.id || url.split('/').at(-1)));
+        const action = req.body?.action;
+        const canSend = allocation?.sourceStoreId === session.storeId && action === 'sent';
+        const canReceive = allocation?.destStoreId === session.storeId && action === 'received';
+        if (!canSend && !canReceive) return res.status(403).json({ success: false, error: 'Only the sending crew can mark sent, and only the receiving crew can mark received.' });
+      }
+    }
     if (salesOnly || stockOnly) return res.status(403).json({ success: false, error: 'Access denied.' });
-    req.authUser = session;
+    req.authUser ||= session;
     next();
   });
 
@@ -1125,10 +1154,15 @@ async function startServer() {
       const activeIds = new Set(activeRows.map((r) => r.store_id));
       all.forEach((s) => { s.hasStock = activeIds.has(s.id); });
       const result = all.sort((a, b) => a.store_id - b.store_id);
-      res.json(result);
+      res.json(req.authUser?.role === 'crew'
+        ? result.filter((store) => ['birmas-kuningan', 'birmas-kwitang', 'birmas-sudirman'].includes(store.id))
+        : result);
     } catch (err) {
       console.warn('[/api/stores] Fallback error:', err.message);
-      res.json(db.getAllStores());
+      const stores = db.getAllStores();
+      res.json(req.authUser?.role === 'crew'
+        ? stores.filter((store) => ['birmas-kuningan', 'birmas-kwitang', 'birmas-sudirman'].includes(store.id))
+        : stores);
     }
   });
 
@@ -1156,7 +1190,15 @@ async function startServer() {
 
   // 2. Products API
   app.get('/api/products', (req, res) => {
-    res.json(db.getAllProducts());
+    const products = db.getAllProducts();
+    if (req.authUser?.role === 'crew') {
+      res.json(products.map((product) => ({
+        ...product,
+        stockByStore: { [req.authUser.storeId]: Number(product.stockByStore?.[req.authUser.storeId]) || 0 },
+      })));
+      return;
+    }
+    res.json(products);
   });
 
   // 3. Add or match new barcode
@@ -1247,7 +1289,9 @@ async function startServer() {
   // 4. Audit State per store
   app.get('/api/audit/state', (req, res) => {
     const stores = db.getAllStores();
-    const storeId = (req.query.storeId) || (stores[0]?.id || 'birmas-sudirman');
+    const storeId = req.authUser?.role === 'crew'
+      ? req.authUser.storeId
+      : (req.query.storeId) || (stores[0]?.id || 'birmas-sudirman');
     const scans = db.getScansByStore(storeId);
     
     // Calculate counts per barcode
@@ -1524,6 +1568,8 @@ async function startServer() {
       sent_on TEXT, received_on TEXT, source_esb_on TEXT, updated_by TEXT, updated_at TEXT
     );
   `);
+  try { db.getDb().exec('ALTER TABLE crew_allocations ADD COLUMN sent_at TEXT;'); } catch (_) {}
+  try { db.getDb().exec('ALTER TABLE crew_allocations ADD COLUMN received_at TEXT;'); } catch (_) {}
   const isoDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
   const todayJakarta = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
   const daysBetween = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000);
@@ -1543,7 +1589,7 @@ async function startServer() {
     return { state: waiting > 3 ? 'overdue' : 'waiting', waitingDays: waiting };
   };
 
-  const loadDeliveries = (storeId) => {
+  const loadDeliveries = (storeId, viewer = null) => {
     ensureCrewTables();
     const sqlite = db.getDb();
     const ids = sqlite.prepare(
@@ -1552,8 +1598,13 @@ async function startServer() {
     return ids.map((id) => {
       const d = sqlite.prepare('SELECT * FROM crew_deliveries WHERE id = ?').get(id);
       const lines = sqlite.prepare('SELECT * FROM crew_delivery_lines WHERE delivery_id = ? ORDER BY product_name').all(id).map((l) => {
-        const allocs = sqlite.prepare('SELECT * FROM crew_allocations WHERE line_id = ? ORDER BY dest_store_id').all(l.id).map((a) => ({
+        let allocationRows = sqlite.prepare('SELECT * FROM crew_allocations WHERE line_id = ? ORDER BY dest_store_id').all(l.id);
+        if (viewer?.role === 'crew' && d.source_store_id !== viewer.storeId) {
+          allocationRows = allocationRows.filter((a) => a.dest_store_id === viewer.storeId);
+        }
+        const allocs = allocationRows.map((a) => ({
           id: a.id, destStoreId: a.dest_store_id, qty: a.qty, status: a.status, sentOn: a.sent_on, receivedOn: a.received_on,
+          sentAt: a.sent_at || null, receivedAt: a.received_at || null,
           sourceEsbOn: a.source_esb_on, destEsb: esbState(a.dest_store_id, l.product_id, a.received_on),
         }));
         const forOthers = allocs.reduce((sum, a) => sum + a.qty, 0);
@@ -1570,7 +1621,11 @@ async function startServer() {
   };
 
   app.get('/api/crew/deliveries', (req, res) => {
-    res.json({ success: true, deliveries: loadDeliveries(String(req.query.storeId || '')) });
+    const storeId = String(req.query.storeId || req.authUser?.storeId || '');
+    if (req.authUser?.role === 'crew' && storeId !== req.authUser.storeId) {
+      return res.status(403).json({ success: false, error: 'This crew account is assigned to another store.' });
+    }
+    res.json({ success: true, deliveries: loadDeliveries(storeId, req.authUser) });
   });
 
   app.post('/api/crew/deliveries', (req, res) => {
@@ -1578,6 +1633,9 @@ async function startServer() {
     const sqlite = db.getDb();
     const { sourceStoreId, lines } = req.body || {};
     const arrivedOn = isoDate(req.body?.arrivedOn) || todayJakarta();
+    if (req.authUser?.role === 'crew' && sourceStoreId !== req.authUser.storeId) {
+      return res.status(403).json({ success: false, error: 'You can only record deliveries for your assigned store.' });
+    }
     const stores = new Set(db.getAllStores().map((st) => st.id));
     if (!stores.has(sourceStoreId)) return res.status(400).json({ success: false, error: 'Choose the store the products arrived at.' });
     if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ success: false, error: 'Add at least one product.' });
@@ -1586,9 +1644,16 @@ async function startServer() {
       const others = (l.allocations || []).reduce((sum, a) => sum + Number(a.qty || 0), 0);
       if (!l.productId || !(total > 0)) return res.status(400).json({ success: false, error: 'Every product needs a quantity above 0.' });
       if (others > total) return res.status(400).json({ success: false, error: `${l.productName || l.productId}: more is assigned to other stores than arrived.` });
+      if (!db.getAllProducts().some((product) => product.id === String(l.productId))) {
+        return res.status(400).json({ success: false, error: `Unknown product: ${l.productName || l.productId}.` });
+      }
       for (const a of l.allocations || []) {
         if (Number(a.qty) > 0 && (!stores.has(a.destStoreId) || a.destStoreId === sourceStoreId)) {
           return res.status(400).json({ success: false, error: 'Invalid destination store.' });
+        }
+        if (req.authUser?.role === 'crew' && Number(a.qty) > 0 &&
+          !['birmas-kuningan', 'birmas-kwitang', 'birmas-sudirman'].includes(a.destStoreId)) {
+          return res.status(400).json({ success: false, error: 'Crew transfers are limited to Kuningan, Kwitang and Sudirman.' });
         }
       }
     }
@@ -1625,12 +1690,14 @@ async function startServer() {
     const by = req.authUser?.name || 'Crew';
     const now = new Date().toISOString();
     if (action === 'sent') {
-      sqlite.prepare("UPDATE crew_allocations SET status = 'sent', sent_on = ?, updated_by = ?, updated_at = ? WHERE id = ?").run(date, by, now, row.id);
+      if (row.status !== 'planned') return res.status(409).json({ success: false, error: 'Only a planned transfer can be marked sent.' });
+      sqlite.prepare("UPDATE crew_allocations SET status = 'sent', sent_on = ?, sent_at = ?, updated_by = ?, updated_at = ? WHERE id = ?").run(date, now, by, now, row.id);
     } else if (action === 'received') {
-      sqlite.prepare("UPDATE crew_allocations SET status = 'received', sent_on = COALESCE(sent_on, ?), received_on = ?, updated_by = ?, updated_at = ? WHERE id = ?").run(date, date, by, now, row.id);
+      if (row.status !== 'sent') return res.status(409).json({ success: false, error: 'The sending crew must mark this transfer On the Way first.' });
+      sqlite.prepare("UPDATE crew_allocations SET status = 'received', sent_on = COALESCE(sent_on, ?), sent_at = COALESCE(sent_at, ?), received_on = ?, received_at = ?, updated_by = ?, updated_at = ? WHERE id = ?").run(date, now, date, now, by, now, row.id);
     } else if (action === 'undo') {
       const back = row.status === 'received' ? 'sent' : 'planned';
-      sqlite.prepare('UPDATE crew_allocations SET status = ?, received_on = NULL, sent_on = CASE WHEN ? = \'planned\' THEN NULL ELSE sent_on END, updated_by = ?, updated_at = ? WHERE id = ?').run(back, back, by, now, row.id);
+      sqlite.prepare('UPDATE crew_allocations SET status = ?, received_on = NULL, received_at = NULL, sent_on = CASE WHEN ? = \'planned\' THEN NULL ELSE sent_on END, sent_at = CASE WHEN ? = \'planned\' THEN NULL ELSE sent_at END, updated_by = ?, updated_at = ? WHERE id = ?').run(back, back, back, by, now, row.id);
     } else if (action === 'source_esb_done') {
       sqlite.prepare('UPDATE crew_allocations SET source_esb_on = ?, updated_by = ?, updated_at = ? WHERE id = ?').run(date, by, now, row.id);
     } else {
@@ -1643,6 +1710,12 @@ async function startServer() {
     ensureCrewTables();
     const sqlite = db.getDb();
     const id = Number(req.params.id);
+    if (req.authUser?.role === 'crew') {
+      const delivery = sqlite.prepare('SELECT source_store_id FROM crew_deliveries WHERE id = ?').get(id);
+      if (!delivery || delivery.source_store_id !== req.authUser.storeId) {
+        return res.status(403).json({ success: false, error: 'Only the sending crew can delete this delivery.' });
+      }
+    }
     const received = sqlite.prepare("SELECT 1 FROM crew_allocations WHERE delivery_id = ? AND status <> 'planned' LIMIT 1").get(id);
     if (received) return res.status(409).json({ success: false, error: 'Some of this delivery was already sent, so it cannot be deleted.' });
     sqlite.prepare('DELETE FROM crew_allocations WHERE delivery_id = ?').run(id);
@@ -1654,8 +1727,11 @@ async function startServer() {
   // Products that physically arrived at a store but have not shown up in ESB yet
   app.get('/api/crew/pending-esb', (req, res) => {
     const storeId = String(req.query.storeId || '');
+    if (req.authUser?.role === 'crew' && storeId !== req.authUser.storeId) {
+      return res.status(403).json({ success: false, error: 'This crew account is assigned to another store.' });
+    }
     const out = {};
-    for (const d of loadDeliveries(storeId)) {
+    for (const d of loadDeliveries(storeId, req.authUser)) {
       for (const l of d.lines) {
         if (d.sourceStoreId === storeId && l.sourceEsb.state !== 'updated') {
           out[l.productId] = { name: l.productName, qty: (out[l.productId]?.qty || 0) + l.qtyTotal };
@@ -2631,7 +2707,7 @@ async function startServer() {
     loginFails.delete(key);
     db.logLoginAttempt(cleanUser, ip, true, 'ok');
 
-    const safeUser = { id: user.id, username: user.username, name: user.name, email: user.email, role: user.role };
+    const safeUser = { id: user.id, username: user.username, name: user.name, email: user.email, role: user.role, storeId: user.store_id || null };
     const token = db.createAuthSession(user);
     res.json({ success: true, message: `Welcome back, ${user.name}`, user: safeUser, token });
   });

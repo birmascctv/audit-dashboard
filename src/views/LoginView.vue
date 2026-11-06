@@ -31,6 +31,8 @@ async function handleLogin() {
     if (result.success) {
       if (result.user?.role === 'admin') {
         router.push('/sales');
+      } else if (result.user?.role === 'crew') {
+        router.push('/stock-audit-crew');
       } else {
         router.push('/store-audit');
       }

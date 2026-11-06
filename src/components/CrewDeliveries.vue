@@ -1,8 +1,9 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { authFetchJson } from '../services/authFetch.js';
 import { fmtDate, fmtJakarta } from '../utils/date.js';
 import { useToast } from '../composables/useToast.js';
+import { useAuth } from '../composables/useAuth.js';
 import DateField from './DateField.vue';
 
 const props = defineProps({
@@ -11,11 +12,14 @@ const props = defineProps({
   products: { type: Array, default: () => [] },
 });
 const toast = useToast();
+const { currentUser } = useAuth();
+const isOwner = computed(() => currentUser.value?.role === 'owner');
 
 const deliveries = ref([]);
 const pending = ref({});
 const loading = ref(false);
 const showForm = ref(false);
+const showHistory = ref(false);
 const saving = ref(false);
 const actionDates = ref({});
 
@@ -60,7 +64,9 @@ async function load() {
   }
 }
 watch(() => props.storeId, () => { form.value.sourceStoreId = props.storeId; load(); });
-onMounted(load);
+let refreshTimer = null;
+onMounted(() => { load(); refreshTimer = setInterval(load, 30000); });
+onUnmounted(() => clearInterval(refreshTimer));
 
 function openForm() {
   form.value = { sourceStoreId: props.storeId, arrivedOn: today(), note: '', lines: [emptyLine()] };
@@ -125,8 +131,21 @@ function esbBadge(esb, label = 'ESB') {
   if (esb.state === 'overdue') return { cls: 'bg-rose-100 text-rose-800 border-rose-300', text: `${label} not updated after ${esb.waitingDays} days` };
   return { cls: 'bg-amber-100 text-amber-900 border-amber-300', text: `Waiting for ${label} update${esb.waitingDays ? ` (${esb.waitingDays} day${esb.waitingDays > 1 ? 's' : ''})` : ''}` };
 }
-const statusLabel = { planned: 'Planned', sent: 'On the way', received: 'Received' };
+const transferRows = computed(() => deliveries.value.flatMap((d) => d.lines.flatMap((line) => line.allocations.map((allocation) => ({
+  ...allocation,
+  deliveryId: d.id,
+  sourceStoreId: d.sourceStoreId,
+  sourceStoreName: storeName(d.sourceStoreId),
+  productName: line.productName,
+  createdAt: d.createdAt,
+})))));
+const statusLabel = { planned: 'Planned', sent: 'On the Way', received: 'Received' };
 const statusCls = { planned: 'bg-slate-100 text-slate-700', sent: 'bg-sky-100 text-sky-800', received: 'bg-emerald-100 text-emerald-800' };
+const canSend = (row) => row.sourceStoreId === props.storeId && row.status === 'planned';
+const canReceive = (row) => row.destStoreId === props.storeId && row.status === 'sent';
+const displayStatus = (row) => row.destStoreId === props.storeId && row.status === 'sent'
+  ? 'Incoming · On the Way'
+  : statusLabel[row.status];
 </script>
 
 <template>
@@ -138,7 +157,10 @@ const statusCls = { planned: 'bg-slate-100 text-slate-700', sent: 'bg-sky-100 te
           Record what arrived, who it is for, when it was sent and received. ESB is often updated 1–3 days late, so each step shows whether ESB has caught up.
         </p>
       </div>
-      <button type="button" class="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-extrabold" @click="openForm">+ New delivery</button>
+      <div class="flex items-center gap-2">
+        <button type="button" class="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700" @click="showHistory = true">Deliveries &amp; Transfers History</button>
+        <button v-if="isOwner" type="button" class="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-extrabold" @click="openForm">+ New delivery</button>
+      </div>
     </div>
 
     <div v-if="pendingList.length" class="rounded-xl border border-amber-300 bg-amber-50 p-3">
@@ -193,44 +215,68 @@ const statusCls = { planned: 'bg-slate-100 text-slate-700', sent: 'bg-sky-100 te
       </div>
     </form>
 
-    <p v-if="loading && !deliveries.length" class="text-xs text-slate-500">Loading…</p>
-    <p v-else-if="!deliveries.length" class="text-xs text-slate-500">No deliveries recorded for {{ storeName(storeId) }} yet.</p>
+    <p v-if="loading && !transferRows.length" class="text-xs text-slate-500">Loading…</p>
+    <p v-else-if="!transferRows.length" class="text-xs text-slate-500">No deliveries or transfers recorded for {{ storeName(storeId) }} yet.</p>
+    <div v-else class="overflow-x-auto rounded-xl border border-slate-200">
+      <table class="w-full min-w-[980px] text-left text-xs">
+        <thead class="bg-slate-100 text-[10px] font-bold uppercase text-slate-600">
+          <tr>
+            <th class="px-3 py-2">Product</th><th class="px-3 py-2 text-right">Qty</th><th class="px-3 py-2">Send to</th>
+            <th class="px-3 py-2">Status</th><th class="px-3 py-2">List entered</th><th class="px-3 py-2">Sent</th>
+            <th class="px-3 py-2">Received</th><th class="px-3 py-2">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          <tr v-for="row in transferRows" :key="row.id" class="bg-white">
+            <td class="px-3 py-2 font-semibold text-slate-900">{{ row.productName }}<span class="block text-[10px] font-normal text-slate-500">From {{ row.sourceStoreName }}</span></td>
+            <td class="px-3 py-2 text-right font-mono font-bold">{{ row.qty }}</td>
+            <td class="px-3 py-2 font-semibold">{{ storeName(row.destStoreId) }}</td>
+            <td class="px-3 py-2"><span class="rounded-full px-2 py-1 font-bold" :class="statusCls[row.status]">{{ displayStatus(row) }}</span></td>
+            <td class="px-3 py-2 whitespace-nowrap text-slate-600">{{ fmtJakarta(row.createdAt) }}</td>
+            <td class="px-3 py-2 whitespace-nowrap text-slate-600">
+              <span v-if="row.sentOn">{{ fmtDate(row.sentOn) }}</span><span v-else>—</span>
+              <span v-if="row.sentAt" class="block text-[10px]">{{ fmtJakarta(row.sentAt) }}</span>
+            </td>
+            <td class="px-3 py-2 whitespace-nowrap text-slate-600">
+              <span v-if="row.receivedOn">{{ fmtDate(row.receivedOn) }}</span><span v-else>—</span>
+              <span v-if="row.receivedAt" class="block text-[10px]">{{ fmtJakarta(row.receivedAt) }}</span>
+            </td>
+            <td class="px-3 py-2">
+              <div v-if="canSend(row) || canReceive(row)" class="flex items-center gap-2">
+                <DateField v-model="actionDates[row.id]" class="w-28 rounded-lg border border-slate-300 px-2 py-1 text-[11px]" />
+                <button v-if="canSend(row)" type="button" class="rounded-lg bg-sky-600 px-3 py-1.5 font-bold text-white" @click="act(row, 'sent')">Mark Sent</button>
+                <button v-if="canReceive(row)" type="button" class="rounded-lg bg-emerald-600 px-3 py-1.5 font-bold text-white" @click="act(row, 'received')">Mark Received</button>
+              </div>
+              <button v-else-if="isOwner" type="button" class="text-[10px] font-bold text-rose-600 hover:underline" @click="removeDelivery(deliveries.find((d) => d.id === row.deliveryId))">Delete</button>
+              <span v-else class="text-slate-400">—</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-    <article v-for="d in deliveries" :key="d.id" class="rounded-2xl border border-slate-200 overflow-hidden">
-      <header class="flex flex-wrap items-center justify-between gap-2 bg-slate-50 px-4 py-2.5 border-b border-slate-200">
-        <div class="text-xs">
-          <strong class="text-slate-900">{{ fmtDate(d.arrivedOn) }}</strong>
-          <span class="text-slate-600"> · arrived at <strong>{{ storeName(d.sourceStoreId) }}</strong> · by {{ d.createdBy }}</span>
-          <span v-if="d.note" class="text-slate-500"> · {{ d.note }}</span>
+    <div v-if="showHistory" class="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-4" @click.self="showHistory = false">
+      <section class="w-full max-w-6xl rounded-2xl bg-white p-5 shadow-2xl">
+        <header class="mb-3 flex items-center justify-between gap-3">
+          <h3 class="text-lg font-black text-slate-900">Deliveries &amp; Transfers History</h3>
+          <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold" @click="showHistory = false">Close</button>
+        </header>
+        <div class="max-h-[70vh] overflow-auto rounded-xl border border-slate-200">
+          <table class="w-full min-w-[980px] text-left text-xs">
+            <thead class="sticky top-0 bg-slate-100 text-[10px] font-bold uppercase text-slate-600"><tr>
+              <th class="px-3 py-2">Product</th><th class="px-3 py-2 text-right">Qty</th><th class="px-3 py-2">Send to</th><th class="px-3 py-2">Status</th><th class="px-3 py-2">List entered</th><th class="px-3 py-2">Sent</th><th class="px-3 py-2">Received</th>
+            </tr></thead>
+            <tbody class="divide-y divide-slate-100"><tr v-for="row in transferRows" :key="`history-${row.id}`">
+              <td class="px-3 py-2 font-semibold">{{ row.productName }}<span class="block text-[10px] font-normal text-slate-500">From {{ row.sourceStoreName }}</span></td>
+              <td class="px-3 py-2 text-right font-mono font-bold">{{ row.qty }}</td><td class="px-3 py-2">{{ storeName(row.destStoreId) }}</td>
+              <td class="px-3 py-2"><span class="rounded-full px-2 py-1 font-bold" :class="statusCls[row.status]">{{ displayStatus(row) }}</span></td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ fmtJakarta(row.createdAt) }}</td>
+              <td class="px-3 py-2 whitespace-nowrap"><span v-if="row.sentOn">{{ fmtDate(row.sentOn) }}</span><span v-else>—</span><span v-if="row.sentAt" class="block text-[10px]">{{ fmtJakarta(row.sentAt) }}</span></td>
+              <td class="px-3 py-2 whitespace-nowrap"><span v-if="row.receivedOn">{{ fmtDate(row.receivedOn) }}</span><span v-else>—</span><span v-if="row.receivedAt" class="block text-[10px]">{{ fmtJakarta(row.receivedAt) }}</span></td>
+            </tr></tbody>
+          </table>
         </div>
-        <button type="button" class="text-[11px] font-bold text-rose-600 hover:underline" @click="removeDelivery(d)">Delete</button>
-      </header>
-      <div class="divide-y divide-slate-100">
-        <div v-for="l in d.lines" :key="l.id" class="px-4 py-3 space-y-2">
-          <div class="flex flex-wrap items-center gap-2 text-xs">
-            <strong class="text-slate-900">{{ l.productName }}</strong>
-            <span class="rounded-md bg-slate-100 px-2 py-0.5 font-mono font-bold">{{ l.qtyTotal }} arrived</span>
-            <span class="rounded-md bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-800">{{ l.keepQty }} stays at {{ storeName(d.sourceStoreId) }}</span>
-            <span v-if="esbBadge(l.sourceEsb, `ESB ${storeName(d.sourceStoreId)}`)" class="rounded-md border px-2 py-0.5 font-semibold" :class="esbBadge(l.sourceEsb, `ESB ${storeName(d.sourceStoreId)}`).cls">{{ esbBadge(l.sourceEsb, `ESB ${storeName(d.sourceStoreId)}`).text }}</span>
-          </div>
-          <div v-for="a in l.allocations" :key="a.id" class="ml-2 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs">
-            <span class="font-bold text-slate-900">→ {{ storeName(a.destStoreId) }}</span>
-            <span class="font-mono font-bold">{{ a.qty }}</span>
-            <span class="rounded-md px-2 py-0.5 font-bold" :class="statusCls[a.status]">{{ statusLabel[a.status] }}</span>
-            <span v-if="a.sentOn" class="text-slate-500">sent {{ fmtDate(a.sentOn) }}</span>
-            <span v-if="a.receivedOn" class="text-slate-500">received {{ fmtDate(a.receivedOn) }}</span>
-            <span v-if="esbBadge(a.destEsb, `ESB ${storeName(a.destStoreId)}`)" class="rounded-md border px-2 py-0.5 font-semibold" :class="esbBadge(a.destEsb, `ESB ${storeName(a.destStoreId)}`).cls">{{ esbBadge(a.destEsb, `ESB ${storeName(a.destStoreId)}`).text }}</span>
-            <span v-if="a.sourceEsbOn" class="text-emerald-700">transfer-out entered in ESB {{ fmtDate(a.sourceEsbOn) }}</span>
-            <span class="ml-auto flex flex-wrap items-center gap-2">
-              <DateField v-if="a.status !== 'received'" v-model="actionDates[a.id]" class="rounded-lg border border-slate-300 px-2 py-1 text-[11px]" />
-              <button v-if="a.status === 'planned'" type="button" class="rounded-lg bg-sky-600 px-3 py-1 font-bold text-white" @click="act(a, 'sent')">Mark sent</button>
-              <button v-if="a.status !== 'received'" type="button" class="rounded-lg bg-emerald-600 px-3 py-1 font-bold text-white" @click="act(a, 'received')">Mark received</button>
-              <button v-if="a.status !== 'planned' && !a.sourceEsbOn" type="button" class="rounded-lg border border-slate-300 px-3 py-1 font-bold text-slate-700" @click="act(a, 'source_esb_done')">Transfer-out entered in ESB</button>
-              <button v-if="a.status !== 'planned'" type="button" class="font-bold text-slate-500 hover:underline" @click="act(a, 'undo')">Undo</button>
-            </span>
-          </div>
-        </div>
-      </div>
-    </article>
+      </section>
+    </div>
   </section>
 </template>

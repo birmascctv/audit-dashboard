@@ -14,6 +14,7 @@ import CrewDeliveries from '../components/CrewDeliveries.vue';
 import { fmtJakarta } from '../utils/date.js';
 
 const props = defineProps({ mode: { type: String, default: 'auditor' } });
+const isDevMode = import.meta.env.DEV;
 const isCrew = computed(() => props.mode === 'crew');
 
 import {
@@ -56,6 +57,8 @@ import {
 
 const { currentUser } = useAuth();
 const toast = useToast();
+const canSeeCrewPage = computed(() => ['owner', 'crew'].includes(currentUser.value?.role));
+const canSeeAuditorPage = computed(() => ['owner', 'auditor'].includes(currentUser.value?.role));
 const {
   stores,
   selectedStoreId,
@@ -94,6 +97,10 @@ const {
   lockCurrentSession,
   unlockCurrentSession,
 } = useAuditStore();
+
+watch(() => currentUser.value?.storeId, (storeId) => {
+  if (isCrew.value && storeId && selectedStoreId.value !== storeId) selectStore(storeId);
+}, { immediate: true });
 
 const searchQuery = ref('');
 const statusFilter = ref('ALL');
@@ -466,6 +473,53 @@ const scannedOnlyItems = computed(() => {
   return auditItems.value.filter((item) => item.scannedCount > 0).sort((a, b) =>
     String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' }));
 });
+const transferItem = ref(null);
+const transferAllocations = ref({});
+const isTransferModalOpen = ref(false);
+const transferSaving = ref(false);
+const transferDestinations = computed(() => stores.value.filter((store) =>
+  store.id !== selectedStoreId.value && ['birmas-kuningan', 'birmas-kwitang', 'birmas-sudirman'].includes(store.id)));
+const transferRemaining = computed(() => Number(transferItem.value?.scannedCount || 0) -
+  Object.values(transferAllocations.value).reduce((sum, qty) => sum + (Number(qty) || 0), 0));
+
+function openTransfer(item) {
+  transferItem.value = item;
+  transferAllocations.value = {};
+  isTransferModalOpen.value = true;
+}
+
+async function saveTransfer() {
+  if (!transferItem.value) return;
+  if (transferRemaining.value < 0) return toast.error('The transfer quantity cannot exceed the physical count.');
+  if (!Object.values(transferAllocations.value).some((qty) => Number(qty) > 0)) {
+    return toast.error('Enter a transfer quantity for at least one destination.');
+  }
+  transferSaving.value = true;
+  try {
+    await authFetchJson('/api/crew/deliveries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceStoreId: selectedStoreId.value,
+        arrivedOn: new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10),
+        lines: [{
+          productId: transferItem.value.wpId,
+          productName: transferItem.value.productTitle || transferItem.value.varian,
+          qtyTotal: Number(transferItem.value.scannedCount),
+          allocations: Object.entries(transferAllocations.value)
+            .filter(([, qty]) => Number(qty) > 0)
+            .map(([destStoreId, qty]) => ({ destStoreId, qty: Number(qty) })),
+        }],
+      }),
+    });
+    isTransferModalOpen.value = false;
+    toast.success('Transfer planned. It is now listed in Deliveries & Transfers.');
+  } catch (error) {
+    toast.error(error.message || 'Could not save this transfer.');
+  } finally {
+    transferSaving.value = false;
+  }
+}
 
 const accuracyPercentage = computed(() => {
   const activeItems = auditItems.value.filter((i) => i.wpExpectedQty > 0 || i.scannedCount > 0);
@@ -537,7 +591,7 @@ onMounted(() => {
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   if (document.documentElement) document.documentElement.scrollTop = 0;
   if (document.body) document.body.scrollTop = 0;
-  loadBirmasConfig();
+  if (!isCrew.value) loadBirmasConfig();
   timerInterval = setInterval(() => { clockNow.value = Date.now(); }, 1000);
   // Keep stock fresh without any button: the server syncs from ESB, the page just re-reads it
   silentRefreshTimer = setInterval(() => {
@@ -577,8 +631,8 @@ const showAuditSuccess = ref(false);
 <template>
   <div class="space-y-6">
     <nav class="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs" aria-label="Stock audit view">
-      <router-link to="/stock-audit" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="!isCrew ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-50'">Auditor</router-link>
-      <router-link to="/stock-audit-crew" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="isCrew ? 'bg-violet-600 text-white' : 'text-slate-600 hover:bg-slate-50'">Crew</router-link>
+      <router-link v-if="canSeeAuditorPage" to="/stock-audit" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="!isCrew ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-50'">Auditor</router-link>
+      <router-link v-if="isDevMode && canSeeCrewPage" to="/stock-audit-crew" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="isCrew ? 'bg-violet-600 text-white' : 'text-slate-600 hover:bg-slate-50'">Crew</router-link>
     </nav>
     <!-- Standardized Submenu Header Section -->
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
@@ -603,17 +657,18 @@ const showAuditSuccess = ref(false);
             <span>Session: <strong class="font-mono text-slate-900">{{ sessionTimerLabel }}</strong></span>
           </div>
           <div v-if="esbFreshness" class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600" data-testid="esb-freshness">
-            <span>ESB stock last increased (delivery / adjustment): <strong class="text-slate-900">{{ esbFreshness.lastStockInAt ? fmtJakarta(esbFreshness.lastStockInAt) : 'not seen yet' }}</strong></span>
-            <span>Any ESB change (incl. sales): <strong class="text-slate-900">{{ esbFreshness.lastChangedAt ? fmtJakarta(esbFreshness.lastChangedAt) : 'not seen yet' }}</strong></span>
+            <span title="Latest observed positive stock change; could be a delivery, transfer-in, or adjustment.">Last stock increase observed: <strong class="text-slate-900">{{ esbFreshness.lastStockInAt ? fmtJakarta(esbFreshness.lastStockInAt) : 'not seen yet' }}</strong></span>
+            <span title="Latest observed increase or decrease in any product, including sales and transfers out.">Last stock change observed (in or out): <strong class="text-slate-900">{{ esbFreshness.lastChangedAt ? fmtJakarta(esbFreshness.lastChangedAt) : 'not seen yet' }}</strong></span>
             <span>Last pulled from ESB: <strong class="text-slate-900">{{ esbFreshness.lastPulledAt ? fmtJakarta(esbFreshness.lastPulledAt) : '—' }}</strong></span>
           </div>
+          <p v-if="esbFreshness" class="mt-1 text-[10px] text-slate-500">Change times are when this dashboard first detected a new quantity on sync, not the exact ESB edit time.</p>
         </div>
       </div>
 
       <!-- Action Bar: Store Selector, Add Barcode, Upload CSV, Export CSV, Complete Audit -->
       <div class="flex flex-wrap items-center gap-2.5">
         <!-- Store Location Selector -->
-        <div class="relative inline-block">
+        <div v-if="!isCrew" class="relative inline-block">
           <select
             :value="selectedStoreId"
             @change="selectStore($event.target.value)"
@@ -628,6 +683,7 @@ const showAuditSuccess = ref(false);
 
         <!-- Add New Barcode Button -->
         <button
+          v-if="!isCrew"
           @click="openAddBarcodeWithPrefill()"
           type="button"
           class="px-3.5 py-2 min-h-12 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
@@ -639,6 +695,7 @@ const showAuditSuccess = ref(false);
 
         <!-- Finalize Audit Button -->
         <button
+          v-if="!isCrew"
           @click="isCompleteModalOpen = true"
           type="button"
           class="px-4 py-2 min-h-12 rounded-xl bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all cursor-pointer"
@@ -802,7 +859,7 @@ const showAuditSuccess = ref(false);
       </div>
     </div>
 
-    <CrewDeliveries v-if="isCrew && selectedStoreId" :store-id="selectedStoreId" :stores="stores" :products="auditItems" />
+    <CrewDeliveries v-if="isDevMode && isCrew && selectedStoreId" :store-id="selectedStoreId" :stores="stores" :products="auditItems" />
 
     <!-- Counting Station (Light theme with tosca accents) -->
     <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden" :class="scanMode ? '!fixed inset-0 z-[60] !rounded-none overflow-y-auto scan-mode' : ''">
@@ -835,6 +892,7 @@ const showAuditSuccess = ref(false);
               <Undo2 class="w-4 h-4" /><span>Undo last scan</span><kbd class="hidden sm:inline rounded border border-amber-300 bg-white px-1 text-[10px] font-mono">Ctrl+Z</kbd>
             </button>
             <button
+              v-if="!isCrew"
               @click="handleResetAuditSession"
               type="button"
               class="px-3 py-2 min-h-12 rounded-lg bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 text-slate-600 hover:text-rose-700 text-xs font-medium flex items-center gap-1.5 transition-colors"
@@ -878,6 +936,7 @@ const showAuditSuccess = ref(false);
             </span>
           </div>
           <button
+            v-if="!isCrew"
             @click="openAddBarcodeWithPrefill(pendingUnknownBarcode)"
             class="px-3 py-2 min-h-12 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shrink-0 flex items-center gap-1 shadow-sm"
           >
@@ -953,7 +1012,7 @@ const showAuditSuccess = ref(false);
               :hint="`Scan a product for ${currentStore.name} to begin the physical count.`"
             />
             <div v-else class="overflow-x-auto">
-            <table class="min-w-[760px] w-full text-left border-collapse text-xs">
+            <table class="min-w-[940px] w-full text-left border-collapse text-xs">
               <thead>
                 <tr class="bg-slate-100/90 border-b border-slate-200 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
                   <th class="py-2.5 px-3 w-10 text-center">No</th>
@@ -963,6 +1022,7 @@ const showAuditSuccess = ref(false);
                   <th class="py-2.5 px-3 text-center bg-teal-50/80 text-teal-900 font-bold">Physical Count</th>
                   <th class="py-2.5 px-3 text-center">Difference</th>
                   <th class="py-2.5 px-3 text-center">Action</th>
+                  <th v-if="isDevMode" class="py-2.5 px-3 min-w-48">Notes</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-200/80 bg-white">
@@ -1038,6 +1098,26 @@ const showAuditSuccess = ref(false);
                     >
                       <Trash2 class="w-3.5 h-3.5" />
                     </button>
+                    <button
+                      v-if="isDevMode && isCrew"
+                      type="button"
+                      :disabled="isSessionLocked"
+                      class="ml-1 rounded-lg bg-violet-100 px-2 py-1 text-[10px] font-bold text-violet-800 hover:bg-violet-200 disabled:opacity-40"
+                      @click="openTransfer(item)"
+                    >Transfer</button>
+                  </td>
+                  <td v-if="isDevMode" class="px-3 py-2">
+                    <input
+                      :value="item.note"
+                      :disabled="isSessionLocked"
+                      type="text"
+                      maxlength="500"
+                      placeholder="Add note..."
+                      class="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 placeholder-slate-300 focus:border-teal-500 focus:outline-none"
+                      @input="setProductNoteDraft(item.wpId, $event.target.value)"
+                      @change="setProductNote(item.wpId, $event.target.value)"
+                      @keydown.enter="$event.target.blur()"
+                    />
                   </td>
                 </tr>
               </tbody>
@@ -1066,6 +1146,7 @@ const showAuditSuccess = ref(false);
 
           <div class="flex flex-wrap items-center gap-2">
             <button
+              v-if="!isCrew"
               @click="openAddBarcodeWithPrefill()"
               type="button"
               class="px-3 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 border border-teal-300 text-teal-800 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -1369,18 +1450,9 @@ const showAuditSuccess = ref(false);
               </td>
 
               <!-- Notes -->
-              <td class="py-2 px-4">
-                <input
-                  :value="item.note"
-                  @input="setProductNoteDraft(item.wpId, $event.target.value)"
-                  @change="setProductNote(item.wpId, $event.target.value)"
-                  @keydown.enter="$event.target.blur()"
-                  :disabled="isSessionLocked"
-                  type="text"
-                  maxlength="500"
-                  placeholder="Add note..."
-                  class="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 placeholder-slate-300 focus:outline-none focus:border-teal-500"
-                />
+              <td class="py-2 px-4 text-xs text-slate-600">
+                <span v-if="isDevMode">{{ item.note || '—' }}</span>
+                <input v-else :value="item.note" @change="setProductNote(item.wpId, $event.target.value)" @keydown.enter="$event.target.blur()" :disabled="isSessionLocked" type="text" maxlength="500" placeholder="Add note..." class="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 placeholder-slate-300 focus:outline-none focus:border-teal-500" />
               </td>
 
             </tr>
@@ -1401,9 +1473,32 @@ const showAuditSuccess = ref(false);
       </div>
     </div>
 
+    <div v-if="isDevMode && isTransferModalOpen && transferItem" class="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4" @click.self="isTransferModalOpen = false">
+      <section class="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl">
+        <h3 class="text-lg font-black text-slate-900">Plan a product transfer</h3>
+        <p class="mt-1 text-sm font-semibold text-slate-700">{{ transferItem.productTitle || transferItem.varian }}</p>
+        <p class="mt-1 text-xs text-slate-500">Physical count: {{ transferItem.scannedCount }}. Enter the amount going to each store.</p>
+        <div class="mt-4 space-y-3">
+          <label v-for="store in transferDestinations" :key="store.id" class="flex items-center justify-between gap-4 rounded-xl border border-slate-200 p-3 text-sm">
+            <span class="font-bold text-slate-800">{{ store.name }}</span>
+            <input v-model.number="transferAllocations[store.id]" type="number" min="0" :max="transferItem.scannedCount" class="w-28 rounded-lg border border-slate-300 px-3 py-2 text-right font-mono text-slate-900" />
+          </label>
+        </div>
+        <p class="mt-3 text-xs font-bold" :class="transferRemaining < 0 ? 'text-rose-700' : 'text-emerald-700'">
+          Remaining at {{ currentStore.name }}: {{ transferRemaining }}
+        </p>
+        <div class="mt-5 flex justify-end gap-2">
+          <button type="button" class="rounded-xl border border-slate-300 px-4 py-2 text-xs font-bold text-slate-700" @click="isTransferModalOpen = false">Cancel</button>
+          <button type="button" :disabled="transferSaving || transferRemaining < 0" class="rounded-xl bg-violet-600 px-4 py-2 text-xs font-extrabold text-white disabled:opacity-40" @click="saveTransfer">
+            {{ transferSaving ? 'Saving…' : 'Create planned transfer' }}
+          </button>
+        </div>
+      </section>
+    </div>
+
     <!-- Modal: Complete Audit Session -->
     <div
-      v-if="isCompleteModalOpen"
+      v-if="isCompleteModalOpen && !isCrew"
       class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
       @click.self="isCompleteModalOpen = false"
     >
@@ -1476,7 +1571,7 @@ const showAuditSuccess = ref(false);
 
     <!-- Modal: Add / Map New Barcode -->
     <AddBarcodeModal
-      :is-open="isAddBarcodeModalOpen"
+      :is-open="isAddBarcodeModalOpen && !isCrew"
       :prefilled-barcode="pendingUnknownBarcode"
       @close="isAddBarcodeModalOpen = false; pendingUnknownBarcode = ''"
       @barcode-added="pendingUnknownBarcode = ''"
@@ -1484,7 +1579,7 @@ const showAuditSuccess = ref(false);
 
     <!-- Modal: My ESB ERP Session & Credentials -->
     <div
-      v-if="isSessionModalOpen"
+      v-if="isSessionModalOpen && !isCrew"
       class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
       @click.self="isSessionModalOpen = false"
     >

@@ -166,9 +166,11 @@ function initTables(db) {
       email TEXT,
       password TEXT NOT NULL,
       name TEXT,
-      role TEXT
+      role TEXT,
+      store_id TEXT
     );
   `);
+  try { db.exec('ALTER TABLE users ADD COLUMN store_id TEXT;'); } catch (_) {}
 
   // 6b. Auth sessions (only the sha256 of the bearer token is stored)
   db.exec(`
@@ -239,6 +241,14 @@ function initTables(db) {
   upsertUser.run('user-admin', 'mia', 'mia@birmas.id', hashPassword('admin666'), 'Mia', 'admin');
   upsertUser.run('user-chrisna', 'chrisna', 'chrisna@birmas.id', hashPassword('auditor666'), 'Chrisna', 'auditor');
   upsertUser.run('user-auditor', 'auditor', 'auditor@birmas.id', hashPassword('auditor666'), 'Auditor Staff', 'auditor');
+  if (process.env.NODE_ENV === 'development') {
+    upsertUser.run('user-crew1', 'crew1', 'crew1@birmas.id', hashPassword('BirmasKuningan'), 'Birmas Kuningan Crew', 'crew');
+    upsertUser.run('user-crew2', 'crew2', 'crew2@birmas.id', hashPassword('BirmasKwitang'), 'Birmas Kwitang Crew', 'crew');
+    upsertUser.run('user-crew3', 'crew3', 'crew3@birmas.id', hashPassword('BirmasSudirman'), 'Birmas Sudirman Crew', 'crew');
+    db.prepare('UPDATE users SET store_id = ? WHERE id = ?').run('birmas-kuningan', 'user-crew1');
+    db.prepare('UPDATE users SET store_id = ? WHERE id = ?').run('birmas-kwitang', 'user-crew2');
+    db.prepare('UPDATE users SET store_id = ? WHERE id = ?').run('birmas-sudirman', 'user-crew3');
+  }
   for (const u of db.prepare('SELECT id, password FROM users;').all()) {
     if (!String(u.password).startsWith('scrypt$')) db.prepare('UPDATE users SET password = ? WHERE id = ?;').run(hashPassword(u.password), u.id);
   }
@@ -639,7 +649,7 @@ export function saveAuditHistoryRecord(record) {
 // Users Queries
 export function getAllUsers() {
   const db = getDb();
-  return db.prepare('SELECT id, username, email, name, role FROM users;').all();
+  return db.prepare('SELECT id, username, email, name, role, store_id AS storeId FROM users;').all();
 }
 
 export function getUserByUsername(username) {
@@ -662,7 +672,7 @@ export function createAuthSession(user) {
 export function getAuthSession(token) {
   if (!token || typeof token !== 'string') return null;
   const row = getDb().prepare(
-    'SELECT s.user_id AS userId, u.role AS role, u.name AS name, s.expires_at AS expiresAt FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?;'
+    'SELECT s.user_id AS userId, u.username AS username, u.role AS role, u.name AS name, u.store_id AS storeId, s.expires_at AS expiresAt FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?;'
   ).get(hashToken(token));
   if (!row || new Date(row.expiresAt).getTime() <= Date.now()) return null;
   return row;
