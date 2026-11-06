@@ -11,6 +11,7 @@ import { formatDateTime } from '../utils/storage.js';
 import { fmtDateTime } from '../utils/date.js';
 import AddBarcodeModal from '../components/AddBarcodeModal.vue';
 import CrewDeliveries from '../components/CrewDeliveries.vue';
+import StockComparisonTable from '../components/StockComparisonTable.vue';
 import { fmtJakarta } from '../utils/date.js';
 
 const props = defineProps({ mode: { type: String, default: 'auditor' } });
@@ -57,6 +58,7 @@ import {
 
 const { currentUser } = useAuth();
 const toast = useToast();
+const readOnlyStock = computed(() => currentUser.value?.role === 'superadmin');
 const canSeeCrewPage = computed(() => ['owner', 'crew'].includes(currentUser.value?.role));
 const canSeeAuditorPage = computed(() => ['owner', 'auditor'].includes(currentUser.value?.role));
 const {
@@ -66,6 +68,9 @@ const {
   wpConfig,
   isInitialized,
   auditItems,
+  auditHistory,
+  refreshAuditState,
+  refreshAuditHistory,
   scanLogs,
   totalWpExpected,
   totalScanned,
@@ -380,7 +385,7 @@ const mismatchCount = computed(() => auditItems.value.filter((i) => i.scannedCou
 const unscannedCount = computed(() => auditItems.value.filter((i) => Number(i.wpExpectedQty) > 0 && !(i.scannedCount > 0)).length);
 
 // Hardware scanner hook for USB / Wireless Barcode Scanner
-const { scanFeedback, processBarcode } = useScanner({
+const { scanFeedback, processBarcode, isListening } = useScanner({
   onScan: async (scannedBarcode) => {
     // While Add Barcode is open, a scan only fills the barcode box; it must not count
     if (isAddBarcodeModalOpen.value) {
@@ -404,6 +409,7 @@ const { scanFeedback, processBarcode } = useScanner({
     return result;
   },
 });
+watch(readOnlyStock, (readOnly) => { isListening.value = !readOnly; }, { immediate: true });
 
 // Keep the scan notification in sync when the count is edited in the table
 watch(
@@ -470,9 +476,10 @@ const sortedAuditItems = computed(() => auditItems.value.slice().sort((a, b) =>
 
 // ONLY products that have been physically scanned in this session (scannedCount > 0)
 const scannedOnlyItems = computed(() => {
-  return auditItems.value.filter((item) => item.scannedCount > 0).sort((a, b) =>
+  return auditItems.value.filter((item) => isDevMode ? item.hasStoreStock || item.scannedCount > 0 : item.scannedCount > 0).sort((a, b) =>
     String(a.productTitle || a.varian || '').localeCompare(String(b.productTitle || b.varian || ''), undefined, { numeric: true, sensitivity: 'base' }));
 });
+const scannedItemCount = computed(() => scannedOnlyItems.value.filter((item) => item.scannedCount > 0).length);
 const transferItem = ref(null);
 const transferAllocations = ref({});
 const isTransferModalOpen = ref(false);
@@ -591,11 +598,14 @@ onMounted(() => {
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   if (document.documentElement) document.documentElement.scrollTop = 0;
   if (document.body) document.body.scrollTop = 0;
-  if (!isCrew.value) loadBirmasConfig();
+  if (!isCrew.value && !readOnlyStock.value) loadBirmasConfig();
   timerInterval = setInterval(() => { clockNow.value = Date.now(); }, 1000);
   // Keep stock fresh without any button: the server syncs from ESB, the page just re-reads it
   silentRefreshTimer = setInterval(() => {
-    if (!document.hidden) refreshProductsSilently();
+    if (!document.hidden) {
+      refreshProductsSilently();
+      if (readOnlyStock.value) { refreshAuditState(); refreshAuditHistory().catch(() => {}); }
+    }
   }, 60000);
 });
 
@@ -615,9 +625,16 @@ let silentRefreshTimer = null;
 let timerInterval = null;
 watch(selectedStoreId, () => { undoStack.value = []; });
 const esbFreshness = ref(null);
+const freshnessError = ref('');
 async function loadFreshness() {
   if (!selectedStoreId.value) return;
-  try { esbFreshness.value = await authFetchJson(`/api/audit/esb-freshness?storeId=${encodeURIComponent(selectedStoreId.value)}`); } catch { esbFreshness.value = null; }
+  const storeId = selectedStoreId.value;
+  try {
+    const data = await authFetchJson(`/api/audit/esb-freshness?storeId=${encodeURIComponent(storeId)}`);
+    if (storeId === selectedStoreId.value) { esbFreshness.value = data; freshnessError.value = ''; }
+  } catch {
+    if (storeId === selectedStoreId.value) { esbFreshness.value = null; freshnessError.value = 'Unable to load ESB change times.'; }
+  }
 }
 let freshnessTimer = null;
 watch(selectedStoreId, loadFreshness, { immediate: true });
@@ -630,7 +647,7 @@ const showAuditSuccess = ref(false);
 
 <template>
   <div class="space-y-6">
-    <nav class="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs" aria-label="Stock audit view">
+    <nav v-if="canSeeAuditorPage || (isDevMode && canSeeCrewPage)" class="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs" aria-label="Stock audit view">
       <router-link v-if="canSeeAuditorPage" to="/stock-audit" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="!isCrew ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-50'">Auditor</router-link>
       <router-link v-if="isDevMode && canSeeCrewPage" to="/stock-audit-crew" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-colors" :class="isCrew ? 'bg-violet-600 text-white' : 'text-slate-600 hover:bg-slate-50'">Crew</router-link>
     </nav>
@@ -662,6 +679,8 @@ const showAuditSuccess = ref(false);
             <span>Last pulled from ESB: <strong class="text-slate-900">{{ esbFreshness.lastPulledAt ? fmtJakarta(esbFreshness.lastPulledAt) : '—' }}</strong></span>
           </div>
           <p v-if="esbFreshness" class="mt-1 text-[10px] text-slate-500">Change times are when this dashboard first detected a new quantity on sync, not the exact ESB edit time.</p>
+          <p v-else-if="freshnessError" class="mt-1 text-xs text-rose-700">{{ freshnessError }}</p>
+          <p v-else class="mt-1 text-xs text-slate-500">Loading ESB change times…</p>
         </div>
       </div>
 
@@ -681,9 +700,11 @@ const showAuditSuccess = ref(false);
           <ChevronDown class="w-4 h-4 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
 
+        <button v-if="readOnlyStock" type="button" class="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold text-slate-700" @click="refreshProductsSilently(); refreshAuditState(); refreshAuditHistory().catch(() => {}); loadFreshness()">Refresh</button>
+
         <!-- Add New Barcode Button -->
         <button
-          v-if="!isCrew"
+          v-if="!isCrew && !readOnlyStock"
           @click="openAddBarcodeWithPrefill()"
           type="button"
           class="px-3.5 py-2 min-h-12 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
@@ -695,7 +716,7 @@ const showAuditSuccess = ref(false);
 
         <!-- Finalize Audit Button -->
         <button
-          v-if="!isCrew"
+          v-if="!isCrew && !readOnlyStock"
           @click="isCompleteModalOpen = true"
           type="button"
           class="px-4 py-2 min-h-12 rounded-xl bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all cursor-pointer"
@@ -706,6 +727,7 @@ const showAuditSuccess = ref(false);
       </div>
     </div>
 
+    <template v-if="!readOnlyStock">
     <!-- Audit Session Lock Status Banner (Superadmin approval workflow) -->
     <div
       v-if="isSessionLocked"
@@ -986,7 +1008,7 @@ const showAuditSuccess = ref(false);
                 <span>Live Scanned Products Summary (Produk Terpindai Sesi Ini)</span>
               </h3>
               <span class="text-[11px] px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-mono font-bold">
-                {{ scannedOnlyItems.length }} SKUs Counted
+                {{ scannedItemCount }} SKUs Counted
               </span>
             </div>
 
@@ -1021,6 +1043,7 @@ const showAuditSuccess = ref(false);
                   <th class="py-2.5 px-3 text-center">System Stock</th>
                   <th class="py-2.5 px-3 text-center bg-teal-50/80 text-teal-900 font-bold">Physical Count</th>
                   <th class="py-2.5 px-3 text-center">Difference</th>
+                  <th v-if="isDevMode" class="py-2.5 px-3 text-center">Status</th>
                   <th class="py-2.5 px-3 text-center">Action</th>
                   <th v-if="isDevMode" class="py-2.5 px-3 min-w-48">Notes</th>
                 </tr>
@@ -1028,7 +1051,7 @@ const showAuditSuccess = ref(false);
               <tbody class="divide-y divide-slate-200/80 bg-white">
                 <tr
                   v-for="(item, sIdx) in scannedOnlyItems"
-                  :key="item.barcode"
+                  :key="item.wpId"
                   class="hover:bg-slate-50 transition-colors"
                 >
                   <td class="py-2 px-3 text-center font-mono text-slate-500 text-[11px]">
@@ -1087,8 +1110,11 @@ const showAuditSuccess = ref(false);
                           : 'bg-amber-50 text-amber-700 border border-amber-200'
                       "
                     >
-                      {{ item.discrepancy === 0 ? 'OK (0)' : item.discrepancy > 0 ? `+${item.discrepancy}` : item.discrepancy }}
+                      {{ isDevMode && !item.scannedCount ? '—' : item.discrepancy === 0 ? 'OK (0)' : item.discrepancy > 0 ? `+${item.discrepancy}` : item.discrepancy }}
                     </span>
+                  </td>
+                  <td v-if="isDevMode" class="py-2 px-3 text-center">
+                    <span class="rounded-full px-2 py-1 font-bold" :class="item.scannedCount > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'">{{ item.scannedCount > 0 ? 'Scanned' : 'Unscanned' }}</span>
                   </td>
                   <td class="py-2 px-3 text-center">
                     <button
@@ -1127,9 +1153,11 @@ const showAuditSuccess = ref(false);
         </div>
       </div>
     </div>
+    </template>
 
     <!-- Main Comparison Table (Physical Count vs ESB, light theme) -->
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+    <StockComparisonTable v-if="isDevMode || readOnlyStock" :items="auditItems" :history="auditHistory" :store-id="selectedStoreId" :store-name="currentStore.name" :loading="!isInitialized" />
+    <div v-else class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
       <!-- Table Header & Filter Toolbar -->
       <div class="p-5 border-b border-slate-100 bg-slate-50/80">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

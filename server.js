@@ -1069,14 +1069,14 @@ async function startServer() {
     const salesOnly = url.startsWith('/api/sales') && session.role === 'auditor';
     const stockOnly = !url.startsWith('/api/sales') && session.role === 'admin' && !url.startsWith('/api/stores');
     if (isConfig && !['superadmin', 'owner'].includes(session.role)) return res.status(403).json({ success: false, error: 'Superadmin only.' });
-    const stockWork = session.role === 'superadmin' && req.method !== 'GET' && /^\/api\/(upload|products|audit\/(scan|adjust|reset|finalize|notes)|crew)(\/|$)/.test(url);
+    const stockWork = session.role === 'superadmin' && req.method !== 'GET' && /^\/api\/(upload|products|audit\/(scan|adjust|reset|finalize|notes|session)|crew)(\/|$)/.test(url);
     if (stockWork) return res.status(403).json({ success: false, error: 'Access denied.' });
     if (url.startsWith('/api/crew') && process.env.NODE_ENV !== 'development') return res.status(404).json({ success: false, error: 'Crew workflows are not enabled in this environment.' });
     if (url.startsWith('/api/crew') && !['owner', 'crew'].includes(session.role)) return res.status(403).json({ success: false, error: 'Crew access only.' });
     if (session.role === 'crew') {
       const crewAllowed =
-        (req.method === 'GET' && ['/api/stores', '/api/products', '/api/audit/state', '/api/audit/notes', '/api/audit/esb-freshness'].includes(url)) ||
-        /^\/api\/audit\/session\/[^/]+\/lock$/.test(url) ||
+        (req.method === 'GET' && ['/api/stores', '/api/products', '/api/audit/state', '/api/audit/notes', '/api/audit/history', '/api/audit/esb-freshness'].includes(url)) ||
+        (req.method === 'GET' && /^\/api\/audit\/session\/[^/]+\/lock$/.test(url)) ||
         (req.method === 'POST' && ['/api/audit/scan', '/api/audit/adjust'].includes(url)) ||
         (req.method === 'PUT' && url === '/api/audit/notes') ||
         url.startsWith('/api/crew/');
@@ -1194,7 +1194,8 @@ async function startServer() {
     if (req.authUser?.role === 'crew') {
       res.json(products.map((product) => ({
         ...product,
-        stockByStore: { [req.authUser.storeId]: Number(product.stockByStore?.[req.authUser.storeId]) || 0 },
+        stockByStore: Object.prototype.hasOwnProperty.call(product.stockByStore || {}, req.authUser.storeId)
+          ? { [req.authUser.storeId]: Number(product.stockByStore[req.authUser.storeId]) || 0 } : {},
       })));
       return;
     }
@@ -1505,7 +1506,7 @@ async function startServer() {
       audit.items.forEach((item) => {
         const prod = allProducts.find((p) => p.barcode === item.barcode);
         if (prod) {
-          db.setProductStock(audit.storeId, prod.id, item.scannedCount);
+          db.setProductStock(audit.storeId, prod.id, item.scannedCount, { observed: false });
         }
       });
     }
@@ -1593,7 +1594,7 @@ async function startServer() {
     ensureCrewTables();
     const sqlite = db.getDb();
     const ids = sqlite.prepare(
-      'SELECT id FROM crew_deliveries WHERE source_store_id = ? OR id IN (SELECT delivery_id FROM crew_allocations WHERE dest_store_id = ?) ORDER BY arrived_on DESC, id DESC LIMIT 60'
+      'SELECT id FROM crew_deliveries WHERE source_store_id = ? OR id IN (SELECT delivery_id FROM crew_allocations WHERE dest_store_id = ?) ORDER BY arrived_on DESC, id DESC'
     ).all(storeId, storeId).map((r) => r.id);
     return ids.map((id) => {
       const d = sqlite.prepare('SELECT * FROM crew_deliveries WHERE id = ?').get(id);
@@ -1748,7 +1749,8 @@ async function startServer() {
 
   // 9. Audit History
   app.get('/api/audit/history', (req, res) => {
-    res.json(db.getAllAuditHistory());
+    const history = db.getAllAuditHistory();
+    res.json(req.authUser?.role === 'crew' ? history.filter((record) => record.storeId === req.authUser.storeId) : history);
   });
 
   // Role is taken from the DB-backed session behind the Bearer token, never from client input

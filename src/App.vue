@@ -6,7 +6,6 @@ import { isSessionExpired, SESSION_MAX_AGE_MS } from './services/authFetch.js';
 import { useToast } from './composables/useToast.js';
 import ToastHost from './components/ToastHost.vue';
 import ChillerHeader from './components/ChillerHeader.vue';
-import OnboardingCard from './components/OnboardingCard.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -69,8 +68,6 @@ onUnmounted(() => { clearInterval(expiryTimer); document.removeEventListener('ke
         <span :class="i === crumbs.length - 1 ? 'font-bold text-slate-800' : ''">{{ c }}</span>
       </template>
     </nav>
-
-    <OnboardingCard />
 
     <!-- Routed View with generous left & right gutters -->
     <main

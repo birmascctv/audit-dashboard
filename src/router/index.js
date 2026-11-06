@@ -50,7 +50,7 @@ const routes = [
     path: '/stock-audit',
     name: 'StockAudit',
     component: AuditView,
-    meta: { requiresAuth: true, allowedRoles: ['auditor', 'owner'] },
+    meta: { requiresAuth: true, allowedRoles: ['auditor', 'owner', 'superadmin'] },
   },
   ...(import.meta.env.DEV ? [{
     path: '/stock-audit-crew',

@@ -115,7 +115,7 @@ export function useAuth() {
   const isOwner = computed(() => role.value === 'owner');
   const canAccessStoreAudit = computed(() => ['auditor', 'superadmin', 'owner'].includes(role.value));
   const canAccessUploadAudits = computed(() => ['auditor', 'owner'].includes(role.value));
-  const canAccessStockAudit = computed(() => ['auditor', 'owner', 'crew'].includes(role.value));
+  const canAccessStockAudit = computed(() => ['auditor', 'owner', 'crew', 'superadmin'].includes(role.value));
   const canAccessCrewPage = computed(() => ['owner', 'crew'].includes(role.value));
   const canAccessAuditRecords = computed(() => ['auditor', 'superadmin', 'owner'].includes(role.value));
   const canAccessSalesReport = computed(() => ['admin', 'superadmin', 'owner'].includes(role.value));

@@ -120,6 +120,10 @@ function initTables(db) {
     CREATE INDEX IF NOT EXISTS idx_stock_changes_store ON stock_changes (store_id, product_id, changed_at);
   `);
   try { db.exec(`ALTER TABLE store_stocks ADD COLUMN changed_at TEXT;`); } catch (_) {}
+  try {
+    db.exec(`ALTER TABLE store_stocks ADD COLUMN observed_stock_qty REAL;`);
+    db.exec(`UPDATE store_stocks SET observed_stock_qty = stock_qty WHERE last_synced IS NOT NULL;`);
+  } catch (_) {}
 
   try { db.exec(`ALTER TABLE store_stocks ADD COLUMN available_qty REAL DEFAULT 0;`); } catch (_) {}
   try { db.exec(`ALTER TABLE store_stocks ADD COLUMN booked_qty REAL DEFAULT 0;`); } catch (_) {}
@@ -437,28 +441,29 @@ export function saveProduct(product) {
   // If product has stockByStore map, save each
   if (product.stockByStore) {
     for (const [storeId, qty] of Object.entries(product.stockByStore)) {
-      setProductStock(storeId, product.id, qty);
+      setProductStock(storeId, product.id, qty, { observed: false });
     }
   }
 }
 
 // Saves the ESB quantity and, when it differs from what we had, records WHEN the ESB figure changed
-export function setProductStock(storeId, productId, qty) {
+export function setProductStock(storeId, productId, qty, { observed = true } = {}) {
   const db = getDb();
   const now = new Date().toISOString();
   const next = Number(qty || 0);
-  const prev = db.prepare('SELECT stock_qty FROM store_stocks WHERE store_id = ? AND product_id = ?').get(storeId, productId);
-  const changed = prev && Number(prev.stock_qty) !== next;
+  const prev = db.prepare('SELECT observed_stock_qty FROM store_stocks WHERE store_id = ? AND product_id = ?').get(storeId, productId);
+  const changed = observed && prev?.observed_stock_qty != null && Number(prev.observed_stock_qty) !== next;
   db.prepare(`
-    INSERT INTO store_stocks (store_id, product_id, stock_qty, last_synced)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO store_stocks (store_id, product_id, stock_qty, last_synced, observed_stock_qty)
+    VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(store_id, product_id) DO UPDATE SET
       stock_qty = excluded.stock_qty,
-      last_synced = excluded.last_synced;
-  `).run(storeId, productId, next, now);
+      last_synced = COALESCE(excluded.last_synced, store_stocks.last_synced),
+      observed_stock_qty = COALESCE(excluded.observed_stock_qty, store_stocks.observed_stock_qty);
+  `).run(storeId, productId, next, observed ? now : null, observed ? next : null);
   if (changed) {
     db.prepare('UPDATE store_stocks SET changed_at = ? WHERE store_id = ? AND product_id = ?').run(now, storeId, productId);
-    db.prepare('INSERT INTO stock_changes (store_id, product_id, old_qty, new_qty, changed_at) VALUES (?, ?, ?, ?, ?)').run(storeId, productId, Number(prev.stock_qty), next, now);
+    db.prepare('INSERT INTO stock_changes (store_id, product_id, old_qty, new_qty, changed_at) VALUES (?, ?, ?, ?, ?)').run(storeId, productId, Number(prev.observed_stock_qty), next, now);
   }
 }
 

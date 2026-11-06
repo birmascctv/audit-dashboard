@@ -61,7 +61,7 @@ async function initializeFromBackend() {
       fetchStores().catch(() => DEFAULT_STORES),
       crewSession ? Promise.resolve(wpConfig.value) : fetchWordPressConfig().catch(() => wpConfig.value),
       fetchProducts().catch(() => DEFAULT_WP_PRODUCTS),
-      crewSession ? Promise.resolve([]) : fetchAuditHistory().catch(() => []),
+      fetchAuditHistory().catch(() => []),
     ]);
 
     if (loadedStores && loadedStores.length > 0) {
@@ -190,17 +190,20 @@ function writePending(list) {
 }
 
 let isFlushing = false;
-// Send scans that were taken while offline; stops at the first network failure
+// Send scans that were taken while offline; retain the queue on any failure.
 async function flushPendingScans() {
   if (isFlushing) return;
+  try {
+    if (JSON.parse(sessionStorage.getItem('birmas_audit_session_v4') || 'null')?.role === 'superadmin') return;
+  } catch {}
   isFlushing = true;
   try {
     let queue = readPending();
     while (queue.length > 0) {
       const item = queue[0];
       const res = await sendAuditScan(item.barcode, item.storeId, item.auditorName, item.productId);
-      if (res.offline) break;
-      queue = queue.slice(1);
+      if (!res.success) break;
+      queue = readPending().slice(1);
       writePending(queue);
     }
   } finally {
@@ -210,26 +213,29 @@ async function flushPendingScans() {
 
 async function loadStoreScans(storeId) {
   try {
-    await flushPendingScans();
+    let readOnly = false;
+    try { readOnly = JSON.parse(sessionStorage.getItem('birmas_audit_session_v4') || 'null')?.role === 'superadmin'; } catch {}
+    if (!readOnly) await flushPendingScans();
     fetch(`/api/audit/notes?storeId=${encodeURIComponent(storeId)}`)
       .then((r) => r.json())
-      .then((d) => { productNotes.value = d.notes || {}; })
+      .then((d) => { if (selectedStoreId.value === storeId) productNotes.value = d.notes || {}; })
       .catch(() => {});
     const res = await fetchAuditState(storeId);
+    if (selectedStoreId.value !== storeId) return;
     if (res.failed) {
       // Offline: fall back to the last counts saved on this device, plus unsent scans
-      const cached = JSON.parse(localStorage.getItem(countsCacheKey(storeId)) || '{}');
+      const cached = readOnly ? {} : JSON.parse(localStorage.getItem(countsCacheKey(storeId)) || '{}');
       scannedCounts.value = cached;
       scanLogs.value = [];
     } else {
       scannedCounts.value = res.counts || res.scannedCounts || {};
       scanLogs.value = res.scanLogs || [];
-      const pending = readPending().filter((p) => p.storeId === storeId);
+      const pending = readOnly ? [] : readPending().filter((p) => p.storeId === storeId);
       for (const p of pending) {
         const k = p.barcode || `id:${p.productId}`;
         scannedCounts.value[k] = (scannedCounts.value[k] ?? 0) + 1;
       }
-      persistCounts(storeId);
+      if (!readOnly) persistCounts(storeId);
     }
   } catch (err) {
     console.warn('Failed to load store scans:', err);
@@ -330,6 +336,7 @@ export function useAuditStore() {
         barcode: prod.barcode,
         scanKey,
         wpId: prod.id,
+        hasStoreStock: Object.prototype.hasOwnProperty.call(prod.stockByStore || {}, storeId),
         brand: prod.subCategory || prod.brand || 'Birmas',
         subCategory: prod.subCategory || prod.brand || 'Birmas',
         productTitle: prod.productTitle || prod.varian,
@@ -989,6 +996,7 @@ export function useAuditStore() {
     lockCurrentSession,
     unlockCurrentSession,
     refreshAuditState: () => loadStoreScans(selectedStoreId.value),
+    refreshAuditHistory: async () => { auditHistory.value = await fetchAuditHistory(); },
     refreshProducts: async () => {
       try {
         const prods = await fetchProducts();

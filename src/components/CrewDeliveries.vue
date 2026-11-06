@@ -139,6 +139,13 @@ const transferRows = computed(() => deliveries.value.flatMap((d) => d.lines.flat
   productName: line.productName,
   createdAt: d.createdAt,
 })))));
+const page = ref(1);
+const historyPage = ref(1);
+const pageCount = computed(() => Math.max(1, Math.ceil(transferRows.value.length / 10)));
+const pageRows = computed(() => transferRows.value.slice((page.value - 1) * 10, page.value * 10));
+const historyRows = computed(() => transferRows.value.slice((historyPage.value - 1) * 10, historyPage.value * 10));
+watch(() => props.storeId, () => { page.value = 1; historyPage.value = 1; });
+watch(pageCount, (count) => { page.value = Math.min(page.value, count); historyPage.value = Math.min(historyPage.value, count); });
 const statusLabel = { planned: 'Planned', sent: 'On the Way', received: 'Received' };
 const statusCls = { planned: 'bg-slate-100 text-slate-700', sent: 'bg-sky-100 text-sky-800', received: 'bg-emerald-100 text-emerald-800' };
 const canSend = (row) => row.sourceStoreId === props.storeId && row.status === 'planned';
@@ -227,7 +234,7 @@ const displayStatus = (row) => row.destStoreId === props.storeId && row.status =
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-100">
-          <tr v-for="row in transferRows" :key="row.id" class="bg-white">
+          <tr v-for="row in pageRows" :key="row.id" class="bg-white">
             <td class="px-3 py-2 font-semibold text-slate-900">{{ row.productName }}<span class="block text-[10px] font-normal text-slate-500">From {{ row.sourceStoreName }}</span></td>
             <td class="px-3 py-2 text-right font-mono font-bold">{{ row.qty }}</td>
             <td class="px-3 py-2 font-semibold">{{ storeName(row.destStoreId) }}</td>
@@ -253,6 +260,10 @@ const displayStatus = (row) => row.destStoreId === props.storeId && row.status =
           </tr>
         </tbody>
       </table>
+      <div class="flex items-center justify-between border-t border-slate-200 px-3 py-2 text-xs">
+        <span>Page {{ page }} of {{ pageCount }} · {{ transferRows.length }} transfers</span>
+        <div class="flex gap-2"><button type="button" :disabled="page <= 1" class="rounded border px-3 py-1 disabled:opacity-40" @click="page--">Previous</button><button type="button" :disabled="page >= pageCount" class="rounded border px-3 py-1 disabled:opacity-40" @click="page++">Next</button></div>
+      </div>
     </div>
 
     <div v-if="showHistory" class="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-4" @click.self="showHistory = false">
@@ -266,7 +277,7 @@ const displayStatus = (row) => row.destStoreId === props.storeId && row.status =
             <thead class="sticky top-0 bg-slate-100 text-[10px] font-bold uppercase text-slate-600"><tr>
               <th class="px-3 py-2">Product</th><th class="px-3 py-2 text-right">Qty</th><th class="px-3 py-2">Send to</th><th class="px-3 py-2">Status</th><th class="px-3 py-2">List entered</th><th class="px-3 py-2">Sent</th><th class="px-3 py-2">Received</th>
             </tr></thead>
-            <tbody class="divide-y divide-slate-100"><tr v-for="row in transferRows" :key="`history-${row.id}`">
+            <tbody class="divide-y divide-slate-100"><tr v-for="row in historyRows" :key="`history-${row.id}`">
               <td class="px-3 py-2 font-semibold">{{ row.productName }}<span class="block text-[10px] font-normal text-slate-500">From {{ row.sourceStoreName }}</span></td>
               <td class="px-3 py-2 text-right font-mono font-bold">{{ row.qty }}</td><td class="px-3 py-2">{{ storeName(row.destStoreId) }}</td>
               <td class="px-3 py-2"><span class="rounded-full px-2 py-1 font-bold" :class="statusCls[row.status]">{{ displayStatus(row) }}</span></td>
@@ -275,6 +286,10 @@ const displayStatus = (row) => row.destStoreId === props.storeId && row.status =
               <td class="px-3 py-2 whitespace-nowrap"><span v-if="row.receivedOn">{{ fmtDate(row.receivedOn) }}</span><span v-else>—</span><span v-if="row.receivedAt" class="block text-[10px]">{{ fmtJakarta(row.receivedAt) }}</span></td>
             </tr></tbody>
           </table>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs">
+          <span>Page {{ historyPage }} of {{ pageCount }} · {{ transferRows.length }} transfers</span>
+          <div class="flex gap-2"><button type="button" :disabled="historyPage <= 1" class="rounded border px-3 py-1 disabled:opacity-40" @click="historyPage--">Previous</button><button type="button" :disabled="historyPage >= pageCount" class="rounded border px-3 py-1 disabled:opacity-40" @click="historyPage++">Next</button></div>
         </div>
       </section>
     </div>
