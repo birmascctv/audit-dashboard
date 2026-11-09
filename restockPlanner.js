@@ -41,7 +41,8 @@ export function getRestockPlanner(stockDb, salesDb, matchStore, today = new Intl
   const dates = Array.from({ length: settings.historyDays }, (_, i) => addDays(start, i));
   const stocks = stockDb.prepare(`
     SELECT ss.store_id storeId, ss.product_id productId, ss.observed_stock_qty stock, ss.last_synced lastSynced,
-      s.name store, COALESCE(NULLIF(p.product_title,''), NULLIF(p.varian,''), ss.product_id) product
+      s.name store, COALESCE(NULLIF(TRIM(p.category), ''), 'Uncategorized') category,
+      COALESCE(NULLIF(p.product_title,''), NULLIF(p.varian,''), ss.product_id) product
     FROM store_stocks ss JOIN stores s ON s.id=ss.store_id JOIN products p ON p.id=ss.product_id
     WHERE UPPER(TRIM(COALESCE(NULLIF(p.product_title,''), p.varian, ''))) NOT LIKE '%(DRAFT)'
   `).all();
@@ -104,10 +105,11 @@ export function getRestockPlanner(stockDb, salesDb, matchStore, today = new Intl
     return {
       ...stock, avg: validAvg, reason, weekdayAverages, revenue,
       coverageDays: dates.filter((date) => coverage.has(date)).length, usableDays: eligible.length, latestSale: latest,
+      missingRecentDays: [addDays(today, -2), end].filter((date) => !coverage.has(date)),
       lowData: eligible.length < 14 || weekdayAverages.some((_, day) => !eligible.some((date) => weekday(date) === day)),
       snapshotDays: [...observed.values()].filter((qty) => qty != null).length,
       zeroDays: [...observed.values()].filter((qty) => qty != null && Number(qty) <= 0).length,
-      history: dates.map((date) => ({ date, qty: coverage.has(date) && history ? (history.get(date)?.qty || 0) : null, zeroObserved: observed.has(date) && observed.get(date) != null && Number(observed.get(date)) <= 0 })),
+      history: dates.map((date) => ({ date, qty: coverage.has(date) && history ? (history.get(date)?.qty || 0) : null, stock: observed.has(date) && observed.get(date) != null ? Number(observed.get(date)) : null, zeroObserved: observed.has(date) && observed.get(date) != null && Number(observed.get(date)) <= 0 })),
     };
   });
   const ranked = rows.filter((row) => row.revenue > 0 && names.get(pair(row.storeId, keyName(row.product))) === 1 && branches.get(row.storeId)?.size === 1).sort((a, b) => b.revenue - a.revenue);
@@ -134,7 +136,8 @@ export function getRestockPlanner(stockDb, salesDb, matchStore, today = new Intl
     });
     const targetDemand = row.avg == null ? null : row.forecast.slice(0, settings.reviewDays + settings.leadDays).reduce((sum, day) => sum + day.qty, 0);
     row.safetyQty = row.avg == null ? null : row.avg * settings[`safety${row.abc}`];
-    row.orderQty = targetDemand == null ? null : Math.max(0, Math.ceil(targetDemand + row.safetyQty - Number(row.stock)));
+    row.target = targetDemand == null ? null : targetDemand + row.safetyQty;
+    row.orderQty = row.target == null ? null : Math.max(0, Math.ceil(row.target - Number(row.stock)));
     let remaining = Math.max(0, Number(row.stock));
     let daysLeft = row.avg == null ? null : (remaining === 0 ? 0 : null);
     if (row.avg != null && daysLeft === null) {
@@ -146,10 +149,10 @@ export function getRestockPlanner(stockDb, salesDb, matchStore, today = new Intl
       if (daysLeft === null) daysLeft = remaining / row.avg + 366;
     }
     row.daysLeft = daysLeft;
-    row.status = daysLeft === null ? 'Unknown' : daysLeft <= 1 ? 'Critical' : daysLeft <= 3 ? 'Soon' : daysLeft > settings.overstockDays ? 'Overstock' : 'OK';
+    row.status = daysLeft === null ? 'Unknown' : daysLeft <= 1 ? 'Critical' : daysLeft <= 3 ? 'Order' : daysLeft > settings.overstockDays ? 'Overstock' : 'OK';
     row.orderBy = daysLeft === null ? null : addDays(today, Math.max(0, Math.floor(daysLeft - settings.leadDays)));
   }
-  const rank = { Critical: 0, Soon: 1, OK: 2, Overstock: 3, Unknown: 4 };
+  const rank = { Critical: 0, Order: 1, OK: 2, Overstock: 3, Unknown: 4 };
   rows.sort((a, b) => rank[a.status] - rank[b.status] || (a.daysLeft ?? Infinity) - (b.daysLeft ?? Infinity) || a.product.localeCompare(b.product));
   return { start, end, today, annualStart, settings, occasions, rows };
 }

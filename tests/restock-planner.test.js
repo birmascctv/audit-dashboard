@@ -8,11 +8,11 @@ function fixture() {
   const sales = new DatabaseSync(':memory:');
   stock.exec(`
     CREATE TABLE stores(id TEXT, name TEXT);
-    CREATE TABLE products(id TEXT, product_title TEXT, varian TEXT);
+    CREATE TABLE products(id TEXT, product_title TEXT, varian TEXT, category TEXT DEFAULT NULL);
     CREATE TABLE store_stocks(store_id TEXT, product_id TEXT, observed_stock_qty REAL, last_synced TEXT);
     CREATE TABLE stock_snapshots(store_id TEXT, product_id TEXT, business_date TEXT, stock_qty REAL);
     INSERT INTO stores VALUES ('s', 'Store');
-    INSERT INTO products VALUES ('p', 'Product', ''), ('unknown', 'Unknown', ''), ('draft', 'Draft (DRAFT)', '');
+    INSERT INTO products (id, product_title, varian, category) VALUES ('p', 'Product', '', 'BEER'), ('unknown', 'Unknown', '', NULL), ('draft', 'Draft (DRAFT)', '', 'BEER');
     INSERT INTO store_stocks VALUES ('s','p',2,'2026-01-31T12:00:00Z'), ('s','unknown',5,'2026-01-31T12:00:00Z'), ('s','draft',3,'2026-01-31T12:00:00Z');
     INSERT INTO stock_snapshots VALUES ('s','p','2026-01-30',0), ('s','p','2026-01-29',5);
   `);
@@ -31,6 +31,8 @@ test('planner calculates cover and replenishment using usable days and preserves
   assert.equal(product.status, 'Critical');
   assert.equal(product.orderQty, 20);
   assert.equal(product.safetyQty, 6);
+  assert.equal(product.target, 22);
+  assert.equal(product.category, 'BEER');
   assert.equal(product.orderBy, '2026-01-31');
   assert.equal(product.zeroDays, 1);
   assert.equal(product.snapshotDays, 2);
@@ -38,6 +40,9 @@ test('planner calculates cover and replenishment using usable days and preserves
   assert.equal(product.lowData, true);
   assert.equal(product.abc, 'A');
   assert.equal(product.history.find((day) => day.date === '2026-01-20').qty, null);
+  assert.equal(product.history.find((day) => day.date === '2026-01-29').stock, 5);
+  assert.equal(product.history.find((day) => day.date === '2026-01-30').stock, 0);
+  assert.equal(product.history.find((day) => day.date === '2026-01-28').stock, null);
   assert.equal(result.rows.find((row) => row.productId === 'unknown').status, 'Unknown');
   assert.ok(!result.rows.some((row) => row.productId === 'draft'));
   stock.close(); sales.close();
@@ -47,9 +52,23 @@ test('stale and ambiguous data never generates recommendations', () => {
   const { stock, sales, match } = fixture();
   stock.exec("UPDATE store_stocks SET last_synced='2026-01-20' WHERE product_id='p'");
   assert.equal(getRestockPlanner(stock, sales, match, '2026-01-31').rows.find((r) => r.productId === 'p').reason, 'Stock data is stale');
-  stock.exec("INSERT INTO products VALUES ('p2','Product',''); INSERT INTO store_stocks VALUES ('s','p2',3,'2026-01-31')");
+  stock.exec("INSERT INTO products (id,product_title,varian) VALUES ('p2','Product',''); INSERT INTO store_stocks VALUES ('s','p2',3,'2026-01-31')");
   const rows = getRestockPlanner(stock, sales, match, '2026-01-31').rows.filter((r) => r.product.startsWith('Product'));
   assert.ok(rows.every((r) => r.status === 'Unknown' && r.orderQty === null));
+  stock.close(); sales.close();
+});
+
+test('Order retains the 1–3 day warning and missing recent sales are identified', () => {
+  const { stock, sales, match } = fixture();
+  stock.exec("UPDATE store_stocks SET observed_stock_qty=4 WHERE product_id='p'");
+  let row = getRestockPlanner(stock, sales, match, '2026-01-31').rows.find((r) => r.productId === 'p');
+  assert.equal(row.status, 'Order');
+  assert.deepEqual(row.missingRecentDays, []);
+  sales.exec("DELETE FROM sales_transactions WHERE sales_date_in LIKE '2026-01-30%'");
+  row = getRestockPlanner(stock, sales, match, '2026-01-31').rows.find((r) => r.productId === 'p');
+  assert.deepEqual(row.missingRecentDays, ['2026-01-30']);
+  assert.equal(row.status, 'Order');
+  assert.ok(row.orderQty > 0);
   stock.close(); sales.close();
 });
 
@@ -85,7 +104,7 @@ test('weekday forecast and occasion adjustments change periodic order-up-to quan
 
 test('yearly revenue determines safety classification and dates outside the window do not count', () => {
   const { stock, sales, match } = fixture();
-  stock.exec("INSERT INTO products VALUES ('q','Other',''); INSERT INTO store_stocks VALUES ('s','q',5,'2026-01-31')");
+  stock.exec("INSERT INTO products (id,product_title,varian) VALUES ('q','Other',''); INSERT INTO store_stocks VALUES ('s','q',5,'2026-01-31')");
   sales.exec("INSERT INTO sales_transactions VALUES ('Store','Other','2026-01-30 12:00',1,5), ('Store','Other','2025-03-01 12:00',1,5000), ('Store','Product','2024-01-01 12:00',1,90000)");
   const rows = getRestockPlanner(stock, sales, match, '2026-01-31').rows;
   const first = rows.find((r) => r.productId === 'q');
