@@ -113,10 +113,13 @@ export function getRestockPlanner(stockDb, salesDb, matchStore, today = new Intl
   const ranked = rows.filter((row) => row.revenue > 0 && names.get(pair(row.storeId, keyName(row.product))) === 1 && branches.get(row.storeId)?.size === 1).sort((a, b) => b.revenue - a.revenue);
   const total = ranked.reduce((sum, row) => sum + row.revenue, 0);
   let cumulative = 0;
-  for (const row of ranked) {
+  for (const [index, row] of ranked.entries()) {
     const fraction = cumulative / total;
     row.abc = fraction < 0.8 ? 'A' : fraction < 0.95 ? 'B' : 'C';
     cumulative += row.revenue;
+    row.abcRank = index + 1;
+    row.abcRevenuePercent = row.revenue / total * 100;
+    row.abcCumulativePercent = cumulative / total * 100;
   }
   for (const row of rows) {
     if (row.avg != null && !row.abc) { row.reason = 'No positive annual revenue for ABC safety stock'; row.avg = null; }

@@ -88,8 +88,17 @@ test('yearly revenue determines safety classification and dates outside the wind
   stock.exec("INSERT INTO products VALUES ('q','Other',''); INSERT INTO store_stocks VALUES ('s','q',5,'2026-01-31')");
   sales.exec("INSERT INTO sales_transactions VALUES ('Store','Other','2026-01-30 12:00',1,5), ('Store','Other','2025-03-01 12:00',1,5000), ('Store','Product','2024-01-01 12:00',1,90000)");
   const rows = getRestockPlanner(stock, sales, match, '2026-01-31').rows;
-  assert.equal(rows.find((r) => r.productId === 'q').abc, 'A');
-  assert.equal(rows.find((r) => r.productId === 'p').abc, 'C');
+  const first = rows.find((r) => r.productId === 'q');
+  const second = rows.find((r) => r.productId === 'p');
+  assert.equal(first.abc, 'A');
+  assert.equal(first.abcRank, 1);
+  assert.equal(first.abcRevenuePercent, 5005 / 5205 * 100);
+  assert.equal(first.abcCumulativePercent, first.abcRevenuePercent);
+  assert.equal(second.abc, 'C');
+  assert.equal(second.abcRank, 2);
+  assert.equal(second.abcRevenuePercent, 200 / 5205 * 100);
+  assert.equal(second.abcCumulativePercent, 100);
+  assert.equal(rows.find((r) => r.productId === 'unknown').abcRank, undefined);
   stock.close(); sales.close();
 });
 

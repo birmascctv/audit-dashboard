@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { Line } from 'vue-chartjs';
 import 'chart.js/auto';
-import AnalyticsPieChart from '../components/AnalyticsPieChart.vue';
+import AnalyticsPieChart, { PIE_CHART_COLORS } from '../components/AnalyticsPieChart.vue';
 import { authFetchJson } from '../services/authFetch.js';
 
 const data = ref({ rows: [], start: '', end: '', today: '' });
@@ -13,6 +13,8 @@ const status = ref('all');
 const page = ref(1);
 const overstockPage = ref(1);
 const stockoutPage = ref(1);
+const abcPage = ref(1);
+const abcClass = ref('all');
 const selected = ref(null);
 const settings = ref(null);
 const occasions = ref([]);
@@ -39,9 +41,20 @@ const watchRows = computed(() => filtered.value.filter((r) => r.daysLeft !== nul
 const maxWatch = computed(() => Math.max(1, ...watchRows.value.map((r) => r.daysLeft)));
 const overstock = computed(() => filtered.value.filter((r) => r.status === 'Overstock'));
 const stockouts = computed(() => filtered.value.filter((r) => r.zeroDays > 0).sort((a, b) => b.zeroDays - a.zeroDays));
-const abc = computed(() => ['A', 'B', 'C'].map((name) => ({ name, sales: filtered.value.filter((r) => r.abc === name).reduce((sum, r) => sum + r.revenue, 0) })));
+const abcRows = computed(() => filtered.value.filter((r) => r.abc).slice().sort((a, b) => a.abcRank - b.abcRank));
+const abcRevenue = computed(() => abcRows.value.reduce((sum, row) => sum + row.revenue, 0));
+const abc = computed(() => ['A', 'B', 'C'].map((name, index) => {
+  const rows = abcRows.value.filter((row) => row.abc === name);
+  const sales = rows.reduce((sum, row) => sum + row.revenue, 0);
+  return { name, sales, count: rows.length, productPercent: abcRows.value.length ? rows.length / abcRows.value.length * 100 : 0, revenuePercent: abcRevenue.value ? sales / abcRevenue.value * 100 : 0, color: PIE_CHART_COLORS[index] };
+}));
+const abcDetails = computed(() => abcRows.value.filter((row) => abcClass.value === 'all' || row.abc === abcClass.value));
+const abcPages = computed(() => Math.max(1, Math.ceil(abcDetails.value.length / 25)));
 const number = (value) => value == null ? '—' : Number(value).toLocaleString('id-ID', { maximumFractionDigits: 2 });
-watch([store, status], () => { page.value = 1; overstockPage.value = 1; stockoutPage.value = 1; });
+const percent = (value) => `${Number(value || 0).toFixed(2)}%`;
+const money = (value) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value);
+watch([store, status], () => { page.value = 1; overstockPage.value = 1; stockoutPage.value = 1; abcPage.value = 1; });
+watch(abcClass, () => { abcPage.value = 1; });
 
 const chart = computed(() => {
   if (!selected.value) return { labels: [], datasets: [] };
@@ -163,8 +176,37 @@ onMounted(async () => {
       </section>
       <div class="grid gap-4 lg:grid-cols-2">
         <section class="rounded-xl border bg-white p-4"><h2 class="font-bold">Top products to watch</h2><p class="text-xs text-slate-500">Fewest estimated days of cover</p><div v-for="row in watchRows" :key="`${row.storeId}-${row.productId}`" class="mt-3 text-xs"><div class="flex justify-between gap-2"><span>{{ row.product }} · {{ row.store }}</span><strong>{{ number(row.daysLeft) }} days</strong></div><div class="mt-1 h-2 rounded bg-slate-100"><div class="h-2 rounded bg-orange-500" :style="{ width: `${Math.max(1, row.daysLeft / maxWatch * 100)}%` }" /></div></div><p v-if="!watchRows.length" class="mt-4 text-xs text-slate-500">No estimates available.</p></section>
-        <section class="rounded-xl border bg-white p-4"><h2 class="font-bold">ABC revenue analysis</h2><p class="text-xs text-slate-500">Matched product/store revenue from {{ data.annualStart }} to {{ data.end }}, ranked across all stores before filters. A ≈ 80%, B ≈ 15%, C remainder; missing sales reduce reliability.</p><AnalyticsPieChart :items="abc" :show-legend-values="true" /><p v-if="!abc.some(a => a.sales > 0)" class="text-xs text-slate-500">No matched revenue available.</p></section>
+        <section class="rounded-xl border bg-white p-4">
+          <h2 class="font-bold">ABC revenue analysis</h2>
+          <p class="text-xs text-slate-500">Matched product/store revenue from {{ data.annualStart }} to {{ data.end }}. Classes are ranked across all stores; missing sales reduce reliability.</p>
+          <AnalyticsPieChart :items="abc" :show-legend="false" compact />
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[480px] text-left text-xs">
+              <thead class="bg-slate-50 text-slate-600"><tr><th class="p-2">Class</th><th class="p-2 text-right">Products</th><th class="p-2 text-right">% of products</th><th class="p-2 text-right">Revenue</th><th class="p-2 text-right">% of revenue</th></tr></thead>
+              <tbody><tr v-for="item in abc" :key="item.name" class="border-t">
+                <td class="p-2"><button type="button" class="flex items-center gap-2 rounded px-2 py-1 font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700" :class="abcClass === item.name ? 'bg-teal-100 text-teal-800' : 'hover:bg-slate-100'" :aria-pressed="abcClass === item.name" :aria-label="`Filter ABC detail to class ${item.name}`" @click="abcClass = abcClass === item.name ? 'all' : item.name"><span class="h-2.5 w-2.5 rounded-sm" :style="{ backgroundColor: item.color }" />{{ item.name }}</button></td>
+                <td class="p-2 text-right">{{ item.count }}</td><td class="p-2 text-right">{{ percent(item.productPercent) }}</td><td class="whitespace-nowrap p-2 text-right">{{ money(item.sales) }}</td><td class="p-2 text-right">{{ percent(item.revenuePercent) }}</td>
+              </tr></tbody>
+            </table>
+          </div>
+          <p class="mt-2 text-xs text-slate-500">Counts are product/store entries, not unique products. Legend totals reflect the Store and Status filters; unclassified items are excluded. Select a class to filter the detail table.</p>
+        </section>
       </div>
+      <section class="rounded-xl border bg-white p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div><h2 class="font-bold">ABC product detail</h2><p class="text-xs text-slate-500">Rank, revenue share and cumulative share are based on all classified product/store entries before filters. Use the Status filter above to find Critical items.</p></div>
+          <button v-if="abcClass !== 'all'" type="button" class="rounded-lg border px-3 py-1.5 text-xs font-bold" @click="abcClass = 'all'">Clear class {{ abcClass }}</button>
+        </div>
+        <div class="mt-3 overflow-x-auto">
+          <table class="w-full min-w-[900px] text-left text-xs">
+            <thead class="bg-slate-50 text-slate-600"><tr><th class="p-2">Rank</th><th class="p-2">Product</th><th class="p-2">Store</th><th class="p-2 text-right">Revenue</th><th class="p-2 text-right">% of total</th><th class="p-2 text-right">Cumulative %</th><th class="p-2">Class</th><th class="p-2 text-right">Days of cover</th><th class="p-2">Status</th></tr></thead>
+            <tbody><tr v-for="row in abcDetails.slice((abcPage - 1) * 25, abcPage * 25)" :key="`${row.storeId}-${row.productId}`" class="border-t">
+              <td class="p-2">{{ row.abcRank }}</td><td class="p-2 font-semibold">{{ row.product }}<span v-if="row.lowData && row.daysLeft != null" class="block font-normal text-amber-700">Low data · tentative</span></td><td class="p-2">{{ row.store }}</td><td class="whitespace-nowrap p-2 text-right">{{ money(row.revenue) }}</td><td class="p-2 text-right">{{ percent(row.abcRevenuePercent) }}</td><td class="p-2 text-right">{{ percent(row.abcCumulativePercent) }}</td><td class="p-2 font-bold">{{ row.abc }}</td><td class="p-2 text-right">{{ number(row.daysLeft) }}</td><td class="p-2"><span class="rounded-full px-2 py-1 font-bold" :class="colors[row.status]">{{ row.status }}</span></td>
+            </tr><tr v-if="!abcDetails.length"><td colspan="9" class="p-5 text-center text-slate-500">No classified products for these filters.</td></tr></tbody>
+          </table>
+        </div>
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-600"><span>{{ abcDetails.length }} product/store entries · Page {{ abcPage }} of {{ abcPages }}</span><div class="space-x-2"><button :disabled="abcPage <= 1" class="rounded border px-3 py-1 disabled:opacity-40" @click="abcPage--">Previous</button><button :disabled="abcPage >= abcPages" class="rounded border px-3 py-1 disabled:opacity-40" @click="abcPage++">Next</button></div></div>
+      </section>
       <section class="rounded-xl border bg-white p-4"><h2 class="font-bold">Overstock / slow-moving</h2><p class="mb-3 text-xs text-slate-500">More than {{ data.settings.overstockDays }} estimated days of cover.</p><div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead><tr><th class="p-2">Product</th><th class="p-2">Store</th><th class="p-2">Stock</th><th class="p-2">Days left</th></tr></thead><tbody><tr v-for="r in overstock.slice((overstockPage - 1) * 20, overstockPage * 20)" :key="`${r.storeId}-${r.productId}`" class="border-t"><td class="p-2">{{ r.product }}</td><td class="p-2">{{ r.store }}</td><td class="p-2">{{ number(r.stock) }}</td><td class="p-2">{{ number(r.daysLeft) }}</td></tr><tr v-if="!overstock.length"><td colspan="4" class="p-2 text-slate-500">No estimated overstock.</td></tr></tbody></table></div><div class="mt-3 flex justify-between text-xs"><span>{{ overstock.length }} products · Page {{ overstockPage }}</span><div class="space-x-2"><button :disabled="overstockPage <= 1" class="rounded border px-3 py-1 disabled:opacity-40" @click="overstockPage--">Previous</button><button :disabled="overstockPage * 20 >= overstock.length" class="rounded border px-3 py-1 disabled:opacity-40" @click="overstockPage++">Next</button></div></div></section>
       <section class="rounded-xl border bg-white p-4"><h2 class="font-bold">Stockout observations</h2><p class="mb-3 text-xs text-slate-500">Zero or negative snapshots during {{ data.start }}–{{ data.end }}. Missing snapshots are not stockouts.</p><div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead><tr><th class="p-2">Product</th><th class="p-2">Store</th><th class="p-2">Zero observations</th><th class="p-2">Snapshot days / {{ data.settings.historyDays }}</th></tr></thead><tbody><tr v-for="r in stockouts.slice((stockoutPage - 1) * 20, stockoutPage * 20)" :key="`${r.storeId}-${r.productId}`" class="border-t"><td class="p-2">{{ r.product }}</td><td class="p-2">{{ r.store }}</td><td class="p-2">{{ r.zeroDays }}</td><td class="p-2">{{ r.snapshotDays }} / {{ data.settings.historyDays }}</td></tr><tr v-if="!stockouts.length"><td colspan="4" class="p-2 text-slate-500">No zero-stock observations in this selection.</td></tr></tbody></table></div><div class="mt-3 flex justify-between text-xs"><span>{{ stockouts.length }} products · Page {{ stockoutPage }}</span><div class="space-x-2"><button :disabled="stockoutPage <= 1" class="rounded border px-3 py-1 disabled:opacity-40" @click="stockoutPage--">Previous</button><button :disabled="stockoutPage * 20 >= stockouts.length" class="rounded border px-3 py-1 disabled:opacity-40" @click="stockoutPage++">Next</button></div></div></section>
     </template>

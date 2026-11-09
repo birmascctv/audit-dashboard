@@ -984,6 +984,45 @@ onBeforeUnmount(() => {
           </ol>
         </article>
       </section>
+    </template>
+
+    <section class="flex flex-col items-stretch gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end">
+      <div>
+        <label class="mb-1 block text-sm font-bold uppercase tracking-wide text-slate-500">Quick range</label>
+        <div class="flex flex-wrap gap-1">
+          <button v-for="preset in datePresets" :key="preset.id" type="button" class="rounded-lg border px-3 py-1.5 text-sm font-bold"
+            :class="quick === preset.id ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+            @click="applyPreset(preset)">{{ preset.label }}</button>
+          <button type="button" class="rounded-lg border px-3 py-1.5 text-sm font-bold"
+            :class="quick === 'range' ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+            @click="selectDateRange">Date Range</button>
+          <button type="button" class="rounded-lg border px-3 py-1.5 text-sm font-bold"
+            :class="quick === 'all' ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+            @click="selectAllTime">All Time</button>
+        </div>
+      </div>
+      <label v-if="quick === 'range'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+        Start date
+        <DateField v-model="customStartDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
+      </label>
+      <label v-if="quick === 'range'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+        End date
+        <DateField v-model="customEndDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
+      </label>
+      <details class="relative text-[10px] font-bold uppercase tracking-wide text-slate-500">
+        <summary class="flex min-w-40 cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
+          {{ checklistLabel(selectedStores, 'All stores', 'stores') }}<span aria-hidden="true">▾</span>
+        </summary>
+        <div class="absolute left-0 z-30 mt-1 max-h-72 w-64 overflow-auto rounded-xl border border-slate-200 bg-white p-2 normal-case shadow-xl">
+          <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="selectedStores === null" @change="setGlobalStoresAll">All stores</label>
+          <label v-for="store in stores" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="selectedStores === null || selectedStores.includes(store.name)" @change="toggleGlobalStore(store.name)">{{ store.name }}</label>
+        </div>
+      </details>
+      <button type="button" class="mb-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="resetFilters">Reset filters</button>
+      <p v-if="range.startDate || range.endDate" class="pb-2 text-xs text-slate-500">{{ fmtDate(range.startDate) || 'Beginning' }} – {{ fmtDate(range.endDate) || 'Latest' }}</p>
+    </section>
+
+    <template v-if="activeTab === 'analytics'">
       <div class="flex items-center justify-end gap-2 text-xs font-semibold text-slate-600"><span>Stores (Last 7 Days &amp; This Month)</span>
             <details class="relative">
               <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:border-slate-300">
@@ -1062,42 +1101,6 @@ onBeforeUnmount(() => {
         :class="activeTab === tab.id ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
         @click="setTab(tab.id)">{{ tab.label }}</button>
     </nav>
-
-    <section class="flex flex-col items-stretch gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end">
-      <div>
-        <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Quick range</label>
-        <div class="flex flex-wrap gap-1">
-          <button v-for="preset in datePresets" :key="preset.id" type="button" class="rounded-lg border px-3 py-1.5 text-xs font-bold"
-            :class="quick === preset.id ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
-            @click="applyPreset(preset)">{{ preset.label }}</button>
-          <button type="button" class="rounded-lg border px-3 py-1.5 text-xs font-bold"
-            :class="quick === 'range' ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
-            @click="selectDateRange">Date Range</button>
-          <button type="button" class="rounded-lg border px-3 py-1.5 text-xs font-bold"
-            :class="quick === 'all' ? 'border-teal-700 bg-teal-700 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
-            @click="selectAllTime">All Time</button>
-        </div>
-      </div>
-      <label v-if="quick === 'range'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-        Start date
-        <DateField v-model="customStartDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
-      </label>
-      <label v-if="quick === 'range'" class="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-        End date
-        <DateField v-model="customEndDate" class="mt-1 block rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800" />
-      </label>
-      <details class="relative text-[10px] font-bold uppercase tracking-wide text-slate-500">
-        <summary class="flex min-w-40 cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-800">
-          {{ checklistLabel(selectedStores, 'All stores', 'stores') }}<span aria-hidden="true">▾</span>
-        </summary>
-        <div class="absolute left-0 z-30 mt-1 max-h-72 w-64 overflow-auto rounded-xl border border-slate-200 bg-white p-2 normal-case shadow-xl">
-          <label class="flex gap-2 border-b border-slate-100 px-2 py-2 text-xs font-semibold"><input type="checkbox" :checked="selectedStores === null" @change="setGlobalStoresAll">All stores</label>
-          <label v-for="store in stores" :key="store.name" class="flex gap-2 px-2 py-1.5 text-xs"><input type="checkbox" :checked="selectedStores === null || selectedStores.includes(store.name)" @change="toggleGlobalStore(store.name)">{{ store.name }}</label>
-        </div>
-      </details>
-      <button type="button" class="mb-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50" @click="resetFilters">Reset filters</button>
-      <p v-if="range.startDate || range.endDate" class="pb-2 text-xs text-slate-500">{{ fmtDate(range.startDate) || 'Beginning' }} – {{ fmtDate(range.endDate) || 'Latest' }}</p>
-    </section>
 
     <section v-if="initialLoading" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><SkeletonBlock :rows="8" height="h-6" /></section>
 
