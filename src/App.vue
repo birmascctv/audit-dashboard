@@ -9,7 +9,7 @@ import ChillerHeader from './components/ChillerHeader.vue';
 
 const route = useRoute();
 const router = useRouter();
-const { currentUser, logout, canAccessStoreAudit, canAccessUploadAudits, canAccessStockAudit, canAccessCrewPage, canAccessAuditRecords, canAccessSalesReport } = useAuth();
+const { currentUser, logout, canAccessStoreAudit, canAccessUploadAudits, canAccessStockAudit, canAccessCrewPage, canAccessAuditRecords, canAccessSalesReport, canAccessRestockPlanner } = useAuth();
 const toast = useToast();
 
 const pageNames = {
@@ -20,6 +20,7 @@ const pageNames = {
   '/stock-audit-crew': ['Audit', 'Stock Audit', 'Crew'],
   '/audit-records': ['Audit', 'Audit Records'],
   '/sales': ['Sales Report'],
+  '/restock-planner': ['Restock Planner'],
 };
 const crumbs = computed(() => pageNames[route.path] || []);
 const navItems = computed(() => [
@@ -28,6 +29,7 @@ const navItems = computed(() => [
   canAccessStockAudit.value && { to: canAccessCrewPage.value && currentUser.value?.role === 'crew' ? '/stock-audit-crew' : '/stock-audit', label: 'Stock' },
   canAccessAuditRecords.value && { to: '/audit-records', label: 'Records' },
   canAccessSalesReport.value && { to: '/sales', label: 'Sales' },
+  canAccessRestockPlanner.value && { to: '/restock-planner', label: 'Restock' },
 ].filter(Boolean));
 
 let warned = false;

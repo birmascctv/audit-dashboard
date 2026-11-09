@@ -12,6 +12,7 @@ import * as storeAuditService from './storeAuditService.js';
 import * as stockPeriodCsv from './stockPeriodCsv.js';
 import * as stockPeriodCsvStore from './stockPeriodCsvStore.js';
 import { captureStockSnapshot, ensureStockSnapshots } from './stockSnapshots.js';
+import { getRestockPlanner, canAccessRestock } from './restockPlanner.js';
 
 export function parseSafeMoney(val) {
   if (val === undefined || val === null || val === '') return 0;
@@ -2792,6 +2793,23 @@ async function startServer() {
         importId: req.query.importId,
       };
       res.json({ success: true, timeSeries: salesDb.getSalesTimeSeries(filters) });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/restock-planner', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      const sqlite = db.getDb();
+      ensureStockSnapshots(sqlite);
+      const branches = new Map([
+        ['SUDIRMAN', 'birmas-sudirman'], ['KUNINGAN', 'birmas-kuningan'], ['KWITANG', 'birmas-kwitang'],
+        ['LEBAK BULUS', 'birmas-lebak-bulus'], ['KELAPA GADING', 'birmas-kelapa-gading'],
+        ['TEBET', 'birmas-tebet'], ['NOMADIC', 'birmas-nomadic'], ['BALI NUSA DUA', 'birmas-nusadua'],
+      ]);
+      const matchBranch = (name) => branches.get(String(name).trim().toUpperCase()) || null;
+      res.json({ success: true, ...getRestockPlanner(sqlite, salesDb.getSalesDb(), matchBranch) });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }

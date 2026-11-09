@@ -5,6 +5,7 @@ import StoreAuditUploadView from '../views/StoreAuditUploadView.vue';
 import AuditView from '../views/AuditView.vue';
 import AuditHistoryView from '../views/AuditHistoryView.vue';
 import SalesReportView from '../views/SalesReportView.vue';
+import RestockPlannerView from '../views/RestockPlannerView.vue';
 import LoginView from '../views/LoginView.vue';
 import { isSessionExpired } from '../services/authFetch.js';
 
@@ -72,6 +73,12 @@ const routes = [
     meta: { requiresAuth: true, allowedRoles: ['admin', 'superadmin', 'owner'] },
   },
   {
+    path: '/restock-planner',
+    name: 'RestockPlanner',
+    component: RestockPlannerView,
+    meta: { requiresAuth: true, restockAccess: true },
+  },
+  {
     path: '/login',
     name: 'Login',
     component: LoginView,
@@ -111,6 +118,10 @@ router.beforeEach((to, from, next) => {
   if (to.path === '/login' && isAuth) {
     if (userRole === 'admin') {
       return next('/sales');
+    }
+
+    if (to.meta?.restockAccess && user?.id !== 'user-bertha' && userRole !== 'superadmin') {
+      return next(userRole === 'admin' ? '/sales' : userRole === 'crew' ? '/stock-audit-crew' : '/store-audit');
     }
     if (userRole === 'crew') return next('/stock-audit-crew');
     return next('/store-audit');

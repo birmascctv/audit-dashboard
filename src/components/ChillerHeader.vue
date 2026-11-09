@@ -69,6 +69,7 @@ const {
   canAccessStockAudit,
   canAccessAuditRecords,
   canAccessSalesReport,
+  canAccessRestockPlanner,
   logout
 } = useAuth();
 
@@ -254,6 +255,12 @@ onUnmounted(() => {
               class="inline-flex w-40 items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
               :class="route.path === '/sales' ? 'border-teal-600 bg-teal-600 text-white shadow-xs' : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'"
             ><TrendingUp class="h-4 w-4" />Sales Report</router-link>
+            <router-link
+              v-if="canAccessRestockPlanner"
+              to="/restock-planner"
+              class="inline-flex items-center justify-center whitespace-nowrap rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors"
+              :class="route.path === '/restock-planner' ? 'border-teal-600 bg-teal-600 text-white shadow-xs' : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'"
+            >Restock Planner</router-link>
           </nav>
         </div>
 

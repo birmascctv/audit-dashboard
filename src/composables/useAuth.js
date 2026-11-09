@@ -119,6 +119,7 @@ export function useAuth() {
   const canAccessCrewPage = computed(() => ['owner', 'crew'].includes(role.value));
   const canAccessAuditRecords = computed(() => ['auditor', 'superadmin', 'owner'].includes(role.value));
   const canAccessSalesReport = computed(() => ['admin', 'superadmin', 'owner'].includes(role.value));
+  const canAccessRestockPlanner = computed(() => currentUser.value?.id === 'user-bertha' || role.value === 'superadmin');
 
   return {
     currentUser,
@@ -133,6 +134,7 @@ export function useAuth() {
     canAccessCrewPage,
     canAccessAuditRecords,
     canAccessSalesReport,
+    canAccessRestockPlanner,
     isAuthenticated,
     loginWithBackend,
     logout,
