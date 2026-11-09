@@ -11,7 +11,6 @@ import EmptyState from '../components/EmptyState.vue';
 import SkeletonBlock from '../components/SkeletonBlock.vue';
 import { useToast } from '../composables/useToast.js';
 
-const activeTab = ref('analytics');
 const period = ref('all');
 const quick = ref('all');
 const SALES_FILTER_KEY = 'birmas_sales_filters_v1';
@@ -39,11 +38,6 @@ function resetFilters() {
 const stores = ref([]);
 const summary = ref({});
 const files = ref([]);
-const rows = ref([]);
-const totalRows = ref(0);
-const page = ref(1);
-const pageSize = 100;
-const rawSearch = ref('');
 const pivotSearch = ref('');
 const pivotDropdownOpen = ref(false);
 const selectedPivotProduct = ref('');
@@ -338,7 +332,6 @@ const allPivotRows = computed(() => {
 });
 const pivotRows = computed(() => allPivotRows.value.filter((item) =>
   !pivotSearch.value || pivotSearch.value === 'ALL PRODUCT' || item.item.toLowerCase().includes(pivotSearch.value.toLowerCase())));
-const pages = computed(() => Math.max(1, Math.ceil(totalRows.value / pageSize)));
 const insightText = computed(() => {
   const net = Number(summary.value.totalNetSales) || 0;
   if (initialLoading.value || !net) return '';
@@ -734,11 +727,10 @@ function formatDateTime(value) {
   if (!value) return '-';
   return fmtDateTime(value);
 }
-function filters(includeSearch = false) {
+function filters() {
   return {
     ...range.value,
     ...(selectedStores.value !== null ? { storeIds: selectedStores.value.join(',') } : {}),
-    ...(includeSearch && rawSearch.value.trim() ? { search: rawSearch.value.trim() } : {}),
   };
 }
 function queryString(values) {
@@ -759,27 +751,15 @@ async function loadReport() {
   if (dateRangeError.value) {
     error.value = dateRangeError.value;
     summary.value = {};
-    rows.value = [];
-    totalRows.value = 0;
     loading.value = false;
     return;
   }
   loading.value = true;
   error.value = '';
   try {
-    const base = filters();
-    const [summaryResult, rawResult] = await Promise.all([
-      getJson(`/api/sales/summary?${queryString(base)}`),
-      activeTab.value === 'raw'
-        ? getJson(`/api/sales/report?${queryString({ ...filters(true), limit: pageSize, offset: (page.value - 1) * pageSize })}`)
-        : Promise.resolve(null),
-    ]);
+    const summaryResult = await getJson(`/api/sales/summary?${queryString(filters())}`);
     if (requestId !== reportRequestId) return;
     summary.value = summaryResult.summary || {};
-    if (rawResult) {
-      rows.value = rawResult.transactions || [];
-      totalRows.value = rawResult.total || 0;
-    }
   } catch (loadError) {
     if (requestId === reportRequestId) {
       error.value = loadError.message || 'Could not load sales data.';
@@ -819,14 +799,8 @@ async function loadStores() {
     error.value = loadError.message || 'Could not load sales branches.';
   }
 }
-function setTab(tab) {
-  activeTab.value = tab;
-  page.value = 1;
-  loadReport();
-}
 function handleImported() {
   uploadOpen.value = false;
-  page.value = 1;
   loadStores();
   loadFiles();
   loadReport();
@@ -872,7 +846,6 @@ watch([quick, customStartDate, customEndDate, selectedStores], () => {
   try { localStorage.setItem(SALES_FILTER_KEY, JSON.stringify({ quick: quick.value, start: customStartDate.value, end: customEndDate.value, stores: selectedStores.value })); } catch {}
 }, { deep: true });
 watch([period, anchorDate, customStartDate, customEndDate, selectedStores], () => {
-  page.value = 1;
   loadReport();
   timeRangeStart.value = range.value.startDate || '';
   timeRangeEnd.value = range.value.endDate || '';
@@ -888,9 +861,6 @@ function syncChartStores(selection) {
   timeSelectedStores.value = selected;
 }
 watch(selectedStores, syncChartStores, { deep: true });
-watch([rawSearch, page], () => {
-  if (activeTab.value === 'raw') loadReport();
-});
 watch([timeRangeStart, timeRangeEnd, timeSelectedStores], loadTimeSummary);
 watch([stockCompareStore, stockCompareDate], loadStockCompare);
 watch(() => summary.value.latestBusinessDate, (date) => { if (date && !stockCompareDate.value) stockCompareDate.value = date; });
@@ -956,7 +926,6 @@ onBeforeUnmount(() => {
     </section>
 
 
-    <template v-if="activeTab === 'analytics'">
       <p v-if="insightText" class="rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm font-semibold text-teal-900">💡 {{ insightText }}</p>
       <section class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -984,8 +953,6 @@ onBeforeUnmount(() => {
           </ol>
         </article>
       </section>
-    </template>
-
     <section class="flex flex-col items-stretch gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end">
       <div>
         <label class="mb-1 block text-sm font-bold uppercase tracking-wide text-slate-500">Quick range</label>
@@ -1022,7 +989,6 @@ onBeforeUnmount(() => {
       <p v-if="range.startDate || range.endDate" class="pb-2 text-xs text-slate-500">{{ fmtDate(range.startDate) || 'Beginning' }} – {{ fmtDate(range.endDate) || 'Latest' }}</p>
     </section>
 
-    <template v-if="activeTab === 'analytics'">
       <div class="flex items-center justify-end gap-2 text-xs font-semibold text-slate-600"><span>Stores (Last 7 Days &amp; This Month)</span>
             <details class="relative">
               <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:border-slate-300">
@@ -1091,20 +1057,10 @@ onBeforeUnmount(() => {
           </div>
         </article>
       </section>
-    </template>
-
     <p v-if="error" class="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ error }}</p>
-
-    <nav class="flex gap-2">
-      <button v-for="tab in [{id:'analytics',label:'Analytics'},{id:'raw',label:'Raw'}]" :key="tab.id" type="button"
-        class="rounded-xl px-5 py-2.5 text-sm font-bold"
-        :class="activeTab === tab.id ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
-        @click="setTab(tab.id)">{{ tab.label }}</button>
-    </nav>
 
     <section v-if="initialLoading" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><SkeletonBlock :rows="8" height="h-6" /></section>
 
-    <template v-if="activeTab === 'analytics'">
       <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
@@ -1402,37 +1358,6 @@ onBeforeUnmount(() => {
           </div></div>
         </section>
       </section>
-    </template>
-
-    <template v-else>
-      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-          <div><h2 class="text-sm font-bold text-slate-900">Raw Clean Sales Records</h2><p class="text-[11px] text-slate-500">Showing {{ totalRows.toLocaleString() }} matching rows · up to 100 records per page</p></div>
-          <input v-model="rawSearch" type="search" placeholder="Search branch, menu, payment..." class="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs sm:w-72">
-        </header>
-        <SkeletonBlock v-if="loading && !rows.length" :rows="8" height="h-5" class="p-4" />
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[900px] table-fixed text-left text-[10px] leading-tight">
-            <colgroup>
-              <col class="w-[12%]"><col class="w-[8%]"><col class="w-[9%]"><col class="w-[9%]">
-              <col class="w-[9%]"><col class="w-[10%]"><col class="w-[12%]"><col class="w-[4%]">
-              <col class="w-[8%]"><col class="w-[9%]"><col class="w-[10%]">
-            </colgroup>
-            <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr>
-              <th v-for="heading in ['Sales Date In','Branch','Visit Purpose','Payment Method','Menu Category','Menu Category Detail','Menu','Qty','Price','Subtotal','Total']" :key="heading" class="break-words px-1 py-2">{{ heading }}</th>
-            </tr></thead>
-            <tbody><tr v-for="(row,index) in rows" :key="`${row.sales_date_in}-${index}`" class="border-t border-slate-100 hover:bg-slate-50/70">
-              <td class="break-all px-1 py-1.5">{{ formatDateTime(row.sales_date_in) }}</td><td class="break-words px-1 py-1.5">{{ row.branch }}</td><td class="break-words px-1 py-1.5">{{ row.visit_purpose }}</td><td class="break-words px-1 py-1.5">{{ row.payment_method }}</td><td class="break-words px-1 py-1.5">{{ row.menu_category }}</td><td class="break-words px-1 py-1.5">{{ row.menu_category_detail }}</td><td class="break-words px-1 py-1.5 font-medium text-slate-900">{{ row.menu }}</td><td class="break-all px-1 py-1.5 text-right">{{ row.qty }}</td><td class="break-all px-1 py-1.5 text-right">{{ formatMoney(row.price) }}</td><td class="break-all px-1 py-1.5 text-right">{{ formatMoney(row.subtotal) }}</td><td class="break-all px-1 py-1.5 text-right font-semibold">{{ formatMoney(row.total_after_bill_discount) }}</td>
-            </tr><tr v-if="!rows.length"><td colspan="11" class="p-0"><EmptyState title="No sales rows found for these filters." /></td></tr></tbody>
-          </table>
-        </div>
-        <footer class="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-          <span>Page {{ page }} of {{ pages }}</span><div class="flex gap-2"><button class="rounded-lg border border-slate-200 px-3 py-1.5 disabled:opacity-40" :disabled="page <= 1" @click="page--">Previous</button><button class="rounded-lg border border-slate-200 px-3 py-1.5 disabled:opacity-40" :disabled="page >= pages" @click="page++">Next</button></div>
-        </footer>
-      </section>
-
-    </template>
-
     <Teleport v-if="hourTooltip" to="body">
       <div class="pointer-events-none fixed z-[100] max-h-[70vh] max-w-[22rem] overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${hourTooltip.x}px`, top: `${hourTooltip.y}px` }">
         <p class="font-bold">{{ hourTooltip.hour }}</p>
