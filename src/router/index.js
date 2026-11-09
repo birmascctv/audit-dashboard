@@ -120,11 +120,12 @@ router.beforeEach((to, from, next) => {
       return next('/sales');
     }
 
-    if (to.meta?.restockAccess && user?.id !== 'user-bertha' && userRole !== 'superadmin') {
-      return next(userRole === 'admin' ? '/sales' : userRole === 'crew' ? '/stock-audit-crew' : '/store-audit');
-    }
     if (userRole === 'crew') return next('/stock-audit-crew');
     return next('/store-audit');
+  }
+
+  if (to.meta?.restockAccess && user?.id !== 'user-bertha') {
+    return next(userRole === 'admin' ? '/sales' : userRole === 'crew' ? '/stock-audit-crew' : '/store-audit');
   }
 
   // Strict Role-Based Access Control check

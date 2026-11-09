@@ -12,7 +12,7 @@ import * as storeAuditService from './storeAuditService.js';
 import * as stockPeriodCsv from './stockPeriodCsv.js';
 import * as stockPeriodCsvStore from './stockPeriodCsvStore.js';
 import { captureStockSnapshot, ensureStockSnapshots } from './stockSnapshots.js';
-import { getRestockPlanner, canAccessRestock } from './restockPlanner.js';
+import { getRestockPlanner, canAccessRestock, DEFAULT_RESTOCK_SETTINGS, validateRestockConfig } from './restockPlanner.js';
 
 export function parseSafeMoney(val) {
   if (val === undefined || val === null || val === '') return 0;
@@ -2809,9 +2809,22 @@ async function startServer() {
         ['TEBET', 'birmas-tebet'], ['NOMADIC', 'birmas-nomadic'], ['BALI NUSA DUA', 'birmas-nusadua'],
       ]);
       const matchBranch = (name) => branches.get(String(name).trim().toUpperCase()) || null;
-      res.json({ success: true, ...getRestockPlanner(sqlite, salesDb.getSalesDb(), matchBranch) });
+      const saved = db.getConfig('restock_planner_config', '');
+      const config = saved ? validateRestockConfig(JSON.parse(saved)) : { settings: DEFAULT_RESTOCK_SETTINGS, occasions: [] };
+      res.json({ success: true, ...getRestockPlanner(sqlite, salesDb.getSalesDb(), matchBranch, undefined, config) });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.put('/api/restock-planner/config', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      const config = validateRestockConfig(req.body);
+      db.setConfig('restock_planner_config', JSON.stringify(config));
+      res.json({ success: true, ...config });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err.message });
     }
   });
 

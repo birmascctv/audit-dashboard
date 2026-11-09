@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { canAccessRestock, getRestockPlanner } from '../restockPlanner.js';
+import { canAccessRestock, getRestockPlanner, DEFAULT_RESTOCK_SETTINGS, validateRestockConfig } from '../restockPlanner.js';
 
 function fixture() {
   const stock = new DatabaseSync(':memory:');
@@ -29,11 +29,13 @@ test('planner calculates cover and replenishment using usable days and preserves
   assert.equal(product.avg, 2);
   assert.equal(product.daysLeft, 1);
   assert.equal(product.status, 'Critical');
-  assert.equal(product.orderQty, 14);
+  assert.equal(product.orderQty, 20);
+  assert.equal(product.safetyQty, 6);
   assert.equal(product.orderBy, '2026-01-31');
   assert.equal(product.zeroDays, 1);
   assert.equal(product.snapshotDays, 2);
   assert.equal(product.usableDays, 9);
+  assert.equal(product.lowData, true);
   assert.equal(product.abc, 'A');
   assert.equal(product.history.find((day) => day.date === '2026-01-20').qty, null);
   assert.equal(result.rows.find((row) => row.productId === 'unknown').status, 'Unknown');
@@ -51,9 +53,60 @@ test('stale and ambiguous data never generates recommendations', () => {
   stock.close(); sales.close();
 });
 
-test('planner access is limited to Bertha and superadmins', () => {
+test('fourteen usable days with every weekday clears the tentative label', () => {
+  const { stock, sales, match } = fixture();
+  const insert = sales.prepare('INSERT INTO sales_transactions VALUES (?, ?, ?, ?, ?)');
+  for (let day = 16; day <= 20; day++) insert.run('Store', 'Product', `2026-01-${day} 12:00:00`, 2, 20);
+  const row = getRestockPlanner(stock, sales, match, '2026-01-31').rows.find((r) => r.productId === 'p');
+  assert.equal(row.usableDays, 14);
+  assert.equal(row.lowData, false);
+  stock.close(); sales.close();
+});
+
+test('planner access is limited to Bertha even for superadmins', () => {
   assert.equal(canAccessRestock({ userId: 'user-bertha', role: 'owner' }), true);
-  assert.equal(canAccessRestock({ userId: 'other', role: 'superadmin' }), true);
+  assert.equal(canAccessRestock({ userId: 'other', role: 'superadmin' }), false);
   assert.equal(canAccessRestock({ userId: 'other', role: 'owner' }), false);
   assert.equal(canAccessRestock({ userId: 'other', role: 'admin' }), false);
+});
+
+test('weekday forecast and occasion adjustments change periodic order-up-to quantities', () => {
+  const { stock, sales, match } = fixture();
+  sales.exec("UPDATE sales_transactions SET qty=8 WHERE substr(sales_date_in,1,10)='2026-01-24'");
+  const config = { settings: { ...DEFAULT_RESTOCK_SETTINGS }, occasions: [{ name: 'Holiday', start: '2026-01-31', end: '2026-01-31', adjustment: 50 }] };
+  const row = getRestockPlanner(stock, sales, match, '2026-01-31', config).rows.find((r) => r.productId === 'p');
+  assert.equal(row.forecast[0].qty, 12);
+  assert.equal(row.forecast[1].qty, 2);
+  assert.equal(row.avg, 24 / 9);
+  assert.equal(row.safetyQty, 8);
+  assert.equal(row.orderQty, 38);
+  stock.close(); sales.close();
+});
+
+test('yearly revenue determines safety classification and dates outside the window do not count', () => {
+  const { stock, sales, match } = fixture();
+  stock.exec("INSERT INTO products VALUES ('q','Other',''); INSERT INTO store_stocks VALUES ('s','q',5,'2026-01-31')");
+  sales.exec("INSERT INTO sales_transactions VALUES ('Store','Other','2026-01-30 12:00',1,5), ('Store','Other','2025-03-01 12:00',1,5000), ('Store','Product','2024-01-01 12:00',1,90000)");
+  const rows = getRestockPlanner(stock, sales, match, '2026-01-31').rows;
+  assert.equal(rows.find((r) => r.productId === 'q').abc, 'A');
+  assert.equal(rows.find((r) => r.productId === 'p').abc, 'C');
+  stock.close(); sales.close();
+});
+
+test('settings and low-sales occasions lower the protection period target', () => {
+  const { stock, sales, match } = fixture();
+  const settings = { ...DEFAULT_RESTOCK_SETTINGS, reviewDays: 2, leadDays: 1, safetyA: 1 };
+  const config = { settings, occasions: [{ name: 'Quiet period', start: '2026-01-31', end: '2026-02-02', adjustment: -50 }] };
+  const row = getRestockPlanner(stock, sales, match, '2026-01-31', config).rows.find((r) => r.productId === 'p');
+  assert.deepEqual(row.forecast.slice(0, 3).map((day) => day.qty), [1, 1, 1]);
+  assert.equal(row.orderQty, 3);
+  stock.close(); sales.close();
+});
+
+test('settings validation rejects invalid numbers and impossible dates', () => {
+  const valid = { settings: { ...DEFAULT_RESTOCK_SETTINGS }, occasions: [] };
+  assert.equal(validateRestockConfig(valid).settings.reviewDays, 7);
+  assert.throws(() => validateRestockConfig({ ...valid, settings: { ...valid.settings, historyDays: 0 } }), /historyDays/);
+  assert.throws(() => validateRestockConfig({ ...valid, occasions: [{ name: 'Holiday', start: '2026-02-30', end: '2026-03-01', adjustment: 10 }] }), /valid start/);
+  assert.throws(() => validateRestockConfig({ ...valid, occasions: [{ name: 'Holiday', start: '2026-02-01', end: '2026-02-02', adjustment: -101 }] }), /adjustment/);
 });
