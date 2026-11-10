@@ -132,6 +132,32 @@ test('preserves sales numbers in CSV and applies ESB adjustments once per transa
   }
 });
 
+test('ceilings eligible payment portions at the transaction level and reconciles each breakdown', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const base = { sales_date_in: '2026-01-02 10:00:00', branch: 'TEBET', visit_purpose: 'DINE IN', menu_category: 'DRINK', menu_category_detail: 'BEER', qty: 1, price: 1000 };
+    insertSalesRows(db, { fileId: 'ceil', rows: [
+      { ...base, sales_number: 'exact', payment_method: 'CASH', menu: 'BEER', total_after_bill_discount: 1000 },
+      { ...base, sales_number: 'below', payment_method: 'QRIS BCA', menu: 'BEER', total_after_bill_discount: 1001 },
+      { ...base, sales_number: 'split', payment_method: 'CASH (1.001),CARD (2.000)', menu: 'BEER', total_after_bill_discount: 1001 },
+      { ...base, sales_number: 'split', payment_method: 'CASH (1.001),CARD (2.000)', menu: 'WINE', total_after_bill_discount: 2000 },
+    ] });
+    const result = getEsbAnalytics({ today: '2026-01-02' }, db);
+    assert.equal(result.adjustedRevenue, 7000);
+    assert.equal(result.roundingAdjustment, 1998);
+    assert.equal(result.transactionCount, 3);
+    assert.equal(result.totalUnitsSold, 4);
+    for (const breakdown of [result.payments, result.purposes, result.stores, result.topProductsSales]) {
+      assert.ok(Math.abs(breakdown.reduce((sum, item) => sum + item.sales, 0) - result.adjustedRevenue) < 0.0001);
+    }
+    assert.equal(result.topProductsLastWeek.length, 2);
+    assert.deepEqual(result.payments.map(({ name, sales }) => [name, Math.round(sales)]), [['CASH', 3000], ['QRIS BCA', 2000], ['CARD', 2000]]);
+  } finally {
+    db.close();
+  }
+});
+
 test('different sales numbers are not deduplicated across files', () => {
   const db = new DatabaseSync(':memory:');
   try {
