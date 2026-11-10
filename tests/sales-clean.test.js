@@ -6,6 +6,7 @@ import { parseLocalizedNumber, parseSalesCsv } from '../src/utils/salesCsv.js';
 import {
   allocatePaymentSales,
   CSV_COLUMNS,
+  getEsbAnalytics,
   getSalesFileCsv,
   initializeSalesDatabase,
   insertSalesRows,
@@ -60,7 +61,7 @@ test('parses the checked-in clean CSV with the selected schema and full rupiah v
 });
 
 test('preserves promo rows and computes subtotal from quantity and price', () => {
-  const csv = `${headings},Bill Discount\n2026-01-02T10:15:00,TEBET,DINE IN,CASH,PROMO,PROMO,BUY 1 GET 1,2,"40,000.00",1,5000,"75,000.00",1000`;
+  const csv = `${headings},Bill Discount\n2026-01-02T10:15:00,TEBET,DINE IN,CASH,PROMO,PROMO,BUY 1 GET 1,2,"40,000.00",1,5000,"75,000.00",,1000`;
   const [row] = parseSalesCsv(csv);
   assert.equal(row.sales_date_in, '2026-01-02 10:15:00');
   assert.equal(row.menu_category, 'PROMO');
@@ -86,6 +87,82 @@ test('allocates split-tender sales proportionally and keeps amounts balanced', (
     'QRIS BCA': 8000,
   });
   assert.equal(rows.reduce((sum, row) => sum + row.sales, 0), 10000);
+  const repeatedLines = allocatePaymentSales([
+    { payment_method: 'CASH (20.000),QRIS BCA (200.000)', sales: 120000 },
+    { payment_method: 'CASH (20.000),QRIS BCA (200.000)', sales: 100000 },
+  ]);
+  assert.deepEqual(Object.fromEntries(repeatedLines.map((row) => [row.payment_method, Math.round(row.sales)])), {
+    'QRIS BCA': 200000, CASH: 20000,
+  });
+});
+
+test('preserves sales numbers in CSV and applies ESB adjustments once per transaction', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const [parsed] = parseSalesCsv(`${headings}\n2026-01-02,TEBET,SHOPEEFOOD,"CASH (20.400),GRABMART (300.000)",DRINK,BEER,Beer,1,100,100,0,100,SALE-1`);
+    assert.equal(parsed.sales_number, 'SALE-1');
+    const line = { ...parsed, total_after_bill_discount: 160200 };
+    insertSalesRows(db, { fileId: 'one', rows: [
+      line, line,
+      { ...line, sales_number: 'SALE-2', visit_purpose: 'DINE IN', payment_method: 'QRIS BCA', total_after_bill_discount: 10500 },
+      { ...line, sales_number: '', total_after_bill_discount: 5000 },
+      { ...line, sales_number: 'BAD', payment_method: 'CASH (broken)', total_after_bill_discount: 100 },
+    ] });
+    const result = getEsbAnalytics({}, db);
+    assert.equal(result.transactionCount, 2);
+    assert.equal(result.baseRevenue, 330900);
+    assert.equal(result.roundingAdjustment, 100);
+    assert.equal(result.shopeeAdjustment, 3000);
+    assert.equal(result.adjustedRevenue, 334000);
+    assert.equal(result.missingRows, 1);
+    assert.equal(result.excludedOrders, 1);
+    assert.deepEqual(Object.fromEntries(result.payments.map((row) => [row.name, row.sales])), {
+      GRABMART: 300000, CASH: 20000, 'QRIS BCA': 11000,
+    });
+    assert.equal(parseSalesCsv(getSalesFileCsv('one', db).content)[0].sales_number, 'SALE-1');
+  } finally {
+    db.close();
+  }
+});
+
+test('different sales numbers are not deduplicated across files', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const row = { sales_date_in: '2026-01-02 10:15:00', branch: 'TEBET', menu: 'BEER', payment_method: 'CASH', qty: 1, price: 60000, total_after_bill_discount: 60000, sales_number: 'A' };
+    insertSalesRows(db, { fileId: 'one', rows: [row] });
+    const result = insertSalesRows(db, { fileId: 'two', rows: [{ ...row, sales_number: 'B' }] });
+    assert.equal(result.row_count, 1);
+    assert.equal(result.duplicate_count, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test('migrates existing sales rows and uses the first row date for complete transactions', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    db.exec('ALTER TABLE sales_transactions DROP COLUMN sales_number');
+    db.prepare(`INSERT INTO sales_imports (id, filename, uploaded_at) VALUES ('old', 'old.csv', '2026-01-02')`).run();
+    db.prepare(`INSERT INTO sales_transactions (import_id, source_row, sales_date_in, branch, visit_purpose, payment_method, menu_category, menu_category_detail, menu, qty, price, subtotal, discount, total_after_bill_discount) VALUES ('old', 0, '2026-01-02', 'TEBET', 'DINE IN', 'CASH', '', '', 'Beer', 1, 100, 100, 0, 100)`).run();
+    initializeSalesDatabase(db);
+    initializeSalesDatabase(db);
+    assert.equal(db.prepare('SELECT sales_number FROM sales_transactions').get().sales_number, '');
+    const line = { branch: 'TEBET', sales_number: 'overnight', visit_purpose: 'DINE IN', payment_method: 'CASH', menu: 'Beer', qty: 1, price: 600, total_after_bill_discount: 600 };
+    insertSalesRows(db, { fileId: 'new', rows: [
+      { ...line, sales_date_in: '2026-01-02 23:59:00' },
+      { ...line, sales_date_in: '2026-01-03 00:01:00' },
+    ] });
+    const first = getEsbAnalytics({ startDate: '2026-01-02', endDate: '2026-01-02' }, db);
+    const second = getEsbAnalytics({ startDate: '2026-01-03', endDate: '2026-01-03' }, db);
+    assert.equal(first.adjustedRevenue, 1000);
+    assert.equal(first.missingRows, 1);
+    assert.equal(second.transactionCount, 0);
+  } finally {
+    db.close();
+  }
 });
 
 test('stores only clean sales fields and always computes subtotal', () => {

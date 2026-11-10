@@ -19,6 +19,7 @@ const CSV_COLUMNS = [
   ['subtotal', 'Subtotal'],
   ['discount', 'Discount'],
   ['total_after_bill_discount', 'Total After Bill Discount'],
+  ['sales_number', 'Sales Number'],
 ];
 
 let database;
@@ -64,6 +65,9 @@ export function initializeSalesDatabase(db) {
     CREATE INDEX IF NOT EXISTS idx_clean_sales_import ON sales_transactions(import_id);
     CREATE INDEX IF NOT EXISTS idx_clean_sales_dedupe ON sales_transactions(sales_date_in, menu);
   `);
+  if (!db.prepare('PRAGMA table_info(sales_transactions)').all().some((column) => column.name === 'sales_number')) {
+    db.exec("ALTER TABLE sales_transactions ADD COLUMN sales_number TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 export function getSalesDb() {
@@ -126,6 +130,7 @@ function normalizeRow(row) {
     subtotal: quantity * price,
     discount,
     total_after_bill_discount: total,
+    sales_number: String(get('sales_number', 'salesNumber', 'Sales Number')).trim(),
   };
 }
 
@@ -151,8 +156,8 @@ export function insertSalesRows(db, {
     INSERT INTO sales_transactions (
       import_id, source_row, sales_date_in, branch, visit_purpose, payment_method,
       menu_category, menu_category_detail, menu, qty, price, subtotal, discount,
-      total_after_bill_discount
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      total_after_bill_discount, sales_number
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(import_id, source_row) DO UPDATE SET
       sales_date_in = excluded.sales_date_in,
       branch = excluded.branch,
@@ -165,13 +170,15 @@ export function insertSalesRows(db, {
       price = excluded.price,
       subtotal = excluded.subtotal,
       discount = excluded.discount,
-      total_after_bill_discount = excluded.total_after_bill_discount
+      total_after_bill_discount = excluded.total_after_bill_discount,
+      sales_number = excluded.sales_number
   `);
   // Match only other imports; repeated rows within this file can represent distinct sales.
   const findExisting = db.prepare(`
     SELECT id, price, subtotal, discount, total_after_bill_discount FROM sales_transactions
     WHERE sales_date_in = ? AND menu = ? AND branch = ? AND payment_method = ? AND qty = ?
       AND import_id <> ?
+      AND (sales_number = '' OR ? = '' OR sales_number = ?)
     ORDER BY (total_after_bill_discount = ?) DESC
     LIMIT 1
   `);
@@ -185,7 +192,7 @@ export function insertSalesRows(db, {
     rows.forEach((row, index) => {
       const clean = normalizeRow(row);
       const sourceRow = sourceRowOffset + index;
-      const existing = findExisting.get(clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, fileId, clean.total_after_bill_discount);
+      const existing = findExisting.get(clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, fileId, clean.sales_number, clean.sales_number, clean.total_after_bill_discount);
       if (existing) {
         const changed = Number(existing.price) !== Number(clean.price) || Number(existing.subtotal) !== Number(clean.subtotal) ||
           Number(existing.discount) !== Number(clean.discount) || Number(existing.total_after_bill_discount) !== Number(clean.total_after_bill_discount);
@@ -228,8 +235,8 @@ export function replaceLiveSalesWindow(db, { fileId = 'birmas-live', filename = 
     let sourceRow = db.prepare('SELECT COALESCE(MAX(source_row), -1) + 1 AS next FROM sales_transactions WHERE import_id = ?').get(fileId).next;
     const insert = db.prepare(`INSERT INTO sales_transactions (
       import_id, source_row, sales_date_in, branch, visit_purpose, payment_method,
-      menu_category, menu_category_detail, menu, qty, price, subtotal, discount, total_after_bill_discount
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      menu_category, menu_category_detail, menu, qty, price, subtotal, discount, total_after_bill_discount, sales_number
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const row of clean) insert.run(fileId, sourceRow++, ...CSV_COLUMNS.map(([key]) => row[key]));
     db.exec('COMMIT');
     return clean.length;
@@ -309,6 +316,81 @@ export function allocatePaymentSales(rows, dimensions = []) {
     }
   }
   return [...totals.values()].sort((a, b) => b.sales - a.sales);
+}
+
+export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
+  const { sql, values } = makeWhere({ storeId: filters.storeId, storeIds: filters.storeIds });
+  const rows = db.prepare(`SELECT branch, sales_number, sales_date_in, visit_purpose, payment_method,
+    total_after_bill_discount FROM sales_transactions ${sql}`).all(...values);
+  const orders = new Map();
+  const inRange = (date) => (!filters.startDate || date >= filters.startDate) && (!filters.endDate || date <= filters.endDate);
+  let rowCount = 0;
+  let missingRows = 0;
+  let missingRevenue = 0;
+  for (const row of rows) {
+    const date = row.sales_date_in.slice(0, 10);
+    if (!row.sales_number.trim()) {
+      if (inRange(date)) {
+        rowCount++;
+        missingRows++;
+        missingRevenue += row.total_after_bill_discount;
+      }
+      continue;
+    }
+    const key = JSON.stringify([row.branch, row.sales_number]);
+    if (!orders.has(key)) orders.set(key, { branch: row.branch, date, rowCount: 0, methods: new Set(), purposes: new Set(), sales: 0 });
+    const order = orders.get(key);
+    if (date < order.date) order.date = date;
+    order.rowCount++;
+    order.methods.add(row.payment_method.trim());
+    order.purposes.add(row.visit_purpose.trim().toUpperCase());
+    order.sales += row.total_after_bill_discount;
+  }
+  const payments = new Map();
+  const stores = new Map();
+  let baseRevenue = 0;
+  let roundingAdjustment = 0;
+  let shopeeAdjustment = 0;
+  let excludedOrders = 0;
+  let excludedRevenue = 0;
+  let transactionCount = 0;
+  for (const order of orders.values()) {
+    if (!inRange(order.date)) continue;
+    rowCount += order.rowCount;
+    const method = [...order.methods][0];
+    const matches = [...method.matchAll(/([^,]+?)\s*\(([^()]*)\)/g)];
+    const malformed = (method.includes(',') && !matches.length) ||
+      (method.includes('(') && (!matches.length ||
+        method.replace(/([^,]+?)\s*\(([^()]*)\)/g, '').replace(/[,\s]/g, '') !== '' ||
+        matches.some((match) => parseLocalizedNumber(match[2]) === null)));
+    if (order.methods.size !== 1 || order.purposes.size !== 1 || malformed) {
+      excludedOrders++;
+      excludedRevenue += order.sales;
+      continue;
+    }
+    transactionCount++;
+    const portions = allocatePaymentSales([{ payment_method: method, sales: order.sales }]);
+    let orderRounding = 0;
+    for (const portion of portions) {
+      const eligible = ['CASH', 'QRIS BCA'].includes(portion.payment_method.toUpperCase());
+      const rounded = eligible ? Math.sign(portion.sales) * Math.round(Math.abs(portion.sales) / 1000) * 1000 : portion.sales;
+      orderRounding += rounded - portion.sales;
+      payments.set(portion.payment_method, (payments.get(portion.payment_method) || 0) + rounded);
+    }
+    const fee = order.purposes.has('SHOPEEFOOD') ? 3000 : 0;
+    baseRevenue += order.sales;
+    roundingAdjustment += orderRounding;
+    shopeeAdjustment += fee;
+    stores.set(order.branch, (stores.get(order.branch) || 0) + order.sales + orderRounding + fee);
+  }
+  return {
+    rowCount, transactionCount,
+    missingRows, missingRevenue, excludedOrders, excludedRevenue,
+    baseRevenue, roundingAdjustment, shopeeAdjustment,
+    adjustedRevenue: baseRevenue + roundingAdjustment + shopeeAdjustment,
+    payments: [...payments].map(([name, sales]) => ({ name, sales })).sort((a, b) => b.sales - a.sales),
+    stores: [...stores].map(([name, sales]) => ({ name, sales })).sort((a, b) => b.sales - a.sales),
+  };
 }
 
 export function getSalesStores() {

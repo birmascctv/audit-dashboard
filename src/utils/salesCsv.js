@@ -110,6 +110,7 @@ export function parseSalesCsv(text) {
   if (records.length < 2) throw new Error('File contains no data rows or table header.');
 
   const headerMatchers = {
+    salesNumber: ['salesnumber', 'salesno', 'salesid'],
     salesDateIn: ['salesdatein', 'datein', 'datetime', 'waktu'],
     branch: ['branch', 'cabang', 'store', 'outlet', 'lokasi', 'location'],
     visitPurpose: ['visitpurpose', 'purpose', 'ordermode', 'channel', 'tujuan', 'kunjungan'],
@@ -178,6 +179,7 @@ export function parseSalesCsv(text) {
       subtotal: qty * price,
       discount: (parseLocalizedNumber(value('discount')) ?? 0) + (parseLocalizedNumber(value('billDiscount')) ?? 0),
       total_after_bill_discount: totalAfterBillDiscount,
+      sales_number: value('salesNumber').trim(),
     });
   }
 

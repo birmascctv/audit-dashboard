@@ -5,6 +5,7 @@ import StoreAuditUploadView from '../views/StoreAuditUploadView.vue';
 import AuditView from '../views/AuditView.vue';
 import AuditHistoryView from '../views/AuditHistoryView.vue';
 import SalesReportView from '../views/SalesReportView.vue';
+import EsbAnalyticsView from '../views/EsbAnalyticsView.vue';
 import RestockPlannerView from '../views/RestockPlannerView.vue';
 import LoginView from '../views/LoginView.vue';
 import { isSessionExpired } from '../services/authFetch.js';
@@ -70,6 +71,12 @@ const routes = [
     path: '/sales',
     name: 'SalesReport',
     component: SalesReportView,
+    meta: { requiresAuth: true, allowedRoles: ['admin', 'superadmin', 'owner'] },
+  },
+  {
+    path: '/sales/esb-analytics',
+    name: 'EsbAnalytics',
+    component: EsbAnalyticsView,
     meta: { requiresAuth: true, allowedRoles: ['admin', 'superadmin', 'owner'] },
   },
   {

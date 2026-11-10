@@ -2783,6 +2783,20 @@ async function startServer() {
     }
   });
 
+  app.get('/api/sales/esb-analytics', (req, res) => {
+    try {
+      const { storeId, startDate, endDate } = req.query;
+      if ((startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) ||
+          (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) ||
+          (startDate && endDate && startDate > endDate)) {
+        return res.status(400).json({ success: false, error: 'Invalid date range.' });
+      }
+      res.json({ success: true, analytics: salesDb.getEsbAnalytics({ storeId, startDate, endDate }) });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.get('/api/sales/time-series', (req, res) => {
     try {
       const filters = {

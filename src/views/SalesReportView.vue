@@ -43,7 +43,6 @@ const pivotDropdownOpen = ref(false);
 const selectedPivotProduct = ref('');
 const productChartStores = ref(null);
 const topProductsLastWeekStores = ref(null);
-const topProductsThisMonthStores = ref(null);
 const promotionChartStores = ref(null);
 const promotionChartPromos = ref(null);
 const promotionSearch = ref('');
@@ -642,12 +641,6 @@ function toggleTopProductsWeekStore(storeName) {
 function setTopProductsWeekStoresAll(event) {
   setChecklistAll(topProductsLastWeekStores, event.target.checked);
 }
-function toggleTopProductsMonthStore(storeName) {
-  toggleChecklistSelection(topProductsThisMonthStores, storeName, chartStoreOptions.value.map((store) => store.name));
-}
-function setTopProductsMonthStoresAll(event) {
-  setChecklistAll(topProductsThisMonthStores, event.target.checked);
-}
 function toggleProductChartStore(storeName) {
   toggleChecklistSelection(productChartStores, storeName, chartStoreOptions.value.map((store) => store.name));
 }
@@ -916,6 +909,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <router-link to="/sales/esb-analytics" class="rounded-xl border border-teal-700 px-4 py-2.5 text-xs font-bold text-teal-700 hover:bg-teal-50">ESB Analytics</router-link>
         <button type="button" class="flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-teal-800" @click="uploadOpen = true">
           <UploadCloud class="h-4 w-4" />Upload CSV
         </button>
@@ -989,7 +983,10 @@ onBeforeUnmount(() => {
       <p v-if="range.startDate || range.endDate" class="pb-2 text-xs text-slate-500">{{ fmtDate(range.startDate) || 'Beginning' }} – {{ fmtDate(range.endDate) || 'Latest' }}</p>
     </section>
 
-      <div class="flex items-center justify-end gap-2 text-xs font-semibold text-slate-600"><span>Stores (Last 7 Days &amp; This Month)</span>
+      <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div><h2 class="text-sm font-bold text-slate-900">Top 5 Products</h2><p class="text-xs text-slate-500">By quantity sold · Excludes package items</p></div>
+          <div class="flex items-center gap-2 text-xs font-semibold text-slate-600"><span>Stores</span>
             <details class="relative">
               <summary class="flex min-w-36 cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs hover:border-slate-300">
                 <span>{{ checklistLabel(topProductsLastWeekStores, 'All stores', 'stores') }}</span>
@@ -1006,13 +1003,13 @@ onBeforeUnmount(() => {
                 </label>
               </div>
             </details>
-      </div>
-      <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <article v-for="window in topProductWindows" :key="window.key" class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          </div>
+        </header>
+        <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <article v-for="window in topProductWindows" :key="window.key" class="rounded-xl border border-slate-100 p-3">
           <header class="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
             <div>
-              <h2 class="text-sm font-bold text-slate-900">Top 5 Products · {{ window.title }}</h2>
-              <p class="text-[11px] text-slate-500">Top 5 products by quantity sold · Excludes package items</p>
+              <h3 class="text-sm font-bold text-slate-900">{{ window.title }}</h3>
             </div>
           </header>
 <div class="overflow-x-auto rounded-xl border border-slate-100">
@@ -1056,6 +1053,7 @@ onBeforeUnmount(() => {
             </table>
           </div>
         </article>
+        </div>
       </section>
     <p v-if="error" class="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{{ error }}</p>
 
