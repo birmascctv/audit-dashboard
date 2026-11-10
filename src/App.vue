@@ -20,6 +20,7 @@ const pageNames = {
   '/stock-audit-crew': ['Audit', 'Stock Audit', 'Crew'],
   '/audit-records': ['Audit', 'Audit Records'],
   '/sales': ['Sales Report'],
+  '/sales/esb-analytics': ['Sales Report', 'ESB Analytics'],
   '/restock-planner': ['Restock Planner'],
 };
 const crumbs = computed(() => pageNames[route.path] || []);
@@ -64,10 +65,11 @@ onUnmounted(() => { clearInterval(expiryTimer); document.removeEventListener('ke
       v-if="route.path !== '/login'"
     />
 
-    <nav v-if="crumbs.length && route.path !== '/login'" class="max-w-[1560px] w-full mx-auto px-4 sm:px-8 lg:px-12 xl:px-16 pt-3 text-xs text-slate-500 hidden sm:flex items-center gap-1.5" aria-label="Breadcrumb">
+    <nav v-if="crumbs.length && route.path !== '/login'" class="max-w-[1560px] w-full mx-auto px-4 sm:px-8 lg:px-12 xl:px-16 pt-3 text-xs text-slate-500 items-center gap-1.5" :class="route.path === '/sales/esb-analytics' ? 'flex' : 'hidden sm:flex'" aria-label="Breadcrumb">
       <template v-for="(c, i) in crumbs" :key="c">
         <span v-if="i" class="text-slate-300">/</span>
-        <span :class="i === crumbs.length - 1 ? 'font-bold text-slate-800' : ''">{{ c }}</span>
+        <router-link v-if="route.path === '/sales/esb-analytics' && i === 0" to="/sales" class="hover:text-teal-700">{{ c }}</router-link>
+        <span v-else :aria-current="i === crumbs.length - 1 ? 'page' : undefined" :class="i === crumbs.length - 1 ? 'font-bold text-slate-800' : ''">{{ c }}</span>
       </template>
     </nav>
 

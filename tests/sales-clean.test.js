@@ -109,17 +109,23 @@ test('preserves sales numbers in CSV and applies ESB adjustments once per transa
       { ...line, sales_number: '', total_after_bill_discount: 5000 },
       { ...line, sales_number: 'BAD', payment_method: 'CASH (broken)', total_after_bill_discount: 100 },
     ] });
-    const result = getEsbAnalytics({}, db);
+    const result = getEsbAnalytics({ today: '2026-01-02' }, db);
     assert.equal(result.transactionCount, 2);
     assert.equal(result.baseRevenue, 330900);
-    assert.equal(result.roundingAdjustment, 100);
+    assert.equal(result.roundingAdjustment, 1100);
     assert.equal(result.shopeeAdjustment, 3000);
-    assert.equal(result.adjustedRevenue, 334000);
+    assert.equal(result.adjustedRevenue, 335000);
     assert.equal(result.missingRows, 1);
     assert.equal(result.excludedOrders, 1);
-    assert.deepEqual(Object.fromEntries(result.payments.map((row) => [row.name, row.sales])), {
-      GRABMART: 300000, CASH: 20000, 'QRIS BCA': 11000,
-    });
+    const payment = Object.fromEntries(result.payments.map((row) => [row.name, row.sales]));
+    assert.ok(Math.abs(payment.GRABMART - (300000 + 3000 * 300000 / 320400)) < 0.001);
+    assert.ok(Math.abs(payment.CASH - (21000 + 3000 * 20400 / 320400)) < 0.001);
+    assert.equal(payment['QRIS BCA'], 11000);
+    assert.ok(Math.abs(result.payments.reduce((sum, item) => sum + item.sales, 0) - result.adjustedRevenue) < 0.001);
+    assert.equal(result.purposes.find((item) => item.name === 'SHOPEEFOOD').sales, 324000);
+    assert.equal(result.topProductsQty[0].sales, 335000);
+    assert.equal(result.topProductsLastWeek[0].sales, 335000);
+    assert.equal(result.topProductsThisMonth[0].sales, 335000);
     assert.equal(parseSalesCsv(getSalesFileCsv('one', db).content)[0].sales_number, 'SALE-1');
   } finally {
     db.close();
@@ -135,6 +141,33 @@ test('different sales numbers are not deduplicated across files', () => {
     const result = insertSalesRows(db, { fileId: 'two', rows: [{ ...row, sales_number: 'B' }] });
     assert.equal(result.row_count, 1);
     assert.equal(result.duplicate_count, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test('ceilings apply per eligible tender after grouping lines and rankings honor their date windows', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const line = { branch: 'TEBET', visit_purpose: 'DINE IN', menu_category: 'DRINK', menu: 'BEER', qty: 1, price: 600, sales_date_in: '2026-01-02 10:00:00' };
+    insertSalesRows(db, { fileId: 'sales', rows: [
+      { ...line, sales_number: 'A', payment_method: 'CASH', total_after_bill_discount: 600 },
+      { ...line, sales_number: 'A', payment_method: 'CASH', total_after_bill_discount: 600 },
+      { ...line, sales_number: 'B', payment_method: 'QRIS BCA', total_after_bill_discount: 1000 },
+      { ...line, sales_number: 'C', payment_method: 'CARD', total_after_bill_discount: 1100, sales_date_in: '2025-12-25 10:00:00' },
+    ] });
+    const all = getEsbAnalytics({ today: '2026-01-02' }, db);
+    assert.equal(all.adjustedRevenue, 4100);
+    assert.equal(all.roundingAdjustment, 800);
+    assert.equal(all.topProductsQty[0].qty, 4);
+    assert.equal(all.topProductsLastWeek[0].qty, 3);
+    assert.equal(all.topProductsThisMonth[0].qty, 3);
+    assert.equal(all.topProductsLastWeek[0].sales, 3000);
+    const filtered = getEsbAnalytics({ today: '2026-01-02', startDate: '2025-12-25', endDate: '2025-12-25' }, db);
+    assert.equal(filtered.adjustedRevenue, 1100);
+    assert.equal(filtered.topProductsQty[0].qty, 1);
+    assert.equal(filtered.topProductsLastWeek[0].qty, 3);
   } finally {
     db.close();
   }
@@ -157,7 +190,7 @@ test('migrates existing sales rows and uses the first row date for complete tran
     ] });
     const first = getEsbAnalytics({ startDate: '2026-01-02', endDate: '2026-01-02' }, db);
     const second = getEsbAnalytics({ startDate: '2026-01-03', endDate: '2026-01-03' }, db);
-    assert.equal(first.adjustedRevenue, 1000);
+    assert.equal(first.adjustedRevenue, 2000);
     assert.equal(first.missingRows, 1);
     assert.equal(second.transactionCount, 0);
   } finally {

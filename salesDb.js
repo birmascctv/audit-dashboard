@@ -321,9 +321,15 @@ export function allocatePaymentSales(rows, dimensions = []) {
 export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
   const { sql, values } = makeWhere({ storeId: filters.storeId, storeIds: filters.storeIds });
   const rows = db.prepare(`SELECT branch, sales_number, sales_date_in, visit_purpose, payment_method,
-    total_after_bill_discount FROM sales_transactions ${sql}`).all(...values);
+    menu, menu_category, menu_category_detail, qty, total_after_bill_discount
+    FROM sales_transactions ${sql}`).all(...values);
   const orders = new Map();
   const inRange = (date) => (!filters.startDate || date >= filters.startDate) && (!filters.endDate || date <= filters.endDate);
+  const today = filters.today || jakartaToday();
+  const weekStart = new Date(`${today}T00:00:00Z`);
+  weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+  const weekDate = weekStart.toISOString().slice(0, 10);
+  const monthDate = `${today.slice(0, 8)}01`;
   let rowCount = 0;
   let missingRows = 0;
   let missingRevenue = 0;
@@ -338,25 +344,53 @@ export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
       continue;
     }
     const key = JSON.stringify([row.branch, row.sales_number]);
-    if (!orders.has(key)) orders.set(key, { branch: row.branch, date, rowCount: 0, methods: new Set(), purposes: new Set(), sales: 0 });
+    if (!orders.has(key)) orders.set(key, { branch: row.branch, date, rows: [], methods: new Set(), purposes: new Set(), sales: 0 });
     const order = orders.get(key);
     if (date < order.date) order.date = date;
-    order.rowCount++;
+    order.rows.push(row);
     order.methods.add(row.payment_method.trim());
     order.purposes.add(row.visit_purpose.trim().toUpperCase());
     order.sales += row.total_after_bill_discount;
   }
   const payments = new Map();
   const stores = new Map();
+  const purposes = new Map();
+  const products = new Map();
+  const weekProducts = new Map();
+  const monthProducts = new Map();
+  const addAmount = (map, name, amount) => map.set(name, (map.get(name) || 0) + amount);
+  const addProduct = (map, row, sales) => {
+    const category = row.menu_category.toUpperCase();
+    const detail = row.menu_category_detail.toUpperCase();
+    const name = row.menu.trim();
+    if (!name || name.toUpperCase().endsWith('(PACKAGE)') || category.includes('PROMO') || detail.includes('PROMO')) return;
+    const current = map.get(name) || { name, qty: 0, sales: 0, qtyEligible: 0, qtyEligibleSales: 0 };
+    current.qty += row.qty;
+    current.sales += sales;
+    if (!['LAIN LAIN', 'MIXER', 'SNACK'].includes(category.trim().replace(/-/g, ' '))) {
+      current.qtyEligible += row.qty;
+      current.qtyEligibleSales += sales;
+    }
+    map.set(name, current);
+  };
+  const productList = (map, metric, limit) => [...map.values()]
+    .map((item) => metric === 'qty' ? { ...item, qty: item.qtyEligible, sales: item.qtyEligibleSales } : item)
+    .filter((item) => metric !== 'qty' || item.qty !== 0)
+    .sort((a, b) => b[metric] - a[metric] || b.sales - a.sales || a.name.localeCompare(b.name))
+    .slice(0, limit);
   let baseRevenue = 0;
   let roundingAdjustment = 0;
   let shopeeAdjustment = 0;
   let excludedOrders = 0;
   let excludedRevenue = 0;
   let transactionCount = 0;
+  let totalUnitsSold = 0;
   for (const order of orders.values()) {
-    if (!inRange(order.date)) continue;
-    rowCount += order.rowCount;
+    const selected = inRange(order.date);
+    const inWeek = order.date >= weekDate && order.date <= today;
+    const inMonth = order.date >= monthDate && order.date <= today;
+    if (!selected && !inWeek && !inMonth) continue;
+    if (selected) rowCount += order.rows.length;
     const method = [...order.methods][0];
     const matches = [...method.matchAll(/([^,]+?)\s*\(([^()]*)\)/g)];
     const malformed = (method.includes(',') && !matches.length) ||
@@ -364,32 +398,59 @@ export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
         method.replace(/([^,]+?)\s*\(([^()]*)\)/g, '').replace(/[,\s]/g, '') !== '' ||
         matches.some((match) => parseLocalizedNumber(match[2]) === null)));
     if (order.methods.size !== 1 || order.purposes.size !== 1 || malformed) {
-      excludedOrders++;
-      excludedRevenue += order.sales;
+      if (selected) {
+        excludedOrders++;
+        excludedRevenue += order.sales;
+      }
       continue;
     }
-    transactionCount++;
     const portions = allocatePaymentSales([{ payment_method: method, sales: order.sales }]);
     let orderRounding = 0;
     for (const portion of portions) {
       const eligible = ['CASH', 'QRIS BCA'].includes(portion.payment_method.toUpperCase());
-      const rounded = eligible ? Math.sign(portion.sales) * Math.round(Math.abs(portion.sales) / 1000) * 1000 : portion.sales;
+      const rounded = eligible ? Math.ceil(portion.sales / 1000 - 1e-10) * 1000 : portion.sales;
       orderRounding += rounded - portion.sales;
-      payments.set(portion.payment_method, (payments.get(portion.payment_method) || 0) + rounded);
+      portion.adjusted = rounded;
     }
     const fee = order.purposes.has('SHOPEEFOOD') ? 3000 : 0;
-    baseRevenue += order.sales;
-    roundingAdjustment += orderRounding;
-    shopeeAdjustment += fee;
-    stores.set(order.branch, (stores.get(order.branch) || 0) + order.sales + orderRounding + fee);
+    const adjustment = orderRounding + fee;
+    if (selected) {
+      transactionCount++;
+      baseRevenue += order.sales;
+      roundingAdjustment += orderRounding;
+      shopeeAdjustment += fee;
+      addAmount(stores, order.branch, order.sales + adjustment);
+      addAmount(purposes, [...order.purposes][0] || 'Unspecified', order.sales + adjustment);
+      const paymentWeight = portions.reduce((sum, portion) => sum + Math.abs(portion.sales), 0);
+      for (const portion of portions) {
+        const share = paymentWeight ? Math.abs(portion.sales) / paymentWeight : 1 / portions.length;
+        addAmount(payments, portion.payment_method, portion.adjusted + fee * share);
+      }
+    }
+    const rowWeight = order.rows.reduce((sum, row) => sum + Math.abs(row.total_after_bill_discount), 0);
+    for (const row of order.rows) {
+      const share = rowWeight ? Math.abs(row.total_after_bill_discount) / rowWeight : 1 / order.rows.length;
+      const sales = row.total_after_bill_discount + adjustment * share;
+      if (selected) {
+        totalUnitsSold += row.qty;
+        addProduct(products, row, sales);
+      }
+      if (inWeek) addProduct(weekProducts, row, sales);
+      if (inMonth) addProduct(monthProducts, row, sales);
+    }
   }
   return {
     rowCount, transactionCount,
     missingRows, missingRevenue, excludedOrders, excludedRevenue,
-    baseRevenue, roundingAdjustment, shopeeAdjustment,
+    baseRevenue, roundingAdjustment, shopeeAdjustment, totalUnitsSold,
     adjustedRevenue: baseRevenue + roundingAdjustment + shopeeAdjustment,
     payments: [...payments].map(([name, sales]) => ({ name, sales })).sort((a, b) => b.sales - a.sales),
     stores: [...stores].map(([name, sales]) => ({ name, sales })).sort((a, b) => b.sales - a.sales),
+    purposes: [...purposes].map(([name, sales]) => ({ name, sales })).sort((a, b) => b.sales - a.sales),
+    topProductsQty: productList(products, 'qty', 10),
+    topProductsSales: productList(products, 'sales', 10),
+    topProductsLastWeek: productList(weekProducts, 'qty', 5),
+    topProductsThisMonth: productList(monthProducts, 'qty', 5),
   };
 }
 
