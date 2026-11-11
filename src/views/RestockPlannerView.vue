@@ -22,17 +22,20 @@ const occasions = ref([]);
 const saving = ref(false);
 const configMessage = ref('');
 const configError = ref('');
+const productMin = ref('');
+const productLead = ref('');
+const productError = ref('');
+const productSaving = ref(false);
 const settingFields = [
   { key: 'reviewDays', label: 'Review period (days)', min: 1, max: 30 },
   { key: 'leadDays', label: 'Supplier lead time (days)', min: 1, max: 14 },
-  { key: 'historyDays', label: 'Recent sales window (days)', min: 14, max: 90 },
   { key: 'safetyA', label: 'A safety stock (days)', min: 0, max: 30 },
   { key: 'safetyB', label: 'B safety stock (days)', min: 0, max: 30 },
   { key: 'safetyC', label: 'C safety stock (days)', min: 0, max: 30 },
   { key: 'overstockDays', label: 'Overstock threshold (days)', min: 4, max: 365 },
 ];
-const statuses = ['Critical', 'Order', 'OK', 'Overstock', 'Unknown'];
-const colors = { Critical: 'bg-red-100 text-red-700', Order: 'bg-orange-100 text-orange-700', OK: 'bg-green-100 text-green-700', Overstock: 'bg-blue-100 text-blue-700', Unknown: 'bg-slate-100 text-slate-600' };
+const statuses = ['Critical', 'Soon', 'OK', 'Unknown'];
+const colors = { Critical: 'bg-red-100 text-red-700', Soon: 'bg-amber-100 text-amber-700', OK: 'bg-green-100 text-green-700', Unknown: 'bg-slate-100 text-slate-600' };
 const stores = computed(() => [...new Set(data.value.rows.map((r) => r.store))].sort());
 const categories = computed(() => [...new Set(data.value.rows.map((r) => r.category))].sort());
 const scopedRows = computed(() => data.value.rows.filter((r) =>
@@ -45,7 +48,9 @@ const pages = computed(() => Math.max(1, Math.ceil(filtered.value.length / 25)))
 const visible = computed(() => filtered.value.slice((page.value - 1) * 25, page.value * 25));
 const watchRows = computed(() => filtered.value.filter((r) => r.daysLeft !== null).slice().sort((a, b) => a.daysLeft - b.daysLeft).slice(0, 10));
 const maxWatch = computed(() => Math.max(1, ...watchRows.value.map((r) => r.daysLeft)));
-const overstock = computed(() => filtered.value.filter((r) => r.status === 'Overstock'));
+const overstock = computed(() => filtered.value.filter((r) => r.daysLeft != null && r.daysLeft > data.value.settings.overstockDays));
+const inventoryValue = computed(() => scopedRows.value.length && scopedRows.value.every((r) => r.stockValue !== null)
+  ? scopedRows.value.reduce((sum, r) => sum + r.stockValue, 0) : null);
 const missingRecent = computed(() => {
   const missing = new Map();
   for (const row of scopedRows.value) {
@@ -69,11 +74,16 @@ const quality = (row) => {
   return warnings.join(' · ');
 };
 watch([store, category, abcClass, status, ordersOnly], () => { page.value = 1; overstockPage.value = 1; });
+watch(selected, (row) => {
+  productMin.value = row?.minStock ?? '';
+  productLead.value = row?.leadOverride ?? '';
+  productError.value = '';
+});
 
 const chart = computed(() => {
   if (!selected.value) return { labels: [], datasets: [] };
   const row = selected.value;
-  const future = row.forecast.slice(0, 14);
+  const future = row.forecast.slice(0, 90);
   let stock = row.stock;
   const predictedStock = future.map((day) => {
     if (stock == null || day.qty == null) return null;
@@ -88,32 +98,49 @@ const chart = computed(() => {
       { label: 'Forecast sales', data: [...row.history.map(() => null), ...future.map((item) => item.qty)], borderColor: '#ea580c', yAxisID: 'sales', borderDash: [6, 4], pointRadius: 0 },
       { label: 'Observed stock snapshots', data: [...row.history.map((item) => item.stock), ...future.map(() => null)], borderColor: '#2563eb', yAxisID: 'stock', pointRadius: 2, spanGaps: false },
       { label: 'Projected stock before sales', data: [...row.history.map(() => null), ...predictedStock], borderColor: '#2563eb', yAxisID: 'stock', borderDash: [6, 4], pointRadius: 0 },
+      { label: 'Minimum stock', data: [...row.history.map(() => null), ...future.map(() => row.minStock)], borderColor: '#dc2626', yAxisID: 'stock', borderDash: [3, 3], pointRadius: 0 },
+      { label: 'Earliest arrival if ordered today', data: [...row.history.map(() => null), ...future.map((day, i) => i === row.leadDays ? predictedStock[i] : null)], borderColor: '#7c3aed', backgroundColor: '#7c3aed', yAxisID: 'stock', showLine: false, pointRadius: 6 },
+      { label: 'Predicted stockout', data: [...row.history.map(() => null), ...future.map((day) => day.date === row.stockoutDate ? 0 : null)], borderColor: '#dc2626', backgroundColor: '#dc2626', yAxisID: 'stock', showLine: false, pointRadius: 6 },
     ],
   };
 });
 
 function exportCsv() {
-  const headings = ['Product', 'Store', 'Category', 'Class', 'Stock', 'Avg/day', 'Days left', 'Target', 'Order qty', 'Status', 'Data quality'];
+  const headings = ['Product', 'SKU', 'Store', 'Category', 'Class', 'Stock', 'Minimum stock', 'Lead days', 'Avg/day (30d)', 'Avg/day (90d)', 'Days left', 'Stockout date', 'Order by', 'Target', 'Order qty', 'Status', 'Data quality'];
   const quote = (value) => {
     const text = String(value ?? '');
     return `"${(/^[\s]*[=+\-@\t\r]/.test(text) ? "'" : '') + text.replace(/"/g, '""')}"`;
   };
-  const lines = filtered.value.filter((r) => r.orderQty > 0).map((r) => [r.product, r.store, r.category, r.abc, r.stock, r.avg, r.daysLeft, r.target, r.orderQty, r.status, quality(r) ? `${quality(r)} - tentative` : 'Available'].map(quote).join(','));
+  const lines = filtered.value.filter((r) => r.orderQty > 0).map((r) => [r.product, r.sku, r.store, r.category, r.abc, r.stock, r.minStock, r.leadDays, r.avg30, r.avg90, r.daysLeft, r.stockoutDate, r.orderBy, r.target, r.orderQty, r.status, quality(r) ? `${quality(r)} - tentative` : 'Available'].map(quote).join(','));
   const blob = new Blob(['\ufeffsep=,\r\n', headings.map(quote).join(','), '\r\n', lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'restock-orders.csv';
+  link.download = 'purchasing-orders.csv';
   link.click();
   URL.revokeObjectURL(url);
 }
 
 async function loadPlanner() {
-  const response = await authFetchJson('/api/restock-planner');
+  const response = await authFetchJson('/api/purchasing');
   data.value = response;
   settings.value = { ...response.settings };
   occasions.value = response.occasions.map((event) => ({ ...event }));
   selected.value = null;
+}
+async function saveProductSettings() {
+  productSaving.value = true;
+  productError.value = '';
+  const id = { storeId: selected.value.storeId, productId: selected.value.productId };
+  try {
+    await authFetchJson('/api/purchasing/product-settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...id, minStock: productMin.value === '' ? null : Number(productMin.value), leadDays: productLead.value === '' ? null : Number(productLead.value) }),
+    });
+    await loadPlanner();
+    selected.value = data.value.rows.find((row) => row.storeId === id.storeId && row.productId === id.productId) || null;
+  } catch (err) { productError.value = err.message; }
+  finally { productSaving.value = false; }
 }
 async function saveConfig() {
   saving.value = true;
@@ -141,12 +168,12 @@ onMounted(async () => {
   <div class="space-y-5">
     <header class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-extrabold text-slate-900">Restock Planner</h1>
+        <h1 class="text-2xl font-extrabold text-slate-900">Purchasing</h1>
         <p v-if="data.settings" class="mt-1 text-sm text-slate-600">Stock last pulled (oldest): {{ oldestStock ? `${fmtJakarta(oldestStock)} WIB` : 'unknown' }} · Sales last seen (oldest store): {{ oldestSales || 'unknown' }}</p>
       </div>
       <button v-if="settings" type="button" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold" @click="settingsOpen = true">Settings</button>
     </header>
-    <p v-if="loading" class="rounded-xl bg-white p-5">Loading planner…</p>
+    <p v-if="loading" class="rounded-xl bg-white p-5">Loading purchasing data…</p>
     <p v-else-if="error" class="rounded-xl bg-red-50 p-5 text-red-700">{{ error }}</p>
     <template v-else>
       <div class="flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-white p-4 text-xs">
@@ -159,28 +186,29 @@ onMounted(async () => {
         <strong>Recent store sales data is missing.</strong> Check the weekend upload before ordering; estimates may be incomplete. {{ missingRecent.join(' · ') }}
       </div>
       <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div v-for="name in statuses.slice(0, 4)" :key="name" class="rounded-xl p-4" :class="colors[name]">
-          <div class="text-sm font-bold">{{ name }}</div>
-          <div class="mt-1 text-3xl font-extrabold">{{ scopedRows.filter((r) => r.status === name).length }}</div>
-        </div>
-        <p class="text-xs text-slate-500">Cards reflect Store, Category and Class; Status and “Only suggested orders” filter the tables.</p>
+        <div class="rounded-xl bg-red-100 p-4 text-red-700"><div class="text-sm font-bold">Below minimum stock</div><div class="mt-1 text-3xl font-extrabold">{{ scopedRows.filter(r => r.belowMin).length }}</div><p class="text-xs">{{ scopedRows.filter(r => r.minStock == null).length }} minimums unset</p></div>
+        <div class="rounded-xl bg-amber-100 p-4 text-amber-700"><div class="text-sm font-bold">Run out within 7 days</div><div class="mt-1 text-3xl font-extrabold">{{ scopedRows.filter(r => r.daysLeft != null && r.daysLeft <= 7).length }}</div><p class="text-xs">{{ scopedRows.filter(r => r.daysLeft == null).length }} unknown</p></div>
+        <div class="rounded-xl bg-green-100 p-4 text-green-700"><div class="text-sm font-bold">Need purchase order</div><div class="mt-1 text-3xl font-extrabold">{{ scopedRows.filter(r => r.orderQty > 0).length }}</div><p class="text-xs">Positive suggested quantity</p></div>
+        <div class="rounded-xl bg-blue-100 p-4 text-blue-700"><div class="text-sm font-bold">Total inventory value</div><div class="mt-1 text-2xl font-extrabold">{{ inventoryValue == null ? 'Unavailable' : `Rp ${number(inventoryValue)}` }}</div><p class="text-xs">Requires value for all stocked items</p></div>
       </div>
+      <p class="text-xs text-slate-500">Cards reflect Store, Category and Class; Status and “Only suggested orders” filter the tables. Minimum-stock counts exclude unset minimums.</p>
       <section class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div><h2 class="font-bold">Order list</h2><p class="text-xs text-slate-500">Critical ≤ 1 day · Order &gt; 1–3 days · Overstock &gt; {{ data.settings.overstockDays }} days · {{ scopedRows.filter(r => r.status === 'Unknown').length }} unknown</p></div>
+          <div><h2 class="font-bold">Reorder recommendations</h2><p class="text-xs text-slate-500">Critical &lt; 7 days · Soon 7–14 days · OK &gt; 14 days · {{ scopedRows.filter(r => r.status === 'Unknown').length }} unknown</p></div>
           <div class="flex flex-wrap items-center gap-3"><label class="flex items-center gap-2 text-xs"><input v-model="ordersOnly" type="checkbox"> Only suggested orders</label><button class="rounded-lg bg-teal-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50" :disabled="!filtered.some(r => r.orderQty > 0)" @click="exportCsv">Export order CSV</button></div>
         </div>
-        <p class="mb-3 text-xs text-slate-500">Target = forecast during review + lead time + safety stock. Quantity = target minus ESB stock, rounded up. “Order” indicates 1–3 days of cover; OK items can also have a positive weekly top-up. Export includes filtered positive quantities only.</p>
-        <p class="mb-3 text-xs text-slate-500">Days without store sales or with an observed zero-stock snapshot are excluded from demand estimates. Fewer than 14 usable days or missing weekdays are Low data; estimates are tentative.</p>
+        <p class="mb-3 text-xs text-slate-500">Target = greater of minimum stock or forecast during review + lead time + safety stock. Quantity = target minus ESB stock, rounded up. Export includes filtered positive quantities only.</p>
+        <p class="mb-3 text-xs text-slate-500">30-day average drives the forecast; occasions adjust future daily demand. Days without store sales or with an observed zero-stock snapshot are excluded. Fewer than 14 usable days or a missing weekday are Low data; estimates are tentative.</p>
         <p class="mb-3 text-xs text-amber-800">Incoming orders and transfers are not deducted. Check stock units, recent sales and tentative estimates before ordering.</p>
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[900px] text-left text-xs">
-            <thead class="bg-slate-50 text-slate-600"><tr><th v-for="heading in ['Product', 'Store', 'Class', 'Stock', 'Avg/day', 'Days left', 'Target', 'Order qty', 'Status']" :key="heading" class="p-3">{{ heading }}</th></tr></thead>
+          <table class="w-full min-w-[1400px] text-left text-xs">
+            <thead class="bg-slate-50 text-slate-600"><tr><th v-for="heading in ['Product / SKU', 'Store', 'Class', 'Stock', 'Min', 'Lead', 'Avg/day 30d', 'Avg/day 90d', 'Days left', 'Stockout', 'Order by', 'Target', 'Order qty', 'Status']" :key="heading" class="p-3">{{ heading }}</th></tr></thead>
             <tbody><tr v-for="row in visible" :key="`${row.storeId}-${row.productId}`" class="cursor-pointer border-t hover:bg-teal-50" tabindex="0" @click="selected = row" @keydown.enter="selected = row" @keydown.space.prevent="selected = row">
-              <td class="p-3 font-semibold">{{ row.product }}<span v-if="row.reason" class="block font-normal text-slate-500">{{ row.reason }}</span><span v-else-if="quality(row)" class="block font-normal text-amber-700">{{ quality(row) }} · tentative</span></td><td class="p-3">{{ row.store }}</td><td class="p-3"><span v-if="row.abc" class="rounded bg-slate-100 px-2 py-1 font-bold">{{ row.abc }}</span><span v-else>—</span></td><td class="p-3">{{ number(row.stock) }}</td><td class="p-3">{{ number(row.avg) }}</td><td class="p-3">{{ number(row.daysLeft) }}</td><td class="p-3">{{ number(row.target) }}</td><td class="p-3 font-bold">{{ number(row.orderQty) }}</td><td class="p-3"><span class="rounded-full px-2 py-1 font-bold" :class="colors[row.status]">{{ row.status }}</span></td>
-            </tr><tr v-if="!visible.length"><td colspan="9" class="p-5 text-center text-slate-500">No products for these filters.</td></tr></tbody>
+              <td class="p-3 font-semibold">{{ row.product }}<span class="block font-normal text-slate-500">{{ row.sku || 'SKU unavailable' }}</span><span v-if="row.reason" class="block font-normal text-slate-500">{{ row.reason }}</span><span v-else-if="quality(row)" class="block font-normal text-amber-700">{{ quality(row) }} · tentative</span></td><td class="p-3">{{ row.store }}</td><td class="p-3">{{ row.abc || '—' }}</td><td class="p-3">{{ number(row.stock) }}</td><td class="p-3">{{ number(row.minStock) }}</td><td class="p-3">{{ row.leadDays }}d</td><td class="p-3">{{ number(row.avg30) }}</td><td class="p-3">{{ number(row.avg90) }}</td><td class="p-3 font-bold">{{ number(row.daysLeft) }}</td><td class="p-3">{{ row.stockoutDate || '—' }}</td><td class="p-3">{{ !row.orderBy ? '—' : row.orderBy < data.today ? `Overdue (${row.orderBy})` : row.orderBy === data.today ? 'Today' : row.orderBy }}</td><td class="p-3">{{ number(row.target) }}</td><td class="p-3 font-bold">{{ number(row.orderQty) }}</td><td class="p-3"><span class="rounded-full px-2 py-1 font-bold" :class="colors[row.status]">{{ row.status }}</span></td>
+            </tr><tr v-if="!visible.length"><td colspan="14" class="p-5 text-center text-slate-500">No products for these filters.</td></tr></tbody>
           </table>
         </div>
+        <section class="rounded-xl border bg-white p-4"><h2 class="font-bold">Purchase history</h2><p class="mt-1 text-sm text-slate-600">Purchase orders, suppliers, received quantities and inventory lifetime are unavailable. CSV upload will be added when the purchase-order format is provided.</p></section>
         <div class="mt-3 flex items-center justify-between text-xs text-slate-600"><span>Page {{ page }} of {{ pages }} · {{ filtered.length }} product/store entries</span><div class="space-x-2"><button :disabled="page <= 1" class="rounded border px-3 py-1 disabled:opacity-40" @click="page--">Previous</button><button :disabled="page >= pages" class="rounded border px-3 py-1 disabled:opacity-40" @click="page++">Next</button></div></div>
       </section>
       <div class="grid gap-4 lg:grid-cols-2">
@@ -191,10 +219,12 @@ onMounted(async () => {
     <Teleport to="body">
       <div v-if="selected" class="fixed inset-0 z-[100] bg-slate-950/60" @click.self="selected = null" @keydown.esc="selected = null">
         <aside role="dialog" aria-modal="true" aria-label="Product sales and forecast" class="ml-auto h-full w-full max-w-3xl overflow-y-auto bg-white p-5 shadow-xl">
-          <div class="flex justify-between gap-4"><div><h2 class="font-bold">{{ selected.product }} · {{ selected.store }}</h2><p class="text-xs text-slate-500">Stock pulled: {{ selected.lastSynced ? `${fmtJakarta(selected.lastSynced)} WIB` : 'unknown' }} · Sales last seen: {{ selected.latestSale || 'unknown' }} · Usable days: {{ selected.usableDays }}/{{ data.settings.historyDays }}</p></div><button class="self-start rounded border px-3 py-1 text-sm" @click="selected = null">Close</button></div>
-          <p class="my-3 text-xs text-slate-600">Class {{ selected.abc || 'unclassified' }} · Target {{ number(selected.target) }} · Safety stock {{ number(selected.safetyQty) }} · Suggested order {{ number(selected.orderQty) }}</p>
+          <div class="flex justify-between gap-4"><div><h2 class="font-bold">{{ selected.product }} · {{ selected.store }}</h2><p class="text-xs text-slate-500">Stock pulled: {{ selected.lastSynced ? `${fmtJakarta(selected.lastSynced)} WIB` : 'unknown' }} · Sales last seen: {{ selected.latestSale || 'unknown' }} · Usable days: {{ selected.usableDays }}/30</p></div><button class="self-start rounded border px-3 py-1 text-sm" @click="selected = null">Close</button></div>
+          <p class="my-3 text-xs text-slate-600">ABC {{ selected.abc || 'unclassified' }} · Target {{ number(selected.target) }} · Safety stock {{ number(selected.safetyQty) }} · Suggested order {{ number(selected.orderQty) }} · 90-day usable sales days {{ selected.usable90 }}/90</p>
+          <p class="my-3 text-xs text-slate-600">Annual inventory turnover: {{ selected.turnover == null ? 'Unavailable (requires a full year of daily stock snapshots and sales coverage)' : `${number(selected.turnover)} turns/year (daily snapshot estimate)` }} · Movement: {{ selected.movementClass || 'Unavailable' }}. Inventory lifetime requires purchase and receipt history.</p>
+          <form class="my-4 flex flex-wrap items-end gap-3 rounded-lg bg-slate-50 p-3" @submit.prevent="saveProductSettings"><label class="text-xs font-semibold">Minimum stock (optional)<input v-model="productMin" type="number" min="0" max="1000000000" step="any" class="mt-1 block w-40 rounded border p-2"></label><label class="text-xs font-semibold">Lead time in days (blank = global)<input v-model="productLead" type="number" min="1" max="365" step="1" class="mt-1 block w-40 rounded border p-2"></label><button :disabled="productSaving" class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Save product settings</button><span v-if="productError" class="text-xs text-red-700">{{ productError }}</span></form>
           <p v-if="selected.reason || quality(selected)" class="my-2 text-xs text-amber-700">{{ selected.reason || `${quality(selected)} · tentative` }}</p>
-          <p class="my-3 text-xs text-slate-500">Sales forecast uses weekday averages and occasion adjustments. Stock projections assume no deliveries or transfers. Snapshots are observations, not proof of a full day out of stock; {{ selected.zeroDays }} zero-stock observations in {{ selected.snapshotDays }} snapshot days.</p>
+          <p class="my-3 text-xs text-slate-500">Forecast uses the 30-day daily average and occasion adjustments; no seasonal trend is inferred without validated data. Stock projection assumes no deliveries or transfers. The arrival marker is hypothetical if ordered today, not an actual purchase order. Snapshots are observations, not proof of a full day out of stock; {{ selected.zeroDays }} zero-stock observations in {{ selected.snapshotDays }} snapshot days.</p>
           <div class="h-80"><Line :data="chart" :options="{ responsive: true, maintainAspectRatio: false, scales: { sales: { position: 'left', beginAtZero: true, title: { display: true, text: 'Sales / day' } }, stock: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, title: { display: true, text: 'Stock' } } } }" /></div>
         </aside>
       </div>
@@ -202,7 +232,7 @@ onMounted(async () => {
         <div role="dialog" aria-modal="true" aria-label="Planner settings" class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white p-5 shadow-xl">
           <div class="flex items-center justify-between gap-3"><h2 class="font-bold">Planner settings and special occasions</h2><button type="button" class="rounded border px-3 py-1 text-sm" @click="settingsOpen = false">Close</button></div>
           <form class="mt-4 space-y-4" @submit.prevent="saveConfig">
-            <p class="text-xs text-slate-600">Global settings apply to all stores and products. ABC uses matched revenue over the last 365 days. Changes take effect after saving.</p>
+            <p class="text-xs text-slate-600">Global settings apply unless overridden per product/store. Demand uses a fixed 30-day window; ABC uses matched revenue over the last 365 days. Changes take effect after saving.</p>
             <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><label v-for="field in settingFields" :key="field.key" class="text-xs font-semibold text-slate-700">{{ field.label }}<input v-model.number="settings[field.key]" type="number" :min="field.min" :max="field.max" step="1" required class="mt-1 block w-full rounded-lg border border-slate-300 p-2"></label></div>
             <div class="border-t pt-4"><div class="flex items-center justify-between gap-2"><div><h3 class="text-sm font-bold">Special occasions</h3><p class="text-xs text-slate-500">Enter dates and a percentage, e.g. +30 for higher or -20 for lower sales. Applies to every product and store; overlaps add together.</p></div><button type="button" class="rounded-lg border px-3 py-2 text-xs font-bold" @click="occasions.push({ name: '', start: data.today, end: data.today, adjustment: 0 })">Add occasion</button></div>
               <div v-for="(occasion, index) in occasions" :key="index" class="mt-3 grid gap-2 rounded-lg bg-slate-50 p-3 sm:grid-cols-[2fr_1fr_1fr_1fr_auto]"><label class="text-xs">Name<input v-model.trim="occasion.name" required maxlength="100" class="mt-1 block w-full rounded border border-slate-300 p-2"></label><label class="text-xs">Start date<input v-model="occasion.start" type="date" required class="mt-1 block w-full rounded border border-slate-300 p-2"></label><label class="text-xs">End date<input v-model="occasion.end" type="date" required :min="occasion.start" class="mt-1 block w-full rounded border border-slate-300 p-2"></label><label class="text-xs">Adjustment %<input v-model.number="occasion.adjustment" type="number" min="-100" max="500" step="any" required class="mt-1 block w-full rounded border border-slate-300 p-2"></label><button type="button" class="self-end rounded border px-3 py-2 text-xs text-red-700" @click="occasions.splice(index, 1)">Remove</button></div>

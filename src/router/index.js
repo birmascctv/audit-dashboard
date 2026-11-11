@@ -80,11 +80,12 @@ const routes = [
     meta: { requiresAuth: true, allowedRoles: ['admin', 'superadmin', 'owner'] },
   },
   {
-    path: '/restock-planner',
+    path: '/purchasing',
     name: 'RestockPlanner',
     component: RestockPlannerView,
     meta: { requiresAuth: true, restockAccess: true },
   },
+  { path: '/restock-planner', redirect: '/purchasing' },
   {
     path: '/login',
     name: 'Login',

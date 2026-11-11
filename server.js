@@ -14,6 +14,7 @@ import * as stockPeriodCsv from './stockPeriodCsv.js';
 import * as stockPeriodCsvStore from './stockPeriodCsvStore.js';
 import { captureStockSnapshot, ensureStockSnapshots } from './stockSnapshots.js';
 import { getRestockPlanner, canAccessRestock, DEFAULT_RESTOCK_SETTINGS, validateRestockConfig } from './restockPlanner.js';
+import { getPurchasingPlanner, savePurchasingProductSettings } from './purchasingPlanner.js';
 
 export function parseSafeMoney(val) {
   if (val === undefined || val === null || val === '') return 0;
@@ -2882,6 +2883,35 @@ async function startServer() {
       res.json({ success: true, ...getRestockPlanner(sqlite, salesDb.getSalesDb(), matchBranch, undefined, config) });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/purchasing', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      const sqlite = db.getDb();
+      ensureStockSnapshots(sqlite);
+      const branches = new Map([
+        ['SUDIRMAN', 'birmas-sudirman'], ['KUNINGAN', 'birmas-kuningan'], ['KWITANG', 'birmas-kwitang'],
+        ['LEBAK BULUS', 'birmas-lebak-bulus'], ['KELAPA GADING', 'birmas-kelapa-gading'],
+        ['TEBET', 'birmas-tebet'], ['NOMADIC', 'birmas-nomadic'], ['BALI NUSA DUA', 'birmas-nusadua'],
+      ]);
+      const saved = db.getConfig('restock_planner_config', '');
+      const config = saved ? validateRestockConfig(JSON.parse(saved)) : { settings: DEFAULT_RESTOCK_SETTINGS, occasions: [] };
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+      res.json({ success: true, ...getPurchasingPlanner(sqlite, salesDb.getSalesDb(), (name) => branches.get(String(name).trim().toUpperCase()) || null, today, config) });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.put('/api/purchasing/product-settings', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      savePurchasingProductSettings(db.getDb(), req.body || {});
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err.message });
     }
   });
 

@@ -21,7 +21,7 @@ const pageNames = {
   '/audit-records': ['Audit', 'Audit Records'],
   '/sales': ['Sales Report'],
   '/sales/esb-analytics': ['Sales Report', 'ESB Analytics'],
-  '/restock-planner': ['Restock Planner'],
+  '/purchasing': ['Purchasing'],
 };
 const crumbs = computed(() => pageNames[route.path] || []);
 const navItems = computed(() => [
@@ -30,7 +30,7 @@ const navItems = computed(() => [
   canAccessStockAudit.value && { to: canAccessCrewPage.value && currentUser.value?.role === 'crew' ? '/stock-audit-crew' : '/stock-audit', label: 'Stock' },
   canAccessAuditRecords.value && { to: '/audit-records', label: 'Records' },
   canAccessSalesReport.value && { to: '/sales', label: 'Sales' },
-  canAccessRestockPlanner.value && { to: '/restock-planner', label: 'Restock' },
+  canAccessRestockPlanner.value && { to: '/purchasing', label: 'Purchasing' },
 ].filter(Boolean));
 
 let warned = false;
