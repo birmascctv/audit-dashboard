@@ -11,6 +11,7 @@ import {
   initializeSalesDatabase,
   insertSalesRows,
   makeWhere,
+  replaceLiveSalesWindow,
 } from '../salesDb.js';
 
 const headings = CSV_COLUMNS.map(([, label]) => label).join(',');
@@ -61,7 +62,7 @@ test('parses the checked-in clean CSV with the selected schema and full rupiah v
 });
 
 test('preserves promo rows and computes subtotal from quantity and price', () => {
-  const csv = `${headings},Bill Discount\n2026-01-02T10:15:00,TEBET,DINE IN,CASH,PROMO,PROMO,BUY 1 GET 1,2,"40,000.00",1,5000,"75,000.00",,1000`;
+  const csv = `${headings},Bill Discount\n2026-01-02T10:15:00,TEBET,DINE IN,CASH,PROMO,PROMO,BUY 1 GET 1,2,"40,000.00",1,5000,"75,000.00",,,1000`;
   const [row] = parseSalesCsv(csv);
   assert.equal(row.sales_date_in, '2026-01-02 10:15:00');
   assert.equal(row.menu_category, 'PROMO');
@@ -194,6 +195,95 @@ test('ceilings apply per eligible tender after grouping lines and rankings honor
     assert.equal(filtered.adjustedRevenue, 1100);
     assert.equal(filtered.topProductsQty[0].qty, 1);
     assert.equal(filtered.topProductsLastWeek[0].qty, 3);
+  } finally {
+    db.close();
+  }
+});
+
+test('uses Sales Date for overnight sales, including rankings and once-per-sale fees', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const [row] = parseSalesCsv(`${headings}\n2026-11-10 00:22:53,SUDIRMAN,SHOPEEFOOD,SHOPEEFOOD,DRINK,BEER,Beer,1,100000,100000,0,100000,S1,09/11/2026`);
+    assert.equal(row.sales_date, '2026-11-09');
+    insertSalesRows(db, { fileId: 'original', rows: [
+      row, { ...row, menu: 'Wine', total_after_bill_discount: 102000 },
+      { ...row, sales_number: 'S2', sales_date_in: '2026-11-09 22:00:00', total_after_bill_discount: 1714000 },
+      { ...row, sales_number: 'S3', sales_date: '', sales_date_in: '2026-11-10 12:00:00', total_after_bill_discount: 1000 },
+    ] });
+    const date9 = getEsbAnalytics({ startDate: '2026-11-09', endDate: '2026-11-09', today: '2026-11-09' }, db);
+    const date10 = getEsbAnalytics({ startDate: '2026-11-10', endDate: '2026-11-10', today: '2026-11-10' }, db);
+    assert.equal(date9.baseRevenue, 1916000);
+    assert.equal(date9.shopeeAdjustment, 6000);
+    assert.equal(date9.payments[0].sales, 1922000);
+    assert.equal(date9.transactionCount, 2);
+    assert.equal(date9.topProductsThisMonth.reduce((sum, product) => sum + product.sales, 0), 1922000);
+    assert.equal(date10.baseRevenue, 1000);
+    assert.equal(date9.missingSalesDateRows, 1);
+    assert.equal(parseSalesCsv(getSalesFileCsv('original', db).content)[0].sales_date, '2026-11-09');
+  } finally {
+    db.close();
+  }
+});
+
+test('identifies split-tender mismatches and allocates revenue once across repeated lines', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const base = { branch: 'SUDIRMAN', sales_date: '2026-11-09', sales_date_in: '2026-11-10 00:22:53', sales_number: 'A', visit_purpose: 'DINE IN', payment_method: 'CASH (20.000),QRIS BCA (200.000)', menu: 'BEER', qty: 1, price: 100000 };
+    insertSalesRows(db, { fileId: 'split', rows: [
+      { ...base, total_after_bill_discount: 100000 },
+      { ...base, menu: 'WINE', total_after_bill_discount: 100000 },
+    ] });
+    const result = getEsbAnalytics({ startDate: '2026-11-09', endDate: '2026-11-09' }, db);
+    assert.equal(result.splitMismatchOrders, 1);
+    assert.equal(result.transactionCount, 1);
+    assert.equal(result.baseRevenue, 200000);
+    const payments = Object.fromEntries(result.payments.map((entry) => [entry.name, entry.sales]));
+    assert.equal(payments.CASH, 19000);
+    assert.equal(payments['QRIS BCA'], 182000);
+    assert.equal(result.adjustedRevenue, 201000);
+  } finally {
+    db.close();
+  }
+});
+
+test('re-upload restores missing Sales Date only on exact identified matches', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const row = { sales_date_in: '2026-11-10 00:22:53', branch: 'SUDIRMAN', sales_number: 'A', visit_purpose: 'SHOPEEFOOD', payment_method: 'SHOPEEFOOD', menu: 'BEER', qty: 1, price: 101000, total_after_bill_discount: 101000 };
+    insertSalesRows(db, { fileId: 'old', rows: [row, row, { ...row, sales_number: 'B' }] });
+    const restored = insertSalesRows(db, { fileId: 'original', rows: [{ ...row, sales_date: '2026-11-09' }, { ...row, sales_date: '2026-11-09' }] });
+    assert.equal(restored.row_count, 0);
+    assert.equal(restored.duplicate_count, 2);
+    assert.equal(restored.restored_date_count, 2);
+    assert.equal(db.prepare("SELECT count(*) n FROM sales_transactions WHERE sales_date = '2026-11-09'").get().n, 2);
+    assert.equal(db.prepare("SELECT sales_date FROM sales_transactions WHERE sales_number = 'B'").get().sales_date, '');
+    const retry = insertSalesRows(db, { fileId: 'retry', rows: [{ ...row, sales_date: '2026-11-08' }] });
+    assert.equal(retry.restored_date_count, 0);
+    assert.equal(db.prepare("SELECT sales_date FROM sales_transactions WHERE sales_number = 'A'").get().sales_date, '2026-11-09');
+    const result = getEsbAnalytics({ startDate: '2026-11-09', endDate: '2026-11-09' }, db);
+    assert.equal(result.payments[0].sales, 205000);
+    assert.equal(result.missingSalesDateRows, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('live sync preserves Sales Date and conflicting dates are excluded', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const row = { salesDateIn: '2026-11-10 00:22:53', salesDate: '09/11/2026', salesNumber: 'A', branch: 'SUDIRMAN', visitPurpose: 'SHOPEEFOOD', paymentMethod: 'SHOPEEFOOD', menu: 'BEER', qty: 1, price: 1000, totalAfterBillDiscount: 1000 };
+    replaceLiveSalesWindow(db, { fromDate: '2026-11-09', rows: [row] });
+    assert.equal(db.prepare('SELECT sales_date FROM sales_transactions').get().sales_date, '2026-11-09');
+    let result = getEsbAnalytics({ startDate: '2026-11-09', endDate: '2026-11-09' }, db);
+    assert.equal(result.adjustedRevenue, 4000);
+    replaceLiveSalesWindow(db, { fromDate: '2026-11-09', rows: [row, { ...row, menu: 'WINE', salesDate: '10/11/2026' }] });
+    result = getEsbAnalytics({ startDate: '2026-11-09', endDate: '2026-11-09' }, db);
+    assert.equal(result.transactionCount, 0);
+    assert.equal(result.excludedOrders, 1);
   } finally {
     db.close();
   }

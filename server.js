@@ -2112,6 +2112,7 @@ async function startServer() {
         rowCount: result.row_count,
         duplicateCount: result.duplicate_count,
         updatedCount: result.updated_count,
+        restoredDateCount: result.restored_date_count,
         fileId,
         receivedAt: new Date().toISOString(),
       });

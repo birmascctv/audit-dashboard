@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseLocalizedNumber } from './src/utils/salesCsv.js';
+import { normalizeDateString, parseLocalizedNumber } from './src/utils/salesCsv.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), 'data');
 const DB_PATH = path.join(DATA_DIR, 'sales_clean.sqlite');
@@ -20,6 +20,7 @@ const CSV_COLUMNS = [
   ['discount', 'Discount'],
   ['total_after_bill_discount', 'Total After Bill Discount'],
   ['sales_number', 'Sales Number'],
+  ['sales_date', 'Sales Date'],
 ];
 
 let database;
@@ -67,6 +68,9 @@ export function initializeSalesDatabase(db) {
   `);
   if (!db.prepare('PRAGMA table_info(sales_transactions)').all().some((column) => column.name === 'sales_number')) {
     db.exec("ALTER TABLE sales_transactions ADD COLUMN sales_number TEXT NOT NULL DEFAULT ''");
+  }
+  if (!db.prepare('PRAGMA table_info(sales_transactions)').all().some((column) => column.name === 'sales_date')) {
+    db.exec("ALTER TABLE sales_transactions ADD COLUMN sales_date TEXT NOT NULL DEFAULT ''");
   }
 }
 
@@ -131,6 +135,7 @@ function normalizeRow(row) {
     discount,
     total_after_bill_discount: total,
     sales_number: String(get('sales_number', 'salesNumber', 'Sales Number')).trim(),
+    sales_date: normalizeDateString(get('sales_date', 'salesDate', 'Sales Date')),
   };
 }
 
@@ -156,8 +161,8 @@ export function insertSalesRows(db, {
     INSERT INTO sales_transactions (
       import_id, source_row, sales_date_in, branch, visit_purpose, payment_method,
       menu_category, menu_category_detail, menu, qty, price, subtotal, discount,
-      total_after_bill_discount, sales_number
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      total_after_bill_discount, sales_number, sales_date
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(import_id, source_row) DO UPDATE SET
       sales_date_in = excluded.sales_date_in,
       branch = excluded.branch,
@@ -171,7 +176,8 @@ export function insertSalesRows(db, {
       subtotal = excluded.subtotal,
       discount = excluded.discount,
       total_after_bill_discount = excluded.total_after_bill_discount,
-      sales_number = excluded.sales_number
+      sales_number = excluded.sales_number,
+      sales_date = excluded.sales_date
   `);
   // Match only other imports; repeated rows within this file can represent distinct sales.
   const findExisting = db.prepare(`
@@ -183,9 +189,17 @@ export function insertSalesRows(db, {
     LIMIT 1
   `);
   const updatePrice = db.prepare('UPDATE sales_transactions SET price = ?, subtotal = ?, discount = ?, total_after_bill_discount = ? WHERE id = ?');
+  const restoreSalesDate = db.prepare(`
+    UPDATE sales_transactions SET sales_date = ?
+    WHERE sales_date = '' AND sales_number = ? AND branch = ? AND sales_date_in = ?
+      AND menu = ? AND payment_method = ? AND qty = ? AND visit_purpose = ?
+      AND menu_category = ? AND menu_category_detail = ? AND price = ?
+      AND subtotal = ? AND discount = ? AND total_after_bill_discount = ?
+  `);
 
   let duplicateCount = 0;
   let updatedCount = 0;
+  let restoredDateCount = 0;
   db.exec('BEGIN');
   try {
     insertImport.run(fileId, filename || 'sales.csv', fileSize, uploadedAt, uploadedBy);
@@ -194,6 +208,12 @@ export function insertSalesRows(db, {
       const sourceRow = sourceRowOffset + index;
       const existing = findExisting.get(clean.sales_date_in, clean.menu, clean.branch, clean.payment_method, clean.qty, fileId, clean.sales_number, clean.sales_number, clean.total_after_bill_discount);
       if (existing) {
+        if (clean.sales_number && /^\d{4}-\d{2}-\d{2}(?:\b|T)/.test(clean.sales_date)) {
+          restoredDateCount += Number(restoreSalesDate.run(clean.sales_date, clean.sales_number, clean.branch,
+            clean.sales_date_in, clean.menu, clean.payment_method, clean.qty, clean.visit_purpose,
+            clean.menu_category, clean.menu_category_detail, clean.price, clean.subtotal, clean.discount,
+            clean.total_after_bill_discount).changes);
+        }
         const changed = Number(existing.price) !== Number(clean.price) || Number(existing.subtotal) !== Number(clean.subtotal) ||
           Number(existing.discount) !== Number(clean.discount) || Number(existing.total_after_bill_discount) !== Number(clean.total_after_bill_discount);
         if (changed) {
@@ -220,7 +240,7 @@ export function insertSalesRows(db, {
     SELECT COUNT(*) AS row_count, COALESCE(SUM(total_after_bill_discount), 0) AS total_revenue
     FROM sales_transactions WHERE import_id = ?
   `).get(fileId);
-  return { ...summary, duplicate_count: duplicateCount, updated_count: updatedCount };
+  return { ...summary, duplicate_count: duplicateCount, updated_count: updatedCount, restored_date_count: restoredDateCount };
 }
 
 // Idempotent live sync: replaces the rows of one rolling window under a fixed import id
@@ -235,8 +255,8 @@ export function replaceLiveSalesWindow(db, { fileId = 'birmas-live', filename = 
     let sourceRow = db.prepare('SELECT COALESCE(MAX(source_row), -1) + 1 AS next FROM sales_transactions WHERE import_id = ?').get(fileId).next;
     const insert = db.prepare(`INSERT INTO sales_transactions (
       import_id, source_row, sales_date_in, branch, visit_purpose, payment_method,
-      menu_category, menu_category_detail, menu, qty, price, subtotal, discount, total_after_bill_discount, sales_number
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      menu_category, menu_category_detail, menu, qty, price, subtotal, discount, total_after_bill_discount, sales_number, sales_date
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const row of clean) insert.run(fileId, sourceRow++, ...CSV_COLUMNS.map(([key]) => row[key]));
     db.exec('COMMIT');
     return clean.length;
@@ -320,7 +340,7 @@ export function allocatePaymentSales(rows, dimensions = []) {
 
 export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
   const { sql, values } = makeWhere({ storeId: filters.storeId, storeIds: filters.storeIds });
-  const rows = db.prepare(`SELECT branch, sales_number, sales_date_in, visit_purpose, payment_method,
+  const rows = db.prepare(`SELECT branch, sales_number, sales_date, sales_date_in, visit_purpose, payment_method,
     menu, menu_category, menu_category_detail, qty, total_after_bill_discount
     FROM sales_transactions ${sql}`).all(...values);
   const orders = new Map();
@@ -333,8 +353,11 @@ export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
   let rowCount = 0;
   let missingRows = 0;
   let missingRevenue = 0;
+  let missingSalesDateRows = 0;
   for (const row of rows) {
-    const date = row.sales_date_in.slice(0, 10);
+    const salesDate = /^\d{4}-\d{2}-\d{2}(?:\b|T)/.test(row.sales_date) ? row.sales_date.slice(0, 10) : '';
+    if (!salesDate) missingSalesDateRows++;
+    const date = salesDate || row.sales_date_in.slice(0, 10);
     if (!row.sales_number.trim()) {
       if (inRange(date)) {
         rowCount++;
@@ -344,9 +367,10 @@ export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
       continue;
     }
     const key = JSON.stringify([row.branch, row.sales_number]);
-    if (!orders.has(key)) orders.set(key, { branch: row.branch, date, rows: [], methods: new Set(), purposes: new Set(), sales: 0 });
+    if (!orders.has(key)) orders.set(key, { branch: row.branch, date, salesDates: new Set(), rows: [], methods: new Set(), purposes: new Set(), sales: 0 });
     const order = orders.get(key);
     if (date < order.date) order.date = date;
+    if (salesDate) order.salesDates.add(salesDate);
     order.rows.push(row);
     order.methods.add(row.payment_method.trim());
     order.purposes.add(row.visit_purpose.trim().toUpperCase());
@@ -383,9 +407,11 @@ export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
   let shopeeAdjustment = 0;
   let excludedOrders = 0;
   let excludedRevenue = 0;
+  let splitMismatchOrders = 0;
   let transactionCount = 0;
   let totalUnitsSold = 0;
   for (const order of orders.values()) {
+    if (order.salesDates.size) order.date = [...order.salesDates].sort()[0];
     const selected = inRange(order.date);
     const inWeek = order.date >= weekDate && order.date <= today;
     const inMonth = order.date >= monthDate && order.date <= today;
@@ -397,7 +423,7 @@ export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
       (method.includes('(') && (!matches.length ||
         method.replace(/([^,]+?)\s*\(([^()]*)\)/g, '').replace(/[,\s]/g, '') !== '' ||
         matches.some((match) => parseLocalizedNumber(match[2]) === null)));
-    if (order.methods.size !== 1 || order.purposes.size !== 1 || malformed) {
+    if (order.methods.size !== 1 || order.purposes.size !== 1 || order.salesDates.size > 1 || malformed) {
       if (selected) {
         excludedOrders++;
         excludedRevenue += order.sales;
@@ -405,6 +431,10 @@ export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
       continue;
     }
     const portions = allocatePaymentSales([{ payment_method: method, sales: order.sales }]);
+    if (selected && matches.length > 1 &&
+        Math.abs(matches.reduce((sum, match) => sum + parseLocalizedNumber(match[2]), 0) - order.sales) > 0.02) {
+      splitMismatchOrders++;
+    }
     let orderRounding = 0;
     for (const portion of portions) {
       const eligible = ['CASH', 'QRIS BCA'].includes(portion.payment_method.toUpperCase());
@@ -441,7 +471,7 @@ export function getEsbAnalytics(filters = {}, db = getSalesDb()) {
   }
   return {
     rowCount, transactionCount,
-    missingRows, missingRevenue, excludedOrders, excludedRevenue,
+    missingRows, missingRevenue, missingSalesDateRows, splitMismatchOrders, excludedOrders, excludedRevenue,
     baseRevenue, roundingAdjustment, shopeeAdjustment, totalUnitsSold,
     adjustedRevenue: baseRevenue + roundingAdjustment + shopeeAdjustment,
     payments: [...payments].map(([name, sales]) => ({ name, sales })).sort((a, b) => b.sales - a.sales),

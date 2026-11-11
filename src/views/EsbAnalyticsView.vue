@@ -69,9 +69,11 @@ onMounted(async () => {
     </header>
 
     <p v-if="error" role="alert" class="rounded-xl bg-rose-50 p-4 text-sm text-rose-800">{{ error }}</p>
-    <div v-if="analytics && (analytics.missingRows || analytics.excludedOrders)" role="alert" class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+    <div v-if="analytics && (analytics.missingRows || analytics.missingSalesDateRows || analytics.excludedOrders || analytics.splitMismatchOrders)" role="alert" class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
       <p v-if="analytics.missingRows">{{ analytics.missingRows.toLocaleString('id-ID') }} rows ({{ money(analytics.missingRevenue) }}) have no saved Sales Number and are excluded. Delete the old uploaded files, then re-upload the original ESB CSVs.</p>
+      <p v-if="analytics.missingSalesDateRows">{{ analytics.missingSalesDateRows.toLocaleString('id-ID') }} rows across the selected stores have no saved Sales Date. Sales without any saved Sales Date use Sales Date In, so date-filtered totals may be inaccurate. Re-upload the original CSVs containing Sales Date to restore dates on matching rows.</p>
       <p v-if="analytics.excludedOrders">{{ analytics.excludedOrders.toLocaleString('id-ID') }} sales ({{ money(analytics.excludedRevenue) }}) have inconsistent or unreadable payment/visit details and are excluded.</p>
+      <p v-if="analytics.splitMismatchOrders">{{ analytics.splitMismatchOrders.toLocaleString('id-ID') }} split-payment sales have tender amounts that differ from their sales-row total; revenue is allocated proportionally.</p>
     </div>
 
     <section v-if="analytics" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -109,7 +111,7 @@ onMounted(async () => {
       <button class="rounded-lg bg-teal-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50" :disabled="loading">{{ loading ? 'Loading…' : 'Apply' }}</button>
     </form>
 
-    <p class="text-xs text-slate-500">CASH and QRIS BCA portions are rounded up to the next Rp1,000 per sales number; SHOPEEFOOD visit purpose adds Rp3,000 per sale. Split payments use their recorded proportions. Adjustments are allocated proportionally to payments and product lines; a sale belongs to its earliest row date.</p>
+    <p class="text-xs text-slate-500">CASH and QRIS BCA portions are rounded up to the next Rp1,000 per sales number; SHOPEEFOOD visit purpose adds Rp3,000 per sale. Split payments use their recorded proportions. Adjustments are allocated proportionally to payments and product lines. Sales use Sales Date when available, otherwise Sales Date In.</p>
 
     <template v-if="analytics">
       <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

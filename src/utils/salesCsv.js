@@ -87,7 +87,7 @@ export function parseLocalizedNumber(value) {
   return negative ? -number : number;
 }
 
-function normalizeDateString(value) {
+export function normalizeDateString(value) {
   const text = String(value || '').trim();
   const match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(.*)$/);
   if (match) {
@@ -111,6 +111,7 @@ export function parseSalesCsv(text) {
 
   const headerMatchers = {
     salesNumber: ['salesnumber', 'salesno', 'salesid'],
+    salesDate: ['salesdate'],
     salesDateIn: ['salesdatein', 'datein', 'datetime', 'waktu'],
     branch: ['branch', 'cabang', 'store', 'outlet', 'lokasi', 'location'],
     visitPurpose: ['visitpurpose', 'purpose', 'ordermode', 'channel', 'tujuan', 'kunjungan'],
@@ -180,6 +181,7 @@ export function parseSalesCsv(text) {
       discount: (parseLocalizedNumber(value('discount')) ?? 0) + (parseLocalizedNumber(value('billDiscount')) ?? 0),
       total_after_bill_discount: totalAfterBillDiscount,
       sales_number: value('salesNumber').trim(),
+      sales_date: normalizeDateString(value('salesDate')),
     });
   }
 

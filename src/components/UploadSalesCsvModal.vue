@@ -152,6 +152,7 @@ async function handleImport() {
     let savedTotal = 0;
     let duplicateTotal = 0;
     let updatedTotal = 0;
+    let restoredDateTotal = 0;
 
     for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
       const start = chunkIdx * CHUNK_SIZE;
@@ -192,6 +193,7 @@ async function handleImport() {
 
       savedTotal += chunkRows.length - (data.duplicateCount || 0) - (data.updatedCount || 0);
       updatedTotal += data.updatedCount || 0;
+      restoredDateTotal += data.restoredDateCount || 0;
       duplicateTotal += data.duplicateCount || 0;
     }
 
@@ -200,11 +202,11 @@ async function handleImport() {
     uploadStatus.value = {
       success: true,
       message: duplicateTotal > 0 || updatedTotal > 0
-        ? `Successfully imported ${savedTotal.toLocaleString()} new sales records, updated price/total on ${updatedTotal.toLocaleString()} existing row(s). ${duplicateTotal.toLocaleString()} row(s) matched another uploaded file and were skipped.`
+        ? `Successfully imported ${savedTotal.toLocaleString()} new sales records, updated price/total on ${updatedTotal.toLocaleString()} existing row(s). ${duplicateTotal.toLocaleString()} row(s) matched another uploaded file and were skipped. Restored Sales Date on ${restoredDateTotal.toLocaleString()} existing row(s).`
         : `Successfully imported all ${savedTotal.toLocaleString()} sales records! File has been archived.`,
     };
 
-    toast.success(`Import complete: ${savedTotal.toLocaleString()} new, ${updatedTotal.toLocaleString()} price/total updated, ${duplicateTotal.toLocaleString()} skipped as duplicates.`, 6000);
+    toast.success(`Import complete: ${savedTotal.toLocaleString()} new, ${updatedTotal.toLocaleString()} price/total updated, ${duplicateTotal.toLocaleString()} duplicates, ${restoredDateTotal.toLocaleString()} Sales Dates restored.`, 6000);
     emit('imported', parsedRows.value);
     setTimeout(() => {
       handleClose();
