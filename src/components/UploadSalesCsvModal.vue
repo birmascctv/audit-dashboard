@@ -35,7 +35,6 @@ const emit = defineEmits(['close', 'imported']);
 const file = ref(null);
 const fileName = ref('');
 const fileSize = ref('');
-const rawCsvText = ref('');
 const isDragging = ref(false);
 const isParsing = ref(false);
 const parsingProgress = ref(0);
@@ -85,7 +84,6 @@ function handleFileSelect(e) {
   const reader = new FileReader();
   reader.onload = (event) => {
     const text = event.target?.result || '';
-    rawCsvText.value = text;
     parsingStatusText.value = 'Parsing rows...';
     // Defer to the next tick so the spinner can paint before the (synchronous,
     // but fast - ~100,000 rows/~2s) shared ESB parser runs on the main thread.
@@ -138,16 +136,12 @@ async function handleImport() {
   uploadProgress.value = 0;
   uploadProgressText.value = 'Preparing import batches...';
 
+  let archiving = false;
   try {
     const totalRows = parsedRows.value.length;
     const CHUNK_SIZE = 1500;
     const totalChunks = Math.ceil(totalRows / CHUNK_SIZE);
     const generatedFileId = `sfile-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
-
-    // Truncate raw CSV archive string if excessively large to protect browser memory
-    const safeArchiveContent = rawCsvText.value.length > 2000000 
-      ? rawCsvText.value.slice(0, 2000000) + '\n...[Preview truncated for high capacity]' 
-      : rawCsvText.value;
 
     let savedTotal = 0;
     let duplicateTotal = 0;
@@ -159,7 +153,7 @@ async function handleImport() {
       const end = Math.min(start + CHUNK_SIZE, totalRows);
       const chunkRows = parsedRows.value.slice(start, end);
 
-      uploadProgress.value = Math.round(((chunkIdx) / totalChunks) * 100);
+      uploadProgress.value = Math.round((chunkIdx / totalChunks) * 90);
       uploadProgressText.value = `Importing batch ${chunkIdx + 1} of ${totalChunks} (${start + 1} - ${end} of ${totalRows.toLocaleString()} rows)...`;
 
       const res = await fetch('/api/sales/push', {
@@ -171,8 +165,6 @@ async function handleImport() {
           fileId: generatedFileId,
           filename: fileName.value,
           fileSize: fileSize.value,
-          fileContent: chunkIdx === 0 ? safeArchiveContent : '',
-          uploadedBy: 'Admin',
           transactions: chunkRows,
           isChunk: true,
           chunkIndex: chunkIdx,
@@ -197,6 +189,32 @@ async function handleImport() {
       duplicateTotal += data.duplicateCount || 0;
     }
 
+    archiving = true;
+    const archiveChunkSize = 1024 * 1024;
+    const archiveChunks = Math.ceil(file.value.size / archiveChunkSize);
+    for (let index = 0; index < archiveChunks; index++) {
+      uploadProgressText.value = `Archiving original CSV (${index + 1} of ${archiveChunks})...`;
+      uploadProgress.value = 90 + Math.floor(index / archiveChunks * 10);
+      const response = await fetch(`/api/sales/files/${encodeURIComponent(generatedFileId)}/archive/${index}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file.value.slice(index * archiveChunkSize, (index + 1) * archiveChunkSize),
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(`Sales rows were imported, but the original CSV was not fully archived: ${result.error || `HTTP ${response.status}`}.`);
+      }
+    }
+    const archiveResponse = await fetch(`/api/sales/files/${encodeURIComponent(generatedFileId)}/archive/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ byteLength: file.value.size, chunkCount: archiveChunks }),
+    });
+    if (!archiveResponse.ok) {
+      const result = await archiveResponse.json().catch(() => ({}));
+      throw new Error(`Sales rows were imported, but the original CSV was not fully archived: ${result.error || `HTTP ${archiveResponse.status}`}.`);
+    }
+
     uploadProgress.value = 100;
     uploadProgressText.value = 'Completed!';
     uploadStatus.value = {
@@ -214,7 +232,9 @@ async function handleImport() {
   } catch (err) {
     uploadStatus.value = {
       success: false,
-      message: err.message || 'Network error while uploading transactions.',
+      message: archiving && !String(err.message || '').startsWith('Sales rows were imported')
+        ? `Sales rows were imported, but the original CSV was not fully archived: ${err.message || 'Network error'}.`
+        : err.message || 'Network error while uploading transactions.',
     };
     toast.error(`Upload failed: ${uploadStatus.value.message}`);
   } finally {
@@ -223,10 +243,10 @@ async function handleImport() {
 }
 
 function handleClose() {
+  if (isUploading.value) return;
   file.value = null;
   fileName.value = '';
   fileSize.value = '';
-  rawCsvText.value = '';
   parsedRows.value = [];
   parseErrors.value = [];
   uploadStatus.value = null;
@@ -261,6 +281,7 @@ function handleClose() {
         </div>
 
         <button
+          :disabled="isUploading"
           @click="handleClose"
           class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
         >
@@ -340,7 +361,8 @@ function handleClose() {
               </div>
             </div>
             <button
-              @click="parsedRows = []; file = null; fileName = ''; rawCsvText = ''; uploadStatus = null;"
+              :disabled="isUploading"
+              @click="parsedRows = []; file = null; fileName = ''; uploadStatus = null;"
               class="text-xs font-bold text-slate-500 hover:text-rose-600 px-2.5 py-1 rounded-lg hover:bg-slate-100 transition-colors"
             >
               Choose Another File

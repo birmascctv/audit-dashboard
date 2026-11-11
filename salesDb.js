@@ -61,6 +61,17 @@ export function initializeSalesDatabase(db) {
       total_after_bill_discount REAL NOT NULL,
       UNIQUE(import_id, source_row)
     );
+    CREATE TABLE IF NOT EXISTS sales_import_archive_chunks (
+      import_id TEXT NOT NULL REFERENCES sales_imports(id) ON DELETE CASCADE,
+      chunk_index INTEGER NOT NULL,
+      content BLOB NOT NULL,
+      PRIMARY KEY(import_id, chunk_index)
+    );
+    CREATE TABLE IF NOT EXISTS sales_import_archives (
+      import_id TEXT PRIMARY KEY REFERENCES sales_imports(id) ON DELETE CASCADE,
+      byte_length INTEGER NOT NULL,
+      chunk_count INTEGER NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_clean_sales_date ON sales_transactions(sales_date_in);
     CREATE INDEX IF NOT EXISTS idx_clean_sales_branch ON sales_transactions(branch);
     CREATE INDEX IF NOT EXISTS idx_clean_sales_import ON sales_transactions(import_id);
@@ -71,6 +82,9 @@ export function initializeSalesDatabase(db) {
   }
   if (!db.prepare('PRAGMA table_info(sales_transactions)').all().some((column) => column.name === 'sales_date')) {
     db.exec("ALTER TABLE sales_transactions ADD COLUMN sales_date TEXT NOT NULL DEFAULT ''");
+  }
+  if (!db.prepare('PRAGMA table_info(sales_imports)').all().some((column) => column.name === 'uploader_verified')) {
+    db.exec('ALTER TABLE sales_imports ADD COLUMN uploader_verified INTEGER NOT NULL DEFAULT 0');
   }
 }
 
@@ -145,14 +159,19 @@ export function insertSalesRows(db, {
   filename,
   fileSize = '',
   uploadedBy = 'Admin',
+  uploaderVerified = false,
   uploadedAt = new Date().toISOString(),
   sourceRowOffset = 0,
   rows,
 }) {
   if (!fileId || !Array.isArray(rows) || rows.length === 0) throw new Error('An import ID and at least one sales row are required.');
+  const owner = db.prepare('SELECT uploaded_by, uploader_verified FROM sales_imports WHERE id = ?').get(fileId);
+  if (owner?.uploader_verified && (!uploaderVerified || owner.uploaded_by !== uploadedBy)) {
+    throw new Error('This import belongs to another user.');
+  }
   const insertImport = db.prepare(`
-    INSERT INTO sales_imports (id, filename, file_size, uploaded_at, uploaded_by)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO sales_imports (id, filename, file_size, uploaded_at, uploaded_by, uploader_verified)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       filename = excluded.filename,
       file_size = excluded.file_size
@@ -202,7 +221,7 @@ export function insertSalesRows(db, {
   let restoredDateCount = 0;
   db.exec('BEGIN');
   try {
-    insertImport.run(fileId, filename || 'sales.csv', fileSize, uploadedAt, uploadedBy);
+    insertImport.run(fileId, filename || 'sales.csv', fileSize, uploadedAt, uploadedBy, uploaderVerified ? 1 : 0);
     rows.forEach((row, index) => {
       const clean = normalizeRow(row);
       const sourceRow = sourceRowOffset + index;
@@ -778,9 +797,10 @@ export function getSalesProductsByBusinessDate(date, branch) {
   `).all(date, branch);
 }
 
-export function getSalesFiles() {
-  return getSalesDb().prepare(`
-    SELECT i.id, i.filename, i.file_size, i.uploaded_at, i.uploaded_by,
+export function getSalesFiles(db = getSalesDb()) {
+  return db.prepare(`
+    SELECT i.id, i.filename, i.file_size, i.uploaded_at, i.uploaded_by, i.uploader_verified,
+      EXISTS(SELECT 1 FROM sales_import_archives a WHERE a.import_id = i.id) AS original_available,
       COUNT(t.id) AS row_count,
       COALESCE(SUM(t.total_after_bill_discount), 0) AS total_revenue,
       GROUP_CONCAT(DISTINCT t.branch) AS stores
@@ -788,6 +808,42 @@ export function getSalesFiles() {
     LEFT JOIN sales_transactions t ON t.import_id = i.id
     GROUP BY i.id ORDER BY i.uploaded_at DESC
   `).all();
+}
+
+export const SALES_ARCHIVE_CHUNK_SIZE = 1024 * 1024;
+
+export function putSalesArchiveChunk(db, fileId, index, content) {
+  if (!Number.isSafeInteger(index) || index < 0 || !Buffer.isBuffer(content) || !content.length || content.length > SALES_ARCHIVE_CHUNK_SIZE) {
+    throw new Error('Invalid archive chunk.');
+  }
+  if (!db.prepare('SELECT 1 FROM sales_imports WHERE id = ?').get(fileId)) throw new Error('Sales import not found.');
+  if (db.prepare('SELECT 1 FROM sales_import_archives WHERE import_id = ?').get(fileId)) throw new Error('Original CSV is already archived.');
+  db.prepare(`INSERT INTO sales_import_archive_chunks (import_id, chunk_index, content) VALUES (?, ?, ?)
+    ON CONFLICT(import_id, chunk_index) DO UPDATE SET content = excluded.content`).run(fileId, index, content);
+}
+
+export function finishSalesArchive(db, fileId, byteLength, chunkCount) {
+  if (!Number.isSafeInteger(byteLength) || byteLength <= 0 ||
+      !Number.isSafeInteger(chunkCount) || chunkCount !== Math.ceil(byteLength / SALES_ARCHIVE_CHUNK_SIZE)) {
+    throw new Error('Invalid archive size.');
+  }
+  const existing = getSalesArchive(db, fileId);
+  if (existing) {
+    if (existing.byte_length === byteLength && existing.chunk_count === chunkCount) return;
+    throw new Error('Original CSV is already archived.');
+  }
+  const rows = db.prepare(`SELECT chunk_index, length(content) AS bytes FROM sales_import_archive_chunks
+    WHERE import_id = ? ORDER BY chunk_index`).all(fileId);
+  if (rows.length !== chunkCount || rows.some((row, index) => row.chunk_index !== index ||
+      row.bytes !== (index === chunkCount - 1 ? byteLength - index * SALES_ARCHIVE_CHUNK_SIZE : SALES_ARCHIVE_CHUNK_SIZE))) {
+    throw new Error('Original CSV upload is incomplete.');
+  }
+  db.prepare('INSERT INTO sales_import_archives (import_id, byte_length, chunk_count) VALUES (?, ?, ?)').run(fileId, byteLength, chunkCount);
+}
+
+export function getSalesArchive(db, fileId) {
+  return db.prepare(`SELECT i.filename, a.byte_length, a.chunk_count FROM sales_import_archives a
+    JOIN sales_imports i ON i.id = a.import_id WHERE a.import_id = ?`).get(fileId) || null;
 }
 
 function csvCell(value) {

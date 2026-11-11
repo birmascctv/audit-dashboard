@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { exec } from 'child_process';
+import { Readable } from 'stream';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
@@ -1050,16 +1051,15 @@ async function startServer() {
       if (pubUrl.endsWith('/login') || pubUrl.endsWith('/logout')) return next();
       // Push endpoints: when any ingest token is configured it is mandatory
       const accepted = [process.env.STOCK_INGEST_TOKEN, db.getConfig('birmas_server_token')].map((t) => String(t || '').trim()).filter(Boolean);
+      const given = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim() || String(req.headers['x-ingest-token'] || '').trim();
+      const tokenOk = given && accepted.includes(given);
+      const userSession = !tokenOk && pubUrl === '/api/sales/push' && /^Bearer\s+\S+$/i.test(req.headers.authorization || '')
+        ? db.getAuthSession(given) : null;
       if (accepted.length) {
-        const given = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim() || String(req.headers['x-ingest-token'] || '').trim();
-        const tokenOk = given && accepted.includes(given);
-        // The Upload CSV screen sends the user's session token instead of the ingest token
-        const userSession = !tokenOk && pubUrl === '/api/sales/push' && /^Bearer\s+\S+$/i.test(req.headers.authorization || '')
-          ? db.getAuthSession(given) : null;
         if (!tokenOk && !userSession) return res.status(401).json({ success: false, error: 'Unauthorized' });
-        if (userSession && !['owner', 'admin', 'superadmin'].includes(userSession.role)) return res.status(403).json({ success: false, error: 'Access denied.' });
-        if (userSession) req.authUser = userSession;
       }
+      if (userSession && !['owner', 'admin', 'superadmin'].includes(userSession.role)) return res.status(403).json({ success: false, error: 'Access denied.' });
+      if (userSession) req.authUser = userSession;
       return next();
     }
     const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '');
@@ -2098,7 +2098,8 @@ async function startServer() {
         fileId,
         filename,
         fileSize: body.fileSize || '',
-        uploadedBy: body.uploadedBy || 'Admin',
+        uploadedBy: req.authUser?.username || 'Birmas server',
+        uploaderVerified: !!req.authUser,
         sourceRowOffset,
         rows: rawList,
       });
@@ -2129,6 +2130,58 @@ async function startServer() {
       res.json({ success: true, files });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  function canWriteSalesArchive(sqlite, fileId, user) {
+    const owner = sqlite.prepare('SELECT uploaded_by, uploader_verified FROM sales_imports WHERE id = ?').get(fileId);
+    return !!owner?.uploader_verified && owner.uploaded_by === user?.username;
+  }
+
+  app.put('/api/sales/files/:id/archive/:index', express.raw({ type: 'application/octet-stream', limit: '1mb' }), (req, res) => {
+    try {
+      if (!/^(0|[1-9]\d*)$/.test(req.params.index)) throw new Error('Invalid archive chunk index.');
+      const sqlite = salesDb.getSalesDb();
+      if (!canWriteSalesArchive(sqlite, req.params.id, req.authUser)) return res.status(403).json({ success: false, error: 'Only the uploader can archive this import.' });
+      salesDb.putSalesArchiveChunk(sqlite, req.params.id, Number(req.params.index), req.body);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/sales/files/:id/archive/complete', (req, res) => {
+    try {
+      const sqlite = salesDb.getSalesDb();
+      if (!canWriteSalesArchive(sqlite, req.params.id, req.authUser)) return res.status(403).json({ success: false, error: 'Only the uploader can archive this import.' });
+      salesDb.finishSalesArchive(sqlite, req.params.id, req.body?.byteLength, req.body?.chunkCount);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/sales/files/:id/original', (req, res) => {
+    try {
+      const sqlite = salesDb.getSalesDb();
+      const archive = salesDb.getSalesArchive(sqlite, req.params.id);
+      if (!archive) return res.status(404).send('Original CSV is not available for this import.');
+      const chunk = sqlite.prepare('SELECT content FROM sales_import_archive_chunks WHERE import_id = ? AND chunk_index = ?');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Length', archive.byte_length);
+      res.setHeader('Content-Disposition', `attachment; filename="sales-original.csv"; filename*=UTF-8''${encodeURIComponent(archive.filename)}`);
+      const stream = Readable.from((function* () {
+        for (let index = 0; index < archive.chunk_count; index++) {
+          const row = chunk.get(req.params.id, index);
+          if (!row) throw new Error('Original CSV archive is incomplete.');
+          yield Buffer.from(row.content);
+        }
+      })());
+      stream.on('error', () => res.destroy());
+      res.on('close', () => stream.destroy());
+      stream.pipe(res);
+    } catch (err) {
+      res.status(500).send(err.message);
     }
   });
 

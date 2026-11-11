@@ -800,11 +800,11 @@ function handleImported() {
   loadTimeSummary();
   loadStockCompare();
 }
-async function downloadFile(file) {
+async function downloadFile(file, original = false) {
   if (downloadingFileId.value) return;
-  downloadingFileId.value = file.id;
+  downloadingFileId.value = `${file.id}:${original ? 'original' : 'clean'}`;
   try {
-    const res = await fetch(`/api/sales/files/${encodeURIComponent(file.id)}/download`);
+    const res = await fetch(`/api/sales/files/${encodeURIComponent(file.id)}/${original ? 'original' : 'download'}`);
     if (!res.ok) throw new Error(`Server returned HTTP ${res.status}.`);
     const url = URL.createObjectURL(await res.blob());
     const link = document.createElement('a');
@@ -1373,7 +1373,7 @@ onBeforeUnmount(() => {
 
     <div v-if="deletingFile" class="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-4">
       <section class="w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
-        <h2 class="font-bold text-slate-900">Delete this sales import?</h2><p class="text-sm text-slate-600">This deletes {{ deletingFile.row_count }} clean sales rows from <strong>{{ deletingFile.filename }}</strong> and updates analytics.</p>
+        <h2 class="font-bold text-slate-900">Delete this sales import?</h2><p class="text-sm text-slate-600">This deletes {{ deletingFile.row_count }} clean sales rows and the archived original, if available, from <strong>{{ deletingFile.filename }}</strong> and updates analytics.</p>
         <div class="flex justify-end gap-2"><button class="rounded-xl px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100" :disabled="deleting" @click="deletingFile = null">Cancel</button><button class="rounded-xl bg-rose-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50" :disabled="deleting" @click="deleteFile">{{ deleting ? 'Deleting…' : 'Delete import' }}</button></div>
       </section>
     </div>
@@ -1381,12 +1381,16 @@ onBeforeUnmount(() => {
     <UploadSalesCsvModal :is-open="uploadOpen" @close="uploadOpen = false" @imported="handleImported">
       <template #history>
       <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <header class="border-b border-slate-100 px-4 py-3"><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><FileSpreadsheet class="h-4 w-4 text-teal-700" />Imported CSV batches</h2><p class="text-[11px] text-slate-500">Downloads contain the 12 clean columns, not unused original report fields.</p></header>
+        <header class="border-b border-slate-100 px-4 py-3"><h2 class="flex items-center gap-2 text-sm font-bold text-slate-900"><FileSpreadsheet class="h-4 w-4 text-teal-700" />Imported CSV batches</h2><p class="text-[11px] text-slate-500">New uploads retain the original CSV and all its columns. Older imports have only clean data.</p></header>
         <div class="overflow-x-auto">
           <table class="w-full min-w-[700px] text-left text-xs">
-            <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">File</th><th class="px-4 py-2">Uploaded</th><th class="px-4 py-2">Stores</th><th class="px-4 py-2 text-right">Rows</th><th class="px-4 py-2 text-right">Net sales</th><th class="px-4 py-2 text-right">Actions</th></tr></thead>
-            <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2"><button class="flex items-center gap-1 rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50 disabled:opacity-50" title="Download clean CSV" :disabled="!!downloadingFileId" :aria-busy="downloadingFileId === file.id" @click="downloadFile(file)"><LoaderCircle v-if="downloadingFileId === file.id" class="h-3.5 w-3.5 animate-spin" /><Download v-else class="h-3.5 w-3.5" /><span v-if="downloadingFileId === file.id" role="status">Preparing download…</span></button><button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
-              <tr v-if="!files.length"><td colspan="6" class="p-0"><EmptyState title="No imported CSV batches." /></td></tr></tbody>
+            <thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">File</th><th class="px-4 py-2">Uploaded</th><th class="px-4 py-2">Uploaded by</th><th class="px-4 py-2">Stores</th><th class="px-4 py-2 text-right">Rows</th><th class="px-4 py-2 text-right">Net sales</th><th class="px-4 py-2 text-right">Actions</th></tr></thead>
+            <tbody><tr v-for="file in files" :key="file.id" class="border-t border-slate-100"><td class="px-4 py-3 font-semibold text-slate-800">{{ file.filename }}</td><td class="whitespace-nowrap px-4 py-3">{{ formatDateTime(file.uploaded_at) }}</td><td class="px-4 py-3">{{ file.uploader_verified ? file.uploaded_by : file.id === 'birmas-live' ? 'Birmas server' : 'Unknown' }}</td><td class="px-4 py-3">{{ file.stores || '—' }}</td><td class="px-4 py-3 text-right">{{ Number(file.row_count).toLocaleString() }}</td><td class="whitespace-nowrap px-4 py-3 text-right">{{ formatMoney(file.total_revenue) }}</td><td class="px-4 py-3"><div class="flex justify-end gap-2">
+              <button class="flex items-center gap-1 rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50 disabled:opacity-50" title="Download clean CSV" :disabled="!!downloadingFileId" :aria-busy="downloadingFileId === `${file.id}:clean`" @click="downloadFile(file)"><LoaderCircle v-if="downloadingFileId === `${file.id}:clean`" class="h-3.5 w-3.5 animate-spin" /><Download v-else class="h-3.5 w-3.5" /><span v-if="downloadingFileId === `${file.id}:clean`" role="status">Preparing…</span><span v-else>Clean</span></button>
+              <button v-if="file.original_available" class="flex items-center gap-1 rounded-lg border border-slate-200 p-2 text-teal-700 hover:bg-teal-50 disabled:opacity-50" title="Download original CSV with all columns" :disabled="!!downloadingFileId" :aria-busy="downloadingFileId === `${file.id}:original`" @click="downloadFile(file, true)"><LoaderCircle v-if="downloadingFileId === `${file.id}:original`" class="h-3.5 w-3.5 animate-spin" /><Download v-else class="h-3.5 w-3.5" /><span v-if="downloadingFileId === `${file.id}:original`" role="status">Preparing…</span><span v-else>Original</span></button>
+              <span v-else class="self-center text-[10px] text-slate-400">Original unavailable</span>
+              <button class="rounded-lg border border-slate-200 p-2 text-rose-600 hover:bg-rose-50" title="Delete this batch" @click="deletingFile = file"><Trash2 class="h-3.5 w-3.5" /></button></div></td></tr>
+              <tr v-if="!files.length"><td colspan="7" class="p-0"><EmptyState title="No imported CSV batches." /></td></tr></tbody>
           </table>
         </div>
       </section>

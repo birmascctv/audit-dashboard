@@ -7,14 +7,50 @@ import {
   allocatePaymentSales,
   CSV_COLUMNS,
   getEsbAnalytics,
+  getSalesArchive,
+  getSalesFiles,
   getSalesFileCsv,
+  finishSalesArchive,
   initializeSalesDatabase,
   insertSalesRows,
   makeWhere,
+  putSalesArchiveChunk,
   replaceLiveSalesWindow,
+  SALES_ARCHIVE_CHUNK_SIZE,
 } from '../salesDb.js';
 
 const headings = CSV_COLUMNS.map(([, label]) => label).join(',');
+
+test('archives complete original CSV bytes, retains uploader and cascades on deletion', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const row = { sales_date_in: '2026-01-02', branch: 'TEBET', sales_number: 'A', qty: 1, price: 1, total_after_bill_discount: 1 };
+    insertSalesRows(db, { fileId: 'csv', filename: 'original.csv', uploadedBy: 'mia', uploaderVerified: true, rows: [row] });
+    insertSalesRows(db, { fileId: 'csv', filename: 'original.csv', uploadedBy: 'mia', uploaderVerified: true, sourceRowOffset: 1, rows: [row] });
+    assert.throws(() => insertSalesRows(db, { fileId: 'csv', uploadedBy: 'other', uploaderVerified: true, rows: [row] }), /another user/);
+    const original = Buffer.concat([Buffer.from('metadata\nSales Number,Customer Name,Extra\nA,"Café, X",'), Buffer.alloc(SALES_ARCHIVE_CHUNK_SIZE, 65), Buffer.from('\n')]);
+    putSalesArchiveChunk(db, 'csv', 0, original.subarray(0, SALES_ARCHIVE_CHUNK_SIZE));
+    assert.throws(() => finishSalesArchive(db, 'csv', original.length, 2), /incomplete/);
+    assert.equal(getSalesArchive(db, 'csv'), null);
+    putSalesArchiveChunk(db, 'csv', 1, original.subarray(SALES_ARCHIVE_CHUNK_SIZE));
+    finishSalesArchive(db, 'csv', original.length, 2);
+    finishSalesArchive(db, 'csv', original.length, 2);
+    assert.throws(() => putSalesArchiveChunk(db, 'csv', 0, Buffer.from('tampered')), /already archived/);
+    const saved = db.prepare('SELECT content FROM sales_import_archive_chunks WHERE import_id = ? ORDER BY chunk_index').all('csv');
+    assert.deepEqual(Buffer.concat(saved.map((part) => Buffer.from(part.content))), original);
+    const history = getSalesFiles(db)[0];
+    assert.equal(history.uploaded_by, 'mia');
+    assert.equal(history.uploader_verified, 1);
+    assert.equal(history.original_available, 1);
+    assert.equal(getSalesArchive(db, 'csv').byte_length, original.length);
+    db.prepare('DELETE FROM sales_imports WHERE id = ?').run('csv');
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sales_import_archive_chunks').get().n, 0);
+    assert.equal(getSalesArchive(db, 'csv'), null);
+  } finally {
+    db.close();
+  }
+});
 
 test('downloaded sales CSV opens as separate Excel columns and preserves quoted values', () => {
   const db = new DatabaseSync(':memory:');
