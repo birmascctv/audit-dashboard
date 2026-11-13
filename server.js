@@ -12,9 +12,17 @@ import * as salesDb from './salesDb.js';
 import * as storeAuditService from './storeAuditService.js';
 import * as stockPeriodCsv from './stockPeriodCsv.js';
 import * as stockPeriodCsvStore from './stockPeriodCsvStore.js';
-import { captureStockSnapshot, ensureStockSnapshots } from './stockSnapshots.js';
+import { captureStockSnapshot, ensureStockSnapshots, recordStockSnapshotStatus } from './stockSnapshots.js';
 import { getRestockPlanner, canAccessRestock, DEFAULT_RESTOCK_SETTINGS, validateRestockConfig } from './restockPlanner.js';
-import { getPurchasingPlanner, savePurchasingProductSettings } from './purchasingPlanner.js';
+import {
+  getPurchasingPlanner, savePurchasingProductSettings, savePurchasingSettings,
+  saveSupplierSettings, saveManualPurchasingQuantity, savePurchasingHoliday,
+  deletePurchasingHoliday, saveHolidayAdjustment,
+} from './purchasingPlanner.js';
+import {
+  ensurePurchasingSchema, insertPurchaseHistoryRows, putPurchaseArchiveChunk,
+  finishPurchaseArchive, listPurchaseHistoryImports, recordPurchasingWeeklyReview,
+} from './purchasingStore.js';
 
 export function parseSafeMoney(val) {
   if (val === undefined || val === null || val === '') return 0;
@@ -611,6 +619,7 @@ export async function runBirmasServerSync(options = {}) {
             }
           } catch {}
           console.warn(`[Birmas Server Sync] Response error from ${url}: ${errMsg}`);
+          try { recordStockSnapshotStatus(db.getDb(), 'failed', errMsg); } catch (logError) { console.warn('[Stock Snapshot Log] Failed:', logError.message); }
           return {
             success: false,
             urlCalled: url,
@@ -636,6 +645,7 @@ export async function runBirmasServerSync(options = {}) {
         }
       } catch (fetchErr) {
         console.warn(`[Birmas Server Sync] Request notice: ${fetchErr.message}. Utilizing existing database stock.`);
+        try { recordStockSnapshotStatus(db.getDb(), 'failed', fetchErr.message); } catch (logError) { console.warn('[Stock Snapshot Log] Failed:', logError.message); }
         fetchFailed = true;
         break;
       }
@@ -817,8 +827,14 @@ export async function runBirmasServerSync(options = {}) {
 
     if (totalSyncedProducts > 0) {
       db.setConfig('last_birmas_server_synced_at', new Date().toISOString());
+      if (!fetchFailed) {
+        try { captureStockSnapshot(db.getDb()); } catch (snapshotError) { console.warn('[Stock Snapshots] Capture failed:', snapshotError.message); }
+      } else {
+        try { recordStockSnapshotStatus(db.getDb(), 'failed', 'Partial stock response; daily snapshot not captured.'); } catch (logError) { console.warn('[Stock Snapshot Log] Failed:', logError.message); }
+      }
       console.log(`[Birmas Server Sync] Completed! Synced ${totalSyncedProducts} store stocks from ${targetUrl}.`);
     } else {
+      try { recordStockSnapshotStatus(db.getDb(), 'no_data', 'The sync completed without stock records.'); } catch (logError) { console.warn('[Stock Snapshot Log] Failed:', logError.message); }
       console.log(`[Birmas Server Sync] Finished querying ${targetUrl}.`);
     }
 
@@ -834,6 +850,7 @@ export async function runBirmasServerSync(options = {}) {
     };
   } catch (err) {
     console.warn('[Birmas Server Sync Notice]:', err.message);
+    try { recordStockSnapshotStatus(db.getDb(), 'failed', err.message); } catch (logError) { console.warn('[Stock Snapshot Log] Failed:', logError.message); }
     return { success: false, error: err.message };
   } finally {
     isBirmasServerSyncing = false;
@@ -2872,15 +2889,9 @@ async function startServer() {
     try {
       const sqlite = db.getDb();
       ensureStockSnapshots(sqlite);
-      const branches = new Map([
-        ['SUDIRMAN', 'birmas-sudirman'], ['KUNINGAN', 'birmas-kuningan'], ['KWITANG', 'birmas-kwitang'],
-        ['LEBAK BULUS', 'birmas-lebak-bulus'], ['KELAPA GADING', 'birmas-kelapa-gading'],
-        ['TEBET', 'birmas-tebet'], ['NOMADIC', 'birmas-nomadic'], ['BALI NUSA DUA', 'birmas-nusadua'],
-      ]);
-      const matchBranch = (name) => branches.get(String(name).trim().toUpperCase()) || null;
       const saved = db.getConfig('restock_planner_config', '');
       const config = saved ? validateRestockConfig(JSON.parse(saved)) : { settings: DEFAULT_RESTOCK_SETTINGS, occasions: [] };
-      res.json({ success: true, ...getRestockPlanner(sqlite, salesDb.getSalesDb(), matchBranch, undefined, config) });
+      res.json({ success: true, ...getRestockPlanner(sqlite, salesDb.getSalesDb(), extractMatchedStoreId, undefined, config) });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2891,15 +2902,65 @@ async function startServer() {
     try {
       const sqlite = db.getDb();
       ensureStockSnapshots(sqlite);
-      const branches = new Map([
-        ['SUDIRMAN', 'birmas-sudirman'], ['KUNINGAN', 'birmas-kuningan'], ['KWITANG', 'birmas-kwitang'],
-        ['LEBAK BULUS', 'birmas-lebak-bulus'], ['KELAPA GADING', 'birmas-kelapa-gading'],
-        ['TEBET', 'birmas-tebet'], ['NOMADIC', 'birmas-nomadic'], ['BALI NUSA DUA', 'birmas-nusadua'],
-      ]);
-      const saved = db.getConfig('restock_planner_config', '');
-      const config = saved ? validateRestockConfig(JSON.parse(saved)) : { settings: DEFAULT_RESTOCK_SETTINGS, occasions: [] };
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
-      res.json({ success: true, ...getPurchasingPlanner(sqlite, salesDb.getSalesDb(), (name) => branches.get(String(name).trim().toUpperCase()) || null, today, config) });
+      const planner = getPurchasingPlanner(sqlite, salesDb.getSalesDb(), extractMatchedStoreId, today);
+      const rows = planner.rows.map(({ history, forecast, ...row }) => row);
+      res.json({ success: true, ...planner, rows });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/purchasing/product-details', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      const storeId = String(req.query.storeId || '');
+      const productId = String(req.query.productId || '');
+      if (!storeId || !productId) return res.status(400).json({ success: false, error: 'A product and outlet are required.' });
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+      const planner = getPurchasingPlanner(db.getDb(), salesDb.getSalesDb(), extractMatchedStoreId, today);
+      const row = planner.rows.find((item) => item.storeId === storeId && item.productId === productId);
+      if (!row) return res.status(404).json({ success: false, error: 'Purchasing product not found.' });
+      res.json({ success: true, row });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/purchasing/holiday-forecast', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      const storeId = String(req.query.storeId || '');
+      const holidayId = Number(req.query.holidayId);
+      if (!storeId || !Number.isInteger(holidayId) || holidayId < 1) {
+        return res.status(400).json({ success: false, error: 'A valid outlet and holiday are required.' });
+      }
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+      const planner = getPurchasingPlanner(db.getDb(), salesDb.getSalesDb(), extractMatchedStoreId, today);
+      const holiday = planner.upcomingHolidays.find((item) => item.id === holidayId);
+      if (!holiday) return res.status(404).json({ success: false, error: 'Upcoming holiday not found.' });
+      if (!planner.rows.some((row) => row.storeId === storeId)) return res.status(404).json({ success: false, error: 'Purchasing outlet not found.' });
+      const historyReference = planner.holidayAnalysis.filter((item) =>
+        item.storeId === storeId && item.name === holiday.name && !item.combined)
+        .sort((a, b) => b.startDate.localeCompare(a.startDate))[0] || null;
+      const savedAdjustment = holiday.adjustments.find((item) => item.storeId === storeId)?.adjustmentPct ?? null;
+      const rows = planner.rows.filter((row) => row.storeId === storeId && !row.reason).map((row) => {
+        const period = row.forecast.filter((day) => day.date >= holiday.start_date && day.date <= holiday.end_date);
+        const expectedDays = Math.round((Date.parse(`${holiday.end_date}T00:00:00Z`) - Date.parse(`${holiday.start_date}T00:00:00Z`)) / 86400000) + 1;
+        return {
+          productId: row.productId, productName: row.productName, productVariant: row.productVariant,
+          baseUnit: row.baseUnit, purchasingUnit: row.purchasingUnit, conversionQty: row.conversionQty,
+          reason: row.reason, historyReference, savedAdjustmentPct: savedAdjustment,
+          forecastAvailable: period.length === expectedDays,
+          normalDemand: period.length === expectedDays && period.every((day) => day.normalQty != null)
+            ? period.reduce((sum, day) => sum + day.normalQty, 0) : null,
+          adjustedDemand: period.length === expectedDays && period.every((day) => day.qty != null)
+            ? period.reduce((sum, day) => sum + day.qty, 0) : null,
+          maximumProjectedStock7: row.maximumProjectedStock7,
+          recommendation7: row.recommendation7,
+        };
+      });
+      res.json({ success: true, rows });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -2913,6 +2974,124 @@ async function startServer() {
     } catch (err) {
       res.status(400).json({ success: false, error: err.message });
     }
+  });
+
+  app.put('/api/purchasing/settings', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try { res.json({ success: true, settings: savePurchasingSettings(db.getDb(), req.body || {}) }); }
+    catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  app.put('/api/purchasing/supplier', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      saveSupplierSettings(db.getDb(), req.body || {});
+      if (req.body?.selected) savePurchasingProductSettings(db.getDb(), {
+        storeId: req.body.storeId, productId: req.body.productId, supplier: req.body.supplierName,
+      });
+      res.json({ success: true });
+    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  app.put('/api/purchasing/order-quantity', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      saveManualPurchasingQuantity(db.getDb(), req.body || {});
+      res.json({ success: true });
+    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  app.post('/api/purchasing/holidays', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try { res.json({ success: true, id: savePurchasingHoliday(db.getDb(), req.body || {}) }); }
+    catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  app.put('/api/purchasing/holidays/:id', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try { res.json({ success: true, id: savePurchasingHoliday(db.getDb(), { ...req.body, id: Number(req.params.id) }) }); }
+    catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  app.delete('/api/purchasing/holidays/:id', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      if (!deletePurchasingHoliday(db.getDb(), Number(req.params.id))) return res.status(404).json({ success: false, error: 'Holiday not found.' });
+      res.json({ success: true });
+    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  app.put('/api/purchasing/holiday-adjustment', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      saveHolidayAdjustment(db.getDb(), req.body || {});
+      res.json({ success: true });
+    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  app.post('/api/purchasing/history/import', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      const result = insertPurchaseHistoryRows(db.getDb(), {
+        importId: req.body?.importId, filename: req.body?.filename, fileSize: req.body?.fileSize,
+        uploadedBy: req.authUser.username, rows: req.body?.rows,
+      });
+      res.json({ success: true, ...result });
+    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  function canWritePurchaseArchive(sqlite, fileId, user) {
+    const owner = sqlite.prepare('SELECT uploaded_by FROM purchasing_history_imports WHERE id=?').get(fileId);
+    return !!owner && owner.uploaded_by === user?.username;
+  }
+
+  app.put('/api/purchasing/history/:id/archive/:index', express.raw({ type: 'application/octet-stream', limit: '1mb' }), (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      if (!canWritePurchaseArchive(db.getDb(), req.params.id, req.authUser)) return res.status(403).json({ success: false, error: 'Only the uploader can archive this import.' });
+      if (!/^(0|[1-9]\d*)$/.test(req.params.index)) throw new Error('Invalid archive chunk index.');
+      putPurchaseArchiveChunk(db.getDb(), req.params.id, Number(req.params.index), req.body);
+      res.json({ success: true });
+    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  app.post('/api/purchasing/history/:id/archive/complete', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      if (!canWritePurchaseArchive(db.getDb(), req.params.id, req.authUser)) return res.status(403).json({ success: false, error: 'Only the uploader can archive this import.' });
+      finishPurchaseArchive(db.getDb(), req.params.id, req.body?.byteLength, req.body?.chunkCount);
+      res.json({ success: true });
+    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
+  });
+
+  app.get('/api/purchasing/history/imports', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try { res.json({ success: true, imports: listPurchaseHistoryImports(db.getDb()) }); }
+    catch (err) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  app.get('/api/purchasing/history/:id/original', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      const sqlite = db.getDb();
+      const archive = sqlite.prepare(`SELECT filename,archive_byte_length byteLength,archive_chunk_count chunkCount
+        FROM purchasing_history_imports WHERE id=? AND archive_byte_length IS NOT NULL`).get(req.params.id);
+      if (!archive) return res.status(404).send('Original purchase-history CSV is not available.');
+      const chunks = sqlite.prepare('SELECT content FROM purchasing_history_archive_chunks WHERE import_id=? AND chunk_index=?');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Length', archive.byteLength);
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(archive.filename)}`);
+      const stream = Readable.from((function* () {
+        for (let index = 0; index < archive.chunkCount; index++) {
+          const row = chunks.get(req.params.id, index);
+          if (!row) throw new Error('Original purchase-history archive is incomplete.');
+          yield Buffer.from(row.content);
+        }
+      })());
+      stream.on('error', () => res.destroy());
+      res.on('close', () => stream.destroy());
+      stream.pipe(res);
+    } catch (err) { res.status(500).send(err.message); }
   });
 
   app.put('/api/restock-planner/config', (req, res) => {
@@ -3096,6 +3275,29 @@ async function startServer() {
     setInterval(runSalesSync, SALES_SYNC_INTERVAL_MS);
     console.log(`[Birmas Server] SQLite Tables Ready at http://localhost:${PORT}`);
 
+    function runPurchasingWeeklyReview() {
+      const now = new Date();
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(now);
+      if (new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jakarta', weekday: 'short' }).format(now) !== 'Mon') return;
+      try {
+        const sqlite = db.getDb();
+        ensurePurchasingSchema(sqlite);
+        const previous = sqlite.prepare('SELECT status FROM purchasing_weekly_review_runs WHERE review_date=?').get(today);
+        if (previous?.status === 'completed') return;
+        const result = getPurchasingPlanner(sqlite, salesDb.getSalesDb(), extractMatchedStoreId, today);
+        const status = result.reviewIsStale ? 'waiting_for_stock' : 'completed';
+        recordPurchasingWeeklyReview(sqlite, {
+          reviewDate: today, stockDate: result.reviewDate, status, rowCount: result.rows.length,
+          reorderCount: result.rows.filter((row) => row.recommendation7?.calculatedQty > 0).length,
+          error: result.reviewIsStale ? 'Waiting for the Monday inventory snapshot.' : null,
+        });
+      } catch (reviewError) {
+        try { recordPurchasingWeeklyReview(db.getDb(), { reviewDate: today, status: 'failed', error: reviewError.message }); }
+        catch (logError) { console.error('[Purchasing Weekly Review] Could not record failure:', logError.message); }
+        console.error('[Purchasing Weekly Review] Failed:', reviewError.message);
+      }
+    }
+
     // Combined automatic sync routine:
     // 1. Primary: Pull from Birmas Central Server (https://admin.birmas.id) - Permanent & No cURL needed!
     // 2. Secondary fallback: My ESB ERP session if configured
@@ -3131,6 +3333,8 @@ async function startServer() {
 
     const intervalMins = parseInt(process.env.BIRMAS_SYNC_INTERVAL_MINUTES || '15', 10) || 15;
     const SYNC_INTERVAL_MS = intervalMins * 60 * 1000;
+    setTimeout(runPurchasingWeeklyReview, 5000);
+    setInterval(runPurchasingWeeklyReview, SYNC_INTERVAL_MS);
     setInterval(() => {
       executePeriodicSync();
     }, SYNC_INTERVAL_MS);
