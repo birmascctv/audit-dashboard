@@ -74,3 +74,26 @@ test('missing or stale Monday stock snapshots prevent purchasing quantities', ()
   assert.equal(row.recommendation7, null);
   stock.close(); sales.close();
 });
+
+test('ambiguous sales names identify affected stock products and suppress partial recommendations', () => {
+  const { stock, sales, get } = fixture();
+  stock.exec(`
+    INSERT INTO products VALUES ('p2','Product','Other variant','BEER','SKU-2','Can');
+    INSERT INTO store_stocks VALUES ('s','p2',3,3,'2026-01-31T12:00:00Z');
+    INSERT INTO stock_snapshots VALUES ('s','p2','2026-01-26',3);
+  `);
+  sales.prepare('INSERT INTO sales_transactions VALUES(?,?,?,?,?)').run('Store', 'SKU-1', '2026-01-25 12:00', 5, 50);
+  const result = get();
+  assert.equal(result.ambiguousMatches.length, 1);
+  assert.equal(result.ambiguousMatches[0].salesName, 'Product');
+  assert.deepEqual(result.ambiguousMatches[0].products.map((p) => p.productId).sort(), ['p', 'p2']);
+  for (const row of result.rows) {
+    assert.match(row.reason, /Ambiguous sales match/);
+    assert.equal(row.recommendation7, null);
+  }
+  sales.exec("DELETE FROM sales_transactions WHERE menu='Product'");
+  const resolved = get();
+  assert.equal(resolved.ambiguousMatches.length, 0);
+  assert.ok(resolved.rows.find((row) => row.productId === 'p').recommendation7);
+  stock.close(); sales.close();
+});

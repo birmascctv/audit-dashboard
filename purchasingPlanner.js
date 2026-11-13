@@ -201,6 +201,8 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     WHERE sales_date_in>=? AND sales_date_in<? AND menu<>'' GROUP BY branch,menu,substr(sales_date_in,1,10)`)
     .all(allSalesStart, addDays(today, 1));
   const productsByAlias = new Map(), storeSales = new Map(), productSales = new Map(), coverage = new Map();
+  const ambiguousSales = new Map();
+  const stockByKey = new Map(stocks.map((row) => [pair(row.storeId, row.productId), row]));
   for (const row of stocks) {
     if (isExcludedPurchasingCategory(row.category)) continue;
     for (const alias of new Set([row.productName, row.productVariant, row.sku].filter(Boolean).map(cleanName))) {
@@ -227,8 +229,22 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       if (!productSales.has(key)) productSales.set(key, new Map());
       const prior = productSales.get(key).get(sale.date) || { qty: 0, revenue: 0 };
       productSales.get(key).set(sale.date, { qty: prior.qty + Number(sale.qty), revenue: prior.revenue + Number(sale.revenue) });
+    } else if (matches?.size > 1 && sale.date >= historyStart && sale.date <= historyEnd) {
+      if (!ambiguousSales.has(aliasKey)) ambiguousSales.set(aliasKey, {
+        storeId, store: stockByKey.get(pair(storeId, [...matches][0]))?.store,
+        salesName: sale.menu, productIds: [...matches],
+      });
     }
   }
+  const ambiguousProductKeys = new Set();
+  const ambiguousMatches = [...ambiguousSales.values()].map(({ productIds, ...match }) => ({
+    ...match,
+    products: productIds.map((productId) => {
+      ambiguousProductKeys.add(pair(match.storeId, productId));
+      const stock = stockByKey.get(pair(match.storeId, productId));
+      return { productId, name: stock.productName, variant: stock.productVariant, sku: stock.sku };
+    }),
+  })).sort((a, b) => a.store.localeCompare(b.store) || a.salesName.localeCompare(b.salesName));
   const historyPurchases = stockDb.prepare(`SELECT * FROM purchasing_history_records WHERE excluded=0 ORDER BY purchase_date DESC,id DESC`).all();
   const stockAliases = new Map();
   for (const row of stocks) {
@@ -342,8 +358,9 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     const reason = isExcludedPurchasingCategory(stock.category) ? 'Excluded category' :
       !reviewDate || reviewIsStale ? 'No recent Monday stock snapshot' :
         mondayStocks.get(key) == null ? 'Product missing from Monday stock snapshot' :
-          !matchingSales ? 'No unambiguous exact product match in sales history' :
-            eligible.length === 0 ? 'No usable sales days in history window' : '';
+          ambiguousProductKeys.has(key) ? 'Ambiguous sales match; see Ambiguous sales-to-stock matches' :
+            !matchingSales ? 'No exact product match in sales history' :
+              eligible.length === 0 ? 'No usable sales days in history window' : '';
     const avgDailyRaw = !reason ? eligible.reduce((sum, date) => sum + (history.get(date)?.qty || 0), 0) / eligible.length : null;
     const weekdayAverages = Array.from({ length: 7 }, (_, day) => {
       const dates = eligible.filter((date) => dayOfWeek(date) === day);
@@ -499,7 +516,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     (a.daysLeft ?? Infinity) - (b.daysLeft ?? Infinity) || a.product.localeCompare(b.product));
   return {
     today, reviewDate, reviewIsStale, historyStart, historyEnd, settings, rows, holidays,
-    holidayAnalysis, upcomingHolidays: upcoming, imports, snapshotSync, weeklyReview,
+    holidayAnalysis, upcomingHolidays: upcoming, imports, snapshotSync, weeklyReview, ambiguousMatches,
     excludedCategories: [...excludedCategories],
   };
 }

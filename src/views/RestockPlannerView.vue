@@ -5,7 +5,7 @@ import 'chart.js/auto';
 import { authFetchJson, getAuthToken } from '../services/authFetch.js';
 import PurchasingHistoryUpload from '../components/PurchasingHistoryUpload.vue';
 
-const empty = { rows: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], imports: [], settings: {} };
+const empty = { rows: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], imports: [], ambiguousMatches: [], settings: {} };
 const data = ref({ ...empty });
 const loading = ref(true);
 const error = ref('');
@@ -60,6 +60,8 @@ const counts = computed(() => ({
 }));
 const holidayAnalysis = computed(() => data.value.holidayAnalysis.filter((row) =>
   storeFilter.value === 'all' || row.storeId === storeFilter.value));
+const ambiguousMatches = computed(() => data.value.ambiguousMatches.filter((match) =>
+  storeFilter.value === 'all' || match.storeId === storeFilter.value));
 const adjustmentHoliday = computed(() => data.value.upcomingHolidays.find((holiday) => String(holiday.id) === String(selectedHolidayId.value)));
 const adjustmentOutlet = computed(() => stores.value.find((store) => store.id === selectedHolidayStore.value));
 const number = (value, digits = 0) => value == null || !Number.isFinite(Number(value)) ? '—' :
@@ -140,6 +142,11 @@ function initializeHolidayAdjustments() {
 async function loadPurchasing() {
   const selectedKey = selected.value ? { storeId: selected.value.storeId, productId: selected.value.productId } : null;
   const result = await authFetchJson('/api/purchasing');
+  if (!['rows', 'holidays', 'holidayAnalysis', 'upcomingHolidays', 'imports', 'ambiguousMatches']
+    .every((key) => Array.isArray(result[key])) || !result.settings ||
+    result.rows.some((row) => !Array.isArray(row.suppliers) || !Array.isArray(row.holidayEvents))) {
+    throw new Error('Purchasing server data is incompatible with this page. The server needs to be updated and restarted.');
+  }
   data.value = result;
   settingsDraft.value = { ...result.settings };
   if (selectedKey) {
@@ -425,6 +432,14 @@ onMounted(async () => {
           <label class="text-xs font-bold">Status<select v-model="statusFilter" class="mt-1 block rounded-lg border p-2"><option value="all">All statuses</option><option v-for="status in statuses" :key="status">{{ status }}</option></select></label>
           <label class="text-xs font-bold">Movement<select v-model="movementFilter" class="mt-1 block rounded-lg border p-2"><option value="all">Fast & slow</option><option>Fast Moving</option><option>Slow Moving</option><option>Unknown</option></select></label>
           <p class="ml-auto text-xs text-slate-500">Monday reference: {{ data.reviewDate || 'missing' }} · Calculation: last {{ data.settings.historyWeeks }} weeks · 1-day buffer for Tuesday PO creation</p>
+        </section>
+        <section class="rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <h2 class="font-bold text-amber-900">Ambiguous sales-to-stock matches ({{ ambiguousMatches.length }})</h2>
+          <p class="mt-1 text-xs text-amber-900">These sales names match more than one stock product in the same outlet during the history window. Orders are withheld for the affected products; correct the product names or SKUs in the source data so each sales name identifies one product.</p>
+          <p v-if="!ambiguousMatches.length" class="mt-2 text-xs text-amber-900">No ambiguous matches found for the selected outlet.</p>
+          <div v-else class="mt-3 overflow-x-auto"><table class="w-full text-left text-xs"><thead><tr><th class="p-2">Outlet</th><th class="p-2">Sales name</th><th class="p-2">Matching stock products</th></tr></thead><tbody>
+            <tr v-for="match in ambiguousMatches" :key="`${match.storeId}-${match.salesName}`" class="border-t border-amber-200"><td class="p-2">{{ match.store }}</td><td class="p-2">{{ match.salesName }}</td><td class="p-2"><div v-for="product in match.products" :key="product.productId">{{ product.name || 'Unnamed' }} · {{ product.variant || 'No variant' }} · SKU: {{ product.sku || 'not supplied' }} · ID: {{ product.productId }}</div></td></tr>
+          </tbody></table></div>
         </section>
         <section class="overflow-hidden rounded-xl border bg-white shadow-sm">
           <header class="flex flex-wrap items-center justify-between gap-2 border-b p-4"><div><h2 class="font-bold">Reorder recommendations</h2><p class="text-xs text-slate-500">Demand uses weekday averages; Friday–Sunday patterns are calculated separately. Order quantities are supplier purchasing units.</p></div><button class="rounded-lg border px-3 py-2 text-xs font-bold" @click="exportCsv">Export CSV</button></header>
