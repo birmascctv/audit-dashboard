@@ -273,7 +273,7 @@ function initTables(db) {
   upsertStore.run('birmas-lebak-bulus', 'Birmas Lebak Bulus', 'BRM-LBB', 'BRMLB');
   upsertStore.run('birmas-sudirman', 'Birmas Sudirman', 'BRM-SDR', 'OUTS');
   upsertStore.run('birmas-tebet', 'Birmas Tebet', 'BRM-TBT', 'BRMT');
-  upsertStore.run('birmas-nomadic', 'Birmas Nomadic (Bandung)', 'BRM-NMD', 'LR00');
+  upsertStore.run('birmas-nomadic', 'Birmas Nomadic (Bandung)', 'BRM-NMD', 'BRMN');
   upsertStore.run('birmas-nusadua', 'Birmas Nusa Dua (Bali)', 'BRM-BAL', 'BBND');
 
   // Purge any legacy mock barcodes from previous template versions

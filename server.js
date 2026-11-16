@@ -91,7 +91,7 @@ export const BIRMAS_STORE_KEYWORD_MAP = [
   { storeId: 'birmas-lebak-bulus', name: 'Birmas Lebak Bulus', keywords: ['lebak bulus', 'lebak', 'bulus', 'brmlb', 'lbb', 'lbulus', 'outlet lebak bulus'] },
   { storeId: 'birmas-kelapa-gading', name: 'Birmas Kelapa Gading', keywords: ['kelapa gading', 'gading', 'brmkg', 'kgading', 'outlet kelapa gading'] },
   { storeId: 'birmas-tebet', name: 'Birmas Tebet', keywords: ['tebet', 'brmt', 'tbt', 'outlet tebet'] },
-  { storeId: 'birmas-nomadic', name: 'Birmas Nomadic (Bandung)', keywords: ['nomadic', 'bandung', 'lr00'] },
+  { storeId: 'birmas-nomadic', name: 'Birmas Nomadic (Bandung)', keywords: ['nomadic', 'bandung', 'brmn', 'lr00'] },
   { storeId: 'birmas-nusadua', name: 'Birmas Nusa Dua (Bali)', keywords: ['nusa dua', 'bali', 'nusadua', 'bbnd'] },
 ];
 
@@ -388,7 +388,7 @@ let isBirmasServerSyncing = false;
 
 const ALWAYS_INCLUDED_ESB_PRODUCTS = new Set(['GELAS CUP']);
 const EXCLUDED_ESB_CATEGORIES = new Set(['LAIN-LAIN', 'LAIN LAIN', 'PERLENGKAPAN OUTLET', 'ELECTRONIC']);
-const ESB_FEED_STORES = { BRMS: 'birmas-sudirman', BRMK: 'birmas-kuningan', BRMKW: 'birmas-kwitang', LR00: 'birmas-nomadic' };
+const ESB_FEED_STORES = { BRMS: 'birmas-sudirman', BRMK: 'birmas-kuningan', BRMKW: 'birmas-kwitang', BRMN: 'birmas-nomadic', LR00: 'birmas-nomadic' };
 
 export function isExcludedEsbProduct(name, category) {
   const n = String(name || '').trim().toUpperCase();
