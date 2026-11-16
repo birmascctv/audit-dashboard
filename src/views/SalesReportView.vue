@@ -48,6 +48,13 @@ const promotionChartStores = ref(null);
 const promotionChartPromos = ref(null);
 const promotionSearch = ref('');
 const topProductStores = ref(null);
+const topCategory = ref('');
+const topCategoryStore = ref('');
+const topCategoryRank = ref('qty');
+const topCategoryRows = ref([]);
+const topCategoryError = ref('');
+const topCategoryLoading = ref(false);
+let topCategoryRequestId = 0;
 const categoryChartStores = ref(null);
 const categoryChartCategories = ref(null);
 const categoryChartMetric = ref('sales');
@@ -734,11 +741,15 @@ async function getJson(url, options = {}) {
 async function loadReport() {
   const requestId = ++reportRequestId;
   if (dateRangeError.value) {
+    topCategoryRequestId++;
+    topCategoryRows.value = [];
+    topCategoryLoading.value = false;
     error.value = dateRangeError.value;
     summary.value = {};
     loading.value = false;
     return;
   }
+  loadTopCategory();
   loading.value = true;
   error.value = '';
   try {
@@ -752,6 +763,29 @@ async function loadReport() {
     }
   } finally {
     if (requestId === reportRequestId) loading.value = false;
+  }
+}
+async function loadTopCategory() {
+  const requestId = ++topCategoryRequestId;
+  if (dateRangeError.value) {
+    topCategoryRows.value = [];
+    topCategoryLoading.value = false;
+    return;
+  }
+  topCategoryLoading.value = true;
+  topCategoryError.value = '';
+  try {
+    const result = await getJson(`/api/sales/top-products-by-category?${queryString({
+      ...filters(), category: topCategory.value, categoryStore: topCategoryStore.value, rankBy: topCategoryRank.value,
+    })}`);
+    if (requestId === topCategoryRequestId) topCategoryRows.value = result.rows || [];
+  } catch (loadError) {
+    if (requestId === topCategoryRequestId) {
+      topCategoryRows.value = [];
+      topCategoryError.value = loadError.message || 'Could not load products by category.';
+    }
+  } finally {
+    if (requestId === topCategoryRequestId) topCategoryLoading.value = false;
   }
 }
 async function loadStockCompare() {
@@ -840,12 +874,14 @@ function syncChartStores(selection) {
   paymentBarStores.value = selected;
   promotionChartStores.value = selected;
   topProductStores.value = selected;
+  topCategoryStore.value = '';
   categoryChartStores.value = selected;
   visitPurposeChartStores.value = selected;
   productChartStores.value = selected;
   timeSelectedStores.value = selected;
 }
 watch(selectedStores, syncChartStores, { deep: true });
+watch([topCategory, topCategoryStore, topCategoryRank], loadTopCategory);
 watch([timeRangeStart, timeRangeEnd, timeSelectedStores], loadTimeSummary);
 watch([stockCompareStore, stockCompareDate], loadStockCompare);
 watch(() => summary.value.latestBusinessDate, (date) => { if (date && !stockCompareDate.value) stockCompareDate.value = date; });
@@ -1241,6 +1277,25 @@ onBeforeUnmount(() => {
           </table>
         </div>
         </article>
+      </section>
+
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <header class="flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 px-4 py-3">
+          <div><h2 class="text-sm font-bold text-slate-900">Top 10 Products Per Category</h2><p class="text-[11px] text-slate-500">Top ten within each category, combined across the selected stores. Uses the global date and store filters.</p></div>
+          <div class="flex flex-wrap gap-2">
+            <label class="text-xs font-semibold">Category<select v-model="topCategory" class="ml-2 rounded-lg border p-2"><option value="">All categories</option><option v-for="category in categoryOptions" :key="category" :value="category">{{ category }}</option><option v-if="!categoryOptions.includes('Unspecified')" value="Unspecified">Unspecified</option></select></label>
+            <label class="text-xs font-semibold">Store<select v-model="topCategoryStore" class="ml-2 rounded-lg border p-2"><option value="">All selected stores</option><option v-for="store in chartStoreOptions" :key="store.name" :value="store.name">{{ store.name }}</option></select></label>
+            <label class="text-xs font-semibold">Rank by<select v-model="topCategoryRank" class="ml-2 rounded-lg border p-2"><option value="qty">Qty sold</option><option value="sales">Revenue</option></select></label>
+          </div>
+        </header>
+        <p v-if="topCategoryError" role="alert" class="p-4 text-xs text-red-700">{{ topCategoryError }}</p>
+        <p v-else-if="topCategoryLoading" class="p-4 text-xs text-slate-500">Loading category rankings…</p>
+        <div v-else class="max-h-[36rem] overflow-auto">
+          <table class="sales-data-table w-full table-fixed text-left text-xs"><thead class="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="w-[8%] px-4 py-2">Rank</th><th class="w-[22%] px-4 py-2">Category</th><th class="px-4 py-2">Product</th><th class="w-[12%] px-4 py-2 text-right">Qty</th><th class="w-[22%] px-4 py-2 text-right">Sales</th></tr></thead><tbody class="sales-table-body">
+            <tr v-for="item in topCategoryRows" :key="`${item.category}-${item.menu}`" class="border-t border-slate-100"><td class="px-4 py-2">{{ item.rank }}</td><td class="px-4 py-2 font-semibold">{{ item.category }}</td><td class="px-4 py-2">{{ item.menu }}</td><td class="px-4 py-2 text-right font-mono">{{ Number(item.qty || 0).toLocaleString('id-ID') }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td></tr>
+            <tr v-if="!topCategoryRows.length"><td colspan="5" class="p-0"><EmptyState title="No product sales for these filters." /></td></tr>
+          </tbody></table>
+        </div>
       </section>
 
       <section class="space-y-4 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

@@ -7,6 +7,7 @@ import {
   allocatePaymentSales,
   CSV_COLUMNS,
   getEsbAnalytics,
+  getTopProductsPerCategory,
   getSalesArchive,
   getSalesFiles,
   getSalesFileCsv,
@@ -20,6 +21,49 @@ import {
 } from '../salesDb.js';
 
 const headings = CSV_COLUMNS.map(([, label]) => label).join(',');
+
+test('Sales Report initializes and renders the category rankings section', async () => {
+  const { createServer } = await import('vite');
+  const { default: vue } = await import('@vitejs/plugin-vue');
+  const { createSSRApp } = await import('vue');
+  const { renderToString } = await import('@vue/server-renderer');
+  const vite = await createServer({
+    configFile: false, plugins: [vue()], server: { middlewareMode: true, hmr: false, ws: false, watch: null },
+    optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom',
+  });
+  try {
+    const { default: SalesReport } = await vite.ssrLoadModule('/src/views/SalesReportView.vue');
+    const app = createSSRApp(SalesReport);
+    app.component('RouterLink', { render: () => null });
+    assert.match(await renderToString(app), /Top 10 Products Per Category/);
+  } finally { await vite.close(); }
+});
+
+test('category rankings aggregate selected stores before ranking and honor dates and filters', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    initializeSalesDatabase(db);
+    const rows = Array.from({ length: 11 }, (_, i) => ({
+      sales_date_in: '2026-01-02 12:00:00', branch: 'A', menu_category: 'BEER',
+      menu: `Beer ${i}`, qty: 20 - i, price: 10, total_after_bill_discount: 10 * (20 - i),
+    }));
+    rows[9].total_after_bill_discount = 9000;
+    rows.push({ ...rows[10], branch: 'B', qty: 50, total_after_bill_discount: 100 });
+    rows.push({ ...rows[0], branch: 'B', menu_category: 'WINE', menu: 'Wine', qty: 3, total_after_bill_discount: 3000 });
+    rows.push({ ...rows[0], sales_date_in: '2026-01-03', menu: 'Excluded date', qty: 1000 });
+    insertSalesRows(db, { fileId: 'categories', rows });
+    const filters = { startDate: '2026-01-02', endDate: '2026-01-02', storeIds: ['A', 'B'] };
+    const all = getTopProductsPerCategory(filters, db);
+    assert.equal(all.filter((r) => r.category === 'BEER').length, 10);
+    assert.equal(all.find((r) => r.category === 'BEER' && r.rank === 1).menu, 'Beer 10');
+    assert.equal(all.find((r) => r.category === 'BEER' && r.rank === 1).qty, 60);
+    assert.equal(all.find((r) => r.category === 'WINE').menu, 'Wine');
+    assert.equal(getTopProductsPerCategory({ ...filters, category: 'BEER', categoryStore: 'A' }, db)[0].menu, 'Beer 0');
+    assert.equal(getTopProductsPerCategory({ ...filters, category: 'BEER', rankBy: 'sales' }, db)[0].menu, 'Beer 9');
+    assert.equal(getTopProductsPerCategory({ ...filters, storeIds: ['A'], categoryStore: 'B' }, db).length, 0);
+    assert.equal(getTopProductsPerCategory({ ...filters, category: 'WINE', rankBy: 'sales' }, db)[0].sales, 3000);
+  } finally { db.close(); }
+});
 
 test('archives complete original CSV bytes, retains uploader and cascades on deletion', () => {
   const db = new DatabaseSync(':memory:');

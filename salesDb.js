@@ -524,6 +524,34 @@ export function getSalesReport(filters = {}) {
   return { transactions: rows, total };
 }
 
+export function getTopProductsPerCategory(filters = {}, db = getSalesDb()) {
+  const where = makeWhere(filters);
+  const conditions = [where.sql ? where.sql.slice(6) : '1 = 1', "TRIM(COALESCE(menu, '')) <> ''"];
+  const values = [...where.values];
+  if (filters.categoryStore) {
+    conditions.push('branch = ?');
+    values.push(filters.categoryStore);
+  }
+  const category = "COALESCE(NULLIF(TRIM(menu_category), ''), 'Unspecified')";
+  if (filters.category) {
+    conditions.push(`${category} = ?`);
+    values.push(filters.category);
+  }
+  const sort = filters.rankBy === 'sales' ? 'sales DESC, qty DESC' : 'qty DESC, sales DESC';
+  return db.prepare(`
+    WITH totals AS (
+      SELECT ${category} AS category, menu, SUM(qty) AS qty, SUM(total_after_bill_discount) AS sales
+      FROM sales_transactions WHERE ${conditions.join(' AND ')}
+      GROUP BY ${category}, menu
+    ), ranked AS (
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY category ORDER BY ${sort}, menu COLLATE NOCASE) AS rank
+      FROM totals
+    )
+    SELECT category, menu, qty, sales, rank FROM ranked WHERE rank <= 10
+    ORDER BY category COLLATE NOCASE, rank
+  `).all(...values);
+}
+
 function pivotRows(db, where, dimension, filters) {
   const expr = {
     brand: 'menu_category_detail',

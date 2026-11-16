@@ -47,7 +47,7 @@ export function savePurchasingProductSettings(db, { storeId, productId, minStock
   ensurePurchasingSchema(db);
   if (typeof storeId !== 'string' || typeof productId !== 'string' || !storeId || !productId ||
       (minStock !== null && minStock !== undefined && (!Number.isFinite(minStock) || minStock < 0 || minStock > 1000000000)) ||
-      (leadDays !== null && leadDays !== undefined && (!Number.isInteger(leadDays) || leadDays < 1 || leadDays > 365)) ||
+      leadDays != null ||
       (movement !== null && movement !== undefined && !['Fast Moving', 'Slow Moving'].includes(movement)) ||
       (supplier !== null && supplier !== undefined && (typeof supplier !== 'string' || supplier.length > 200))) {
     throw new Error('Provide valid product purchasing settings.');
@@ -56,7 +56,7 @@ export function savePurchasingProductSettings(db, { storeId, productId, minStock
   const current = db.prepare('SELECT * FROM purchasing_product_settings WHERE store_id=? AND product_id=?').get(storeId, productId) || {};
   const next = {
     minStock: minStock === undefined ? current.min_stock ?? null : minStock,
-    leadDays: leadDays === undefined ? current.lead_days ?? null : leadDays,
+    leadDays: current.lead_days ?? null,
     movement: movement === undefined ? current.movement_override ?? null : movement,
     supplier: supplier === undefined ? current.selected_supplier ?? null : supplier,
   };
@@ -91,18 +91,6 @@ export function saveSupplierSettings(db, input) {
     lead_days=excluded.lead_days,moq=excluded.moq,purchasing_unit=excluded.purchasing_unit,
     conversion_qty=excluded.conversion_qty,base_unit=excluded.base_unit,updated_at=excluded.updated_at`)
     .run(storeId, productId, supplierName.trim(), leadDays, moq, purchasingUnit || null, conversionQty, baseUnit || null, new Date().toISOString());
-}
-
-export function saveManualPurchasingQuantity(db, input) {
-  const { storeId, productId, reviewDate, supplierName = '', coverageDays, quantity } = input || {};
-  if (typeof storeId !== 'string' || typeof productId !== 'string' || !storeId || !productId ||
-      !isValidDate(reviewDate) || ![7, 10].includes(coverageDays) ||
-      !Number.isInteger(quantity) || quantity < 0 || quantity > 1000000000) throw new Error('Enter a whole-number manual order quantity.');
-  ensurePurchasingSchema(db);
-  db.prepare(`INSERT INTO purchasing_qty_overrides(store_id,product_id,review_date,supplier_name,coverage_days,quantity,updated_at)
-    VALUES(?,?,?,?,?,?,?) ON CONFLICT(store_id,product_id,review_date,supplier_name,coverage_days)
-    DO UPDATE SET quantity=excluded.quantity,updated_at=excluded.updated_at`)
-    .run(storeId, productId, reviewDate, supplierName, coverageDays, quantity, new Date().toISOString());
 }
 
 export function savePurchasingHoliday(db, input) {
@@ -224,6 +212,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
   for (const sale of saleRows) {
     const storeId = matchStore(sale.branch);
     if (!storeId) continue;
+    if (storeId === 'birmas-nomadic' && !storeIds.includes(storeId)) storeIds.push(storeId);
     const saleKey = pair(storeId, sale.date);
     if (!storeSales.has(saleKey)) storeSales.set(saleKey, { revenue: 0, branchNames: new Set() });
     const total = storeSales.get(saleKey);
@@ -295,8 +284,6 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     .map((row) => [pair(row.store_id, `${row.product_id}::${row.supplier_name}`), row]));
   const productSettings = new Map(stockDb.prepare('SELECT * FROM purchasing_product_settings').all()
     .map((row) => [pair(row.store_id, row.product_id), row]));
-  const manualQty = new Map(stockDb.prepare('SELECT * FROM purchasing_qty_overrides WHERE review_date=?').all(reviewDate || '')
-    .map((row) => [pair(pair(row.store_id, row.product_id), `${row.supplier_name}::${row.coverage_days}`), row.quantity]));
   const holidayWindows = holidays.map((event) => ({ start: event.window_start, end: event.window_end }));
   const validHolidays = holidays.filter((event) => event.end_date < today);
   const holidayAnalysis = [];
@@ -411,7 +398,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     }
     const selectedSupplierName = preferences.selected_supplier || suppliers[0]?.supplierName || '';
     const supplier = suppliers.find((item) => item.supplierName === selectedSupplierName) || null;
-    const leadDays = supplier?.leadDays ?? preferences.lead_days ?? settings.defaultLeadDays;
+    const leadDays = supplier?.leadDays ?? settings.defaultLeadDays;
     const conversionQty = supplier?.conversionQty || 1;
     const purchaseUnit = supplier?.purchasingUnit || stock.default_unit || 'Piece';
     const baseUnit = supplier?.baseUnit || stock.defaultUnit || 'Piece';
@@ -451,14 +438,13 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       const rawPurchaseQty = rawBaseQty / conversionQty;
       const MOQ = supplier?.moq == null ? 0 : Number(supplier.moq);
       const purchaseQty = rawPurchaseQty > 0 ? Math.ceil(Math.max(MOQ, rawPurchaseQty)) : 0;
-      const savedQty = manualQty.get(pair(key, `${selectedSupplierName}::${coverageDays}`));
       return {
         orderUpTo: targetStock, forecastOrderUpTo: orderUpTo, minimumStock,
-        rawBaseQty, calculatedQty: purchaseQty, orderQty: savedQty ?? purchaseQty,
-        equivalentQty: (savedQty ?? purchaseQty) * conversionQty, minimumQty: MOQ,
+        rawBaseQty, calculatedQty: purchaseQty, orderQty: purchaseQty,
+        equivalentQty: purchaseQty * conversionQty, minimumQty: MOQ,
         demandDuringLead: demand.slice(0, leadDays + 1).reduce((sum, day) => sum + day.qty, 0),
         coverageDemand: demand.slice(leadDays + 1).reduce((sum, day) => sum + day.qty, 0),
-        manual: savedQty != null,
+        manual: false,
       };
     };
     let remaining = stockAtReview;
@@ -499,7 +485,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       daysLeft, expectedStockoutDate, recommendedReorderDate,
       movement, movementManual: !!preferences.movement_override, lowData: eligible.length < 28 || weekdayAverages.some((value) => value == null),
       usableDays: eligible.length, historyWeeks: settings.historyWeeks,
-      minStock: preferences.min_stock ?? null, leadDays, leadOverride: preferences.lead_days ?? null,
+      minStock: preferences.min_stock ?? null, leadDays,
       belowMinStock: preferences.min_stock != null && stockAtReview != null && stockAtReview < Number(preferences.min_stock),
       movementOverride: preferences.movement_override || null, selectedSupplier: selectedSupplierName,
       supplier, suppliers, purchasingUnit: purchaseUnit, baseUnit, conversionQty,
@@ -543,7 +529,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     (a.daysLeft ?? Infinity) - (b.daysLeft ?? Infinity) || a.product.localeCompare(b.product));
   return {
     today, reviewDate, reviewIsStale, historyStart, historyEnd, settings, rows, holidays,
-    holidayAnalysis, upcomingHolidays: upcoming, imports, snapshotSync, weeklyReview, ambiguousMatches,
+    holidayAnalysis, upcomingHolidays: upcoming, imports, snapshotSync, weeklyReview, ambiguousMatches, stores: allStores,
     excludedCategories: [...excludedCategories],
   };
 }

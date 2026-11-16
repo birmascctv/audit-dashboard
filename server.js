@@ -16,7 +16,7 @@ import { captureStockSnapshot, ensureStockSnapshots, recordStockSnapshotStatus }
 import { getRestockPlanner, canAccessRestock, DEFAULT_RESTOCK_SETTINGS, validateRestockConfig } from './restockPlanner.js';
 import {
   getPurchasingPlanner, savePurchasingProductSettings, savePurchasingSettings,
-  saveSupplierSettings, saveManualPurchasingQuantity, savePurchasingHoliday,
+  saveSupplierSettings, savePurchasingHoliday,
   deletePurchasingHoliday, saveHolidayAdjustment,
 } from './purchasingPlanner.js';
 import {
@@ -388,7 +388,7 @@ let isBirmasServerSyncing = false;
 
 const ALWAYS_INCLUDED_ESB_PRODUCTS = new Set(['GELAS CUP']);
 const EXCLUDED_ESB_CATEGORIES = new Set(['LAIN-LAIN', 'LAIN LAIN', 'PERLENGKAPAN OUTLET', 'ELECTRONIC']);
-const ESB_FEED_STORES = { BRMS: 'birmas-sudirman', BRMK: 'birmas-kuningan', BRMKW: 'birmas-kwitang' };
+const ESB_FEED_STORES = { BRMS: 'birmas-sudirman', BRMK: 'birmas-kuningan', BRMKW: 'birmas-kwitang', LR00: 'birmas-nomadic' };
 
 export function isExcludedEsbProduct(name, category) {
   const n = String(name || '').trim().toUpperCase();
@@ -2855,6 +2855,19 @@ async function startServer() {
     }
   });
 
+  app.get('/api/sales/top-products-by-category', (req, res) => {
+    try {
+      const filters = {
+        storeId: req.query.storeId, storeIds: req.query.storeIds, startDate: req.query.startDate,
+        endDate: req.query.endDate, importId: req.query.importId,
+        category: req.query.category, categoryStore: req.query.categoryStore, rankBy: req.query.rankBy,
+      };
+      res.json({ success: true, rows: salesDb.getTopProductsPerCategory(filters) });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.get('/api/sales/esb-analytics', (req, res) => {
     try {
       const { storeId, startDate, endDate } = req.query;
@@ -2998,10 +3011,7 @@ async function startServer() {
 
   app.put('/api/purchasing/order-quantity', (req, res) => {
     if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
-    try {
-      saveManualPurchasingQuantity(db.getDb(), req.body || {});
-      res.json({ success: true });
-    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
+    res.status(410).json({ success: false, error: 'Order quantities are calculated automatically and cannot be edited.' });
   });
 
   app.post('/api/purchasing/holidays', (req, res) => {

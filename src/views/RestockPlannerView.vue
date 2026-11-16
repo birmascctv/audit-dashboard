@@ -5,7 +5,7 @@ import 'chart.js/auto';
 import { authFetchJson, getAuthToken } from '../services/authFetch.js';
 import PurchasingHistoryUpload from '../components/PurchasingHistoryUpload.vue';
 
-const empty = { rows: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], imports: [], ambiguousMatches: [], settings: {} };
+const empty = { rows: [], stores: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], imports: [], ambiguousMatches: [], settings: {} };
 const data = ref({ ...empty });
 const loading = ref(true);
 const error = ref('');
@@ -49,6 +49,7 @@ const statuses = ['Critical Stock', 'Low Stock', 'Reorder Required', 'Overstock'
 
 const stores = computed(() => {
   const map = new Map(data.value.rows.map((row) => [row.storeId, row.store]));
+  for (const store of data.value.stores || []) if (store.id === 'birmas-nomadic') map.set(store.id, store.name);
   return [...map].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
 });
 const rows = computed(() => data.value.rows.filter((row) =>
@@ -103,7 +104,6 @@ watch(selected, (row) => {
   productEdits.value = {
     movement: row.movementOverride || '',
     minStock: row.minStock ?? '',
-    leadDays: row.leadOverride ?? '',
   };
   supplierEdit.value = {
     supplierName: row.supplier?.supplierName || '',
@@ -250,23 +250,6 @@ async function refresh() {
   catch (err) { error.value = err.message || 'Purchasing data could not be loaded.'; }
 }
 
-async function saveManualQuantity(row, coverageDays, event) {
-  const recommendation = coverageDays === 7 ? row.recommendation7 : row.recommendation10;
-  if (!recommendation || event.target.value === '') return;
-  message.value = '';
-  try {
-    await authFetchJson('/api/purchasing/order-quantity', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        storeId: row.storeId, productId: row.productId, reviewDate: row.reviewDate,
-        supplierName: row.selectedSupplier || '', coverageDays, quantity: Number(event.target.value),
-      }),
-    });
-    await loadPurchasing();
-    message.value = 'Manual order quantity saved. The system calculation remains visible for comparison.';
-  } catch (err) { error.value = err.message; }
-}
-
 async function saveProductEdits() {
   if (!selected.value) return;
   try {
@@ -275,7 +258,6 @@ async function saveProductEdits() {
       body: JSON.stringify({
         storeId: selected.value.storeId, productId: selected.value.productId,
         minStock: productEdits.value.minStock === '' ? null : Number(productEdits.value.minStock),
-        leadDays: productEdits.value.leadDays === '' ? null : Number(productEdits.value.leadDays),
         movement: productEdits.value.movement || null,
         supplier: selected.value.selectedSupplier || null,
       }),
@@ -305,7 +287,6 @@ async function saveSupplier() {
       body: JSON.stringify({
         storeId: selected.value.storeId, productId: selected.value.productId,
         minStock: productEdits.value.minStock === '' ? null : Number(productEdits.value.minStock),
-        leadDays: productEdits.value.leadDays === '' ? null : Number(productEdits.value.leadDays),
         movement: productEdits.value.movement || null, supplier: supplierEdit.value.supplierName,
       }),
     });
@@ -453,6 +434,7 @@ onMounted(async () => {
           <label class="text-xs font-bold">Movement<select v-model="movementFilter" class="mt-1 block rounded-lg border p-2"><option value="all">Fast & slow</option><option>Fast Moving</option><option>Slow Moving</option><option>Unknown</option></select></label>
           <p class="ml-auto text-xs text-slate-500">Monday reference: {{ data.reviewDate || 'missing' }} · Sales history: {{ dateDisplay(data.historyStart) }}–{{ dateDisplay(data.historyEnd) }} · 1-day buffer for Tuesday PO creation</p>
         </section>
+        <p v-if="storeFilter === 'birmas-nomadic' && !data.rows.some(row => row.storeId === 'birmas-nomadic')" role="status" class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">No Nomadic products with positive stock are available for recommendations. Check the inventory feed and stock quantities; zero and negative stock are excluded.</p>
         <section class="rounded-xl border bg-white p-4">
           <form class="flex flex-wrap items-end gap-3" @submit.prevent="applyRange">
             <label class="text-xs font-bold">Sales from<input v-model="historyStart" type="date" :max="data.today" required class="mt-1 block rounded border p-2"></label>
@@ -483,8 +465,8 @@ onMounted(async () => {
                   <td class="p-3">{{ number(row.avgWeekly) }}</td><td class="p-3">{{ number(row.avgDaily) }}</td><td class="p-3">{{ dayLabel(row.daysLeft) }}</td>
                   <td class="p-3">{{ dateLabel(row.expectedStockoutDate) }}</td><td class="p-3" :class="row.recommendedReorderDate && row.recommendedReorderDate <= data.today ? 'font-bold text-red-700' : ''">{{ dateLabel(row.recommendedReorderDate) }}</td>
                   <td class="p-3">{{ row.leadDays }} days</td><td class="p-3">{{ number(row.recommendation7?.orderUpTo) }} {{ row.baseUnit }}</td>
-                  <td class="p-3" @click.stop><span v-if="row.recommendation7"><input type="number" min="0" step="1" class="w-16 rounded border p-1 font-bold" :value="row.recommendation7.orderQty" :aria-label="`Manual 7-day order quantity for ${row.productName}`" @change="saveManualQuantity(row,7,$event)"><span class="ml-1">{{ row.purchasingUnit }}</span><span class="block text-[10px] text-slate-500">System {{ number(row.recommendation7.calculatedQty) }} · {{ number(row.recommendation7.equivalentQty) }} {{ row.baseUnit }}</span></span><span v-else>—</span></td>
-                  <td class="p-3" @click.stop><span v-if="row.recommendation10"><input type="number" min="0" step="1" class="w-16 rounded border p-1 font-bold" :value="row.recommendation10.orderQty" :aria-label="`Manual 10-day order quantity for ${row.productName}`" @change="saveManualQuantity(row,10,$event)"><span class="ml-1">{{ row.purchasingUnit }}</span><span class="block text-[10px] text-slate-500">System {{ number(row.recommendation10.calculatedQty) }} · {{ number(row.recommendation10.equivalentQty) }} {{ row.baseUnit }}</span></span><span v-else>—</span></td>
+                  <td class="p-3"><span v-if="row.recommendation7" class="font-bold">{{ qtyLabel(row, row.recommendation7) }}</span><span v-else>—</span></td>
+                  <td class="p-3"><span v-if="row.recommendation10" class="font-bold">{{ qtyLabel(row, row.recommendation10) }}</span><span v-else>—</span></td>
                   <td class="p-3">{{ row.supplier?.moq == null ? 'Not set' : `${number(row.supplier.moq)} ${row.purchasingUnit}` }}<span class="block text-[10px]">{{ row.conversionQty > 1 ? `${number(row.conversionQty)} ${row.baseUnit}/${row.purchasingUnit}` : row.purchasingUnit }}</span></td>
                   <td class="max-w-44 whitespace-normal p-3">{{ row.holidayEvents.length ? row.holidayEvents.map(h => `${h.name} ${h.adjustmentPct > 0 ? '+' : ''}${number(h.adjustmentPct)}%`).join(', ') : '—' }}<span v-if="row.holidayConflict" class="block text-[10px] text-red-700">Resolve overlapping adjustment</span></td>
                   <td class="p-3"><span class="whitespace-nowrap rounded-full px-2 py-1 font-bold" :class="statusClass(row.status)">{{ row.status }}</span></td>
@@ -589,18 +571,17 @@ onMounted(async () => {
             <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings</h3><div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label class="text-xs font-semibold">Movement classification<select v-model="productEdits.movement" class="mt-1 block w-full rounded border p-2"><option value="">Automatic ({{ selected.movement }})</option><option>Fast Moving</option><option>Slow Moving</option></select></label>
               <label class="text-xs font-semibold">Minimum stock (optional)<input v-model="productEdits.minStock" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Product lead time override (days)<input v-model="productEdits.leadDays" type="number" min="1" max="365" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Supplier name<input v-model.trim="supplierEdit.supplierName" list="purchasing-suppliers" class="mt-1 block w-full rounded border p-2"><datalist id="purchasing-suppliers"><option v-for="supplier in selected.suppliers" :key="supplier.supplierName" :value="supplier.supplierName" /></datalist></label>
               <label class="text-xs font-semibold">Supplier lead time (days)<input v-model="supplierEdit.leadDays" type="number" min="1" max="365" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Minimum order quantity (supplier units)<input v-model="supplierEdit.moq" type="number" min="0" step="any" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Purchasing unit<input v-model.trim="supplierEdit.purchasingUnit" maxlength="80" placeholder="Carton, pack, piece…" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Base units per purchasing unit<input v-model="supplierEdit.conversionQty" type="number" min="0.0001" step="any" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Base unit<input v-model.trim="supplierEdit.baseUnit" maxlength="80" placeholder="Can, bottle, piece…" class="mt-1 block w-full rounded border p-2"></label>
-            </div><p class="mt-3 text-xs text-slate-600">Lead time priority: the selected supplier's lead time is used first; if unset, the product override applies; otherwise the default applies.</p><p v-if="selected.historicalPurchase" class="mt-3 text-xs text-slate-600">Purchase history reference: avg {{ number(selected.historicalPurchase.averageOrderQty,2) }} {{ selected.historicalPurchase.unit }} / order, equivalent to {{ number(selected.historicalPurchase.equivalentQty,2) }} {{ selected.historicalPurchase.baseUnit }}; last historical purchase {{ selected.historicalPurchase.lastPurchaseDate }}. This does not confirm MOQ or an open PO.</p>
+            </div><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p><p v-if="selected.historicalPurchase" class="mt-3 text-xs text-slate-600">Purchase history reference: avg {{ number(selected.historicalPurchase.averageOrderQty,2) }} {{ selected.historicalPurchase.unit }} / order, equivalent to {{ number(selected.historicalPurchase.equivalentQty,2) }} {{ selected.historicalPurchase.baseUnit }}; last historical purchase {{ selected.historicalPurchase.lastPurchaseDate }}. This does not confirm MOQ or an open PO.</p>
               <div class="mt-3 flex flex-wrap gap-2"><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="saveProductEdits">Save product settings</button><button class="rounded border px-3 py-2 text-xs font-bold" @click="saveSupplier">Save supplier settings & select</button></div><p v-if="productError || supplierError" role="alert" class="mt-2 text-xs text-red-700">{{ productError || supplierError }}</p>
             </section>
             <section class="mt-4 rounded-xl border p-4"><h3 class="font-bold">Transparent order calculation</h3><p class="mt-1 text-xs text-slate-600">Protection horizon = supplier lead time + 1-day Tuesday buffer + stock coverage. The purchase-history file never contributes incoming stock.</p>
-              <div class="mt-3 grid gap-3 md:grid-cols-2"><article v-for="entry in [{days:7,label:'7-day coverage',value:selected.recommendation7,max:selected.maximumProjectedStock7},{days:10,label:'10-day coverage',value:selected.recommendation10,max:selected.maximumProjectedStock10}]" :key="entry.days" class="rounded-lg bg-slate-50 p-3"><h4 class="font-bold">{{ entry.label }}</h4><p class="mt-2 text-xs">Demand through lead time + buffer: {{ number(entry.value?.demandDuringLead,2) }} {{ selected.baseUnit }}</p><p class="text-xs">Target coverage demand: {{ number(entry.value?.coverageDemand,2) }} {{ selected.baseUnit }}</p><p class="text-xs">Order up to: {{ number(entry.value?.orderUpTo,2) }} {{ selected.baseUnit }} · stock available Monday: {{ number(selected.reviewStock) }}<span v-if="entry.value?.minimumStock"> · minimum stock floor: {{ number(entry.value.minimumStock) }}</span></p><p class="text-xs">Calculated purchase qty: {{ number(entry.value?.calculatedQty) }} {{ selected.purchasingUnit }}{{ selected.supplier?.moq == null ? '' : ` · MOQ ${number(selected.supplier.moq)}` }}</p><p class="text-xs">Final {{ entry.value?.manual ? 'manual' : 'recommended' }} qty: <strong>{{ qtyLabel(selected,entry.value) }}</strong> · maximum projected stock after arrival: {{ number(entry.max) }} {{ selected.baseUnit }}</p></article></div>
+              <div class="mt-3 grid gap-3 md:grid-cols-2"><article v-for="entry in [{days:7,label:'7-day coverage',value:selected.recommendation7,max:selected.maximumProjectedStock7},{days:10,label:'10-day coverage',value:selected.recommendation10,max:selected.maximumProjectedStock10}]" :key="entry.days" class="rounded-lg bg-slate-50 p-3"><h4 class="font-bold">{{ entry.label }}</h4><p class="mt-2 text-xs">Demand through lead time + buffer: {{ number(entry.value?.demandDuringLead,2) }} {{ selected.baseUnit }}</p><p class="text-xs">Target coverage demand: {{ number(entry.value?.coverageDemand,2) }} {{ selected.baseUnit }}</p><p class="text-xs">Order up to: {{ number(entry.value?.orderUpTo,2) }} {{ selected.baseUnit }} · stock available Monday: {{ number(selected.reviewStock) }}<span v-if="entry.value?.minimumStock"> · minimum stock floor: {{ number(entry.value.minimumStock) }}</span></p><p class="text-xs">Calculated purchase qty: {{ number(entry.value?.calculatedQty) }} {{ selected.purchasingUnit }}{{ selected.supplier?.moq == null ? '' : ` · MOQ ${number(selected.supplier.moq)}` }}</p><p class="text-xs">Recommended qty: <strong>{{ qtyLabel(selected,entry.value) }}</strong> · maximum projected stock after arrival: {{ number(entry.max) }} {{ selected.baseUnit }}</p></article></div>
             </section>
             <section v-if="selected.holidayEvents.length" class="mt-4 rounded-xl border p-4"><h3 class="font-bold">Manual holiday adjustments</h3><p v-for="holiday in selected.holidayEvents" :key="holiday.id" class="mt-1 text-xs">{{ holiday.name }} ({{ holiday.start_date }}–{{ holiday.end_date }}): {{ holiday.adjustmentPct > 0 ? '+' : '' }}{{ number(holiday.adjustmentPct) }}% applied to forecast demand for this outlet only.</p></section>
           </section>

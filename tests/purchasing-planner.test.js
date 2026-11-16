@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  DEFAULT_PURCHASING_SETTINGS, getPurchasingPlanner, saveManualPurchasingQuantity,
+  DEFAULT_PURCHASING_SETTINGS, getPurchasingPlanner,
   savePurchasingProductSettings, savePurchasingSettings, saveSupplierSettings,
 } from '../purchasingPlanner.js';
 
@@ -37,7 +37,7 @@ test('purchasing settings persist and validate the 8-week movement threshold', (
   stock.close(); sales.close();
 });
 
-test('manual movement, supplier and order quantities override recommendations explicitly', () => {
+test('recommendations ignore legacy manual quantities and product lead overrides', () => {
   const { stock, sales, get } = fixture();
   saveSupplierSettings(stock, { storeId: 's', productId: 'p', supplierName: 'Vendor', leadDays: 2, moq: 3, purchasingUnit: 'Carton', conversionQty: 24, baseUnit: 'Can' });
   savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', movement: 'Slow Moving', supplier: 'Vendor', minStock: 100 });
@@ -49,12 +49,16 @@ test('manual movement, supplier and order quantities override recommendations ex
   assert.ok(row.recommendation7.orderUpTo >= 100);
   assert.ok(row.recommendation7.orderQty >= 3);
   assert.ok(row.recommendation10.orderQty >= row.recommendation7.orderQty);
-  saveManualPurchasingQuantity(stock, { storeId: 's', productId: 'p', reviewDate: '2026-01-26', supplierName: 'Vendor', coverageDays: 7, quantity: 5 });
+  stock.prepare("UPDATE purchasing_product_settings SET lead_days=9 WHERE store_id='s' AND product_id='p'").run();
+  stock.prepare("INSERT INTO purchasing_qty_overrides(store_id,product_id,review_date,supplier_name,coverage_days,quantity,updated_at) VALUES('s','p','2026-01-26','Vendor',7,999,'now')").run();
   row = get().rows[0];
   assert.equal(row.recommendation7.calculatedQty, row.calculatedOrderQty);
-  assert.equal(row.recommendation7.orderQty, 5);
-  assert.equal(row.recommendation7.manual, true);
-  assert.throws(() => saveManualPurchasingQuantity(stock, { storeId: 's', productId: 'p', reviewDate: '2026-01-26', supplierName: 'Vendor', coverageDays: 7, quantity: 1.5 }), /whole-number/);
+  assert.equal(row.recommendation7.orderQty, row.recommendation7.calculatedQty);
+  assert.equal(row.recommendation7.manual, false);
+  assert.equal(row.leadDays, 2);
+  saveSupplierSettings(stock, { storeId: 's', productId: 'p', supplierName: 'Vendor', conversionQty: 24 });
+  assert.equal(get().rows[0].leadDays, DEFAULT_PURCHASING_SETTINGS.defaultLeadDays);
+  assert.throws(() => savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', leadDays: 4 }), /valid product purchasing settings/);
   stock.close(); sales.close();
 });
 
@@ -134,5 +138,22 @@ test('holiday references are product-specific and missing coverage remains unkno
   rows = run().rows;
   assert.equal(rows.find((r) => r.productId === 'p').holidayReference.qty, null);
   assert.equal(rows.find((r) => r.productId === 'p2').holidayReference.qty, null);
+  stock.close(); sales.close();
+});
+
+test('Nomadic is available without stock and uses its own stock and sales when provided', () => {
+  const { stock, sales } = fixture();
+  stock.exec("INSERT INTO stores VALUES ('birmas-nomadic','Birmas Nomadic (Bandung)')");
+  sales.prepare('INSERT INTO sales_transactions VALUES(?,?,?,?,?)').run('NOMADIC', 'Product', '2026-01-25 12:00', 4, 40);
+  const match = (branch) => branch === 'NOMADIC' ? 'birmas-nomadic' : 's';
+  let result = getPurchasingPlanner(stock, sales, match, '2026-01-30');
+  assert.ok(result.stores.some((store) => store.id === 'birmas-nomadic'));
+  assert.ok(!result.rows.some((row) => row.storeId === 'birmas-nomadic'));
+  assert.ok(result.holidayAnalysis.some((row) => row.storeId === 'birmas-nomadic'));
+  stock.exec("INSERT INTO store_stocks VALUES ('birmas-nomadic','p',5,5,'2026-01-26'); INSERT INTO stock_snapshots VALUES ('birmas-nomadic','p','2026-01-26',5)");
+  result = getPurchasingPlanner(stock, sales, match, '2026-01-30');
+  const row = result.rows.find((item) => item.storeId === 'birmas-nomadic');
+  assert.equal(row.currentStock, 5);
+  assert.equal(row.avgDailyRaw, 4);
   stock.close(); sales.close();
 });
