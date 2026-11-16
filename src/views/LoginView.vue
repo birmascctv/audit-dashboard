@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuth } from '../composables/useAuth.js';
 import {
@@ -14,9 +14,11 @@ const router = useRouter();
 const { loginWithBackend } = useAuth();
 
 const username = ref('');
+const usernameInput = ref(null);
 const password = ref('');
 const isLoading = ref(false);
 const errorMessage = ref(null);
+onMounted(() => usernameInput.value?.focus());
 
 async function handleLogin() {
   errorMessage.value = null;
@@ -88,6 +90,7 @@ async function handleLogin() {
             <div class="relative">
               <UserIcon class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
+                ref="usernameInput"
                 v-model="username"
                 type="text"
                 required

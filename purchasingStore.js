@@ -28,6 +28,16 @@ const holidayCalendar = [
   ["Prophet Muhammad's Birthday", '2027-08-15'], ['Indonesian Independence Day', '2027-08-17'], ['Christmas', '2027-12-25'],
   ['Isra Miraj', '2027-12-26'],
 ];
+const indonesianHolidayNames = {
+  "New Year's Day": 'Tahun Baru Masehi', 'New Year’s Day': 'Tahun Baru Masehi',
+  'Chinese New Year': 'Tahun Baru Imlek', 'Eid al-Fitr': 'Idulfitri',
+  'Good Friday': 'Jumat Agung', 'Easter Sunday': 'Paskah',
+  "International Workers' Day": 'Hari Buruh Internasional', 'Vesak Day': 'Hari Raya Waisak',
+  'Ascension Day': 'Kenaikan Yesus Kristus', 'Pancasila Day': 'Hari Lahir Pancasila',
+  'Eid al-Adha': 'Iduladha', 'Islamic New Year': 'Tahun Baru Islam',
+  'Indonesian Independence Day': 'Hari Kemerdekaan Indonesia',
+  "Prophet Muhammad's Birthday": 'Maulid Nabi Muhammad', Christmas: 'Hari Raya Natal',
+};
 
 export function calculateHolidayWindow(start, end = start) {
   const firstDay = new Date(`${start}T00:00:00Z`).getUTCDay();
@@ -58,6 +68,7 @@ export function calculateHolidayWindow(start, end = start) {
 }
 
 export function ensurePurchasingSchema(db) {
+  const holidayTableExists = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='purchasing_holidays'").get();
   db.exec(`
     CREATE TABLE IF NOT EXISTS purchasing_settings (
       key TEXT PRIMARY KEY, value TEXT NOT NULL
@@ -122,13 +133,21 @@ export function ensurePurchasingSchema(db) {
       db.exec(`ALTER TABLE purchasing_product_settings ADD COLUMN ${name} ${type}`);
     }
   }
-  const insertHoliday = db.prepare(`INSERT OR IGNORE INTO purchasing_holidays
-    (name,start_date,end_date,window_start,window_end,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`);
-  const now = new Date().toISOString();
-  for (const [name, start, end = start] of holidayCalendar) {
-    const window = calculateHolidayWindow(start, end);
-    insertHoliday.run(name, start, end, window.start, window.end, now, now);
+  if (!holidayTableExists) {
+    const insertHoliday = db.prepare(`INSERT OR IGNORE INTO purchasing_holidays
+      (name,start_date,end_date,window_start,window_end,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`);
+    const now = new Date().toISOString();
+    for (const [name, start, end = start] of holidayCalendar) {
+      const window = calculateHolidayWindow(start, end);
+      insertHoliday.run(indonesianHolidayNames[name] || name, start, end, window.start, window.end, now, now);
+    }
+  } else if (!db.prepare("SELECT 1 FROM purchasing_settings WHERE key='holiday_names_id_v1'").get()) {
+    const rename = db.prepare('UPDATE OR IGNORE purchasing_holidays SET name=? WHERE name=? AND start_date=? AND end_date=?');
+    for (const [name, start, end = start] of holidayCalendar) {
+      if (indonesianHolidayNames[name]) rename.run(indonesianHolidayNames[name], name, start, end);
+    }
   }
+  db.prepare("INSERT OR IGNORE INTO purchasing_settings(key,value) VALUES('holiday_names_id_v1','1')").run();
 }
 
 export const isExcludedPurchasingCategory = (category) => EXCLUDED.has(normalize(category));

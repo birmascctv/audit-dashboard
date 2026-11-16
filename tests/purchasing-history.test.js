@@ -93,11 +93,26 @@ test('empty inventory sync is recorded without creating a stock snapshot', () =>
 test('holiday analysis reports incomplete windows instead of treating missing sales as zero', () => {
   const { stock, sales, match } = fixture();
   const result = getPurchasingPlanner(stock, sales, match, '2026-11-13');
-  const holiday = result.holidayAnalysis.find((item) => item.name === "New Year's Day" && item.startDate === '2025-01-01');
+  const holiday = result.holidayAnalysis.find((item) => item.name === 'Tahun Baru Masehi' && item.startDate === '2025-01-01');
   assert.ok(holiday);
   assert.equal(holiday.totalSales, null);
   assert.equal(holiday.classification, 'Insufficient data');
   stock.close(); sales.close();
+});
+
+test('holiday calendar preserves edits and deletions while migrating existing default names', () => {
+  const db = new DatabaseSync(':memory:');
+  ensurePurchasingSchema(db);
+  db.exec("UPDATE purchasing_holidays SET name='My occasion' WHERE name='Tahun Baru Masehi' AND start_date='2025-01-01'; DELETE FROM purchasing_holidays WHERE name='Nyepi' AND start_date='2025-03-29'");
+  ensurePurchasingSchema(db);
+  assert.ok(db.prepare("SELECT 1 FROM purchasing_holidays WHERE name='My occasion' AND start_date='2025-01-01'").get());
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM purchasing_holidays WHERE start_date='2025-01-01'").get().n, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM purchasing_holidays WHERE start_date='2025-03-29'").get().n, 0);
+  db.exec("DELETE FROM purchasing_settings WHERE key='holiday_names_id_v1'; UPDATE purchasing_holidays SET name='Christmas' WHERE start_date='2025-12-25'");
+  ensurePurchasingSchema(db);
+  assert.ok(db.prepare("SELECT 1 FROM purchasing_holidays WHERE name='Hari Raya Natal' AND start_date='2025-12-25'").get());
+  assert.ok(db.prepare("SELECT 1 FROM purchasing_holidays WHERE name='My occasion'").get());
+  db.close();
 });
 
 test('forecast uses Monday inventory, eight weeks, weekend demand and supplier units', () => {

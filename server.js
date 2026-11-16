@@ -2903,11 +2903,13 @@ async function startServer() {
       const sqlite = db.getDb();
       ensureStockSnapshots(sqlite);
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
-      const planner = getPurchasingPlanner(sqlite, salesDb.getSalesDb(), extractMatchedStoreId, today);
+      const planner = getPurchasingPlanner(sqlite, salesDb.getSalesDb(), extractMatchedStoreId, today, {
+        historyStart: req.query.historyStart, historyEnd: req.query.historyEnd,
+      });
       const rows = planner.rows.map(({ history, forecast, ...row }) => row);
       res.json({ success: true, ...planner, rows });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.message.startsWith('Choose a valid sales history range') ? 400 : 500).json({ success: false, error: err.message });
     }
   });
 
@@ -2918,12 +2920,14 @@ async function startServer() {
       const productId = String(req.query.productId || '');
       if (!storeId || !productId) return res.status(400).json({ success: false, error: 'A product and outlet are required.' });
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
-      const planner = getPurchasingPlanner(db.getDb(), salesDb.getSalesDb(), extractMatchedStoreId, today);
+      const planner = getPurchasingPlanner(db.getDb(), salesDb.getSalesDb(), extractMatchedStoreId, today, {
+        historyStart: req.query.historyStart, historyEnd: req.query.historyEnd,
+      });
       const row = planner.rows.find((item) => item.storeId === storeId && item.productId === productId);
       if (!row) return res.status(404).json({ success: false, error: 'Purchasing product not found.' });
       res.json({ success: true, row });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.message.startsWith('Choose a valid sales history range') ? 400 : 500).json({ success: false, error: err.message });
     }
   });
 
@@ -2936,21 +2940,20 @@ async function startServer() {
         return res.status(400).json({ success: false, error: 'A valid outlet and holiday are required.' });
       }
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
-      const planner = getPurchasingPlanner(db.getDb(), salesDb.getSalesDb(), extractMatchedStoreId, today);
+      const planner = getPurchasingPlanner(db.getDb(), salesDb.getSalesDb(), extractMatchedStoreId, today, {
+        historyStart: req.query.historyStart, historyEnd: req.query.historyEnd, holidayReferenceId: holidayId,
+      });
       const holiday = planner.upcomingHolidays.find((item) => item.id === holidayId);
       if (!holiday) return res.status(404).json({ success: false, error: 'Upcoming holiday not found.' });
       if (!planner.rows.some((row) => row.storeId === storeId)) return res.status(404).json({ success: false, error: 'Purchasing outlet not found.' });
-      const historyReference = planner.holidayAnalysis.filter((item) =>
-        item.storeId === storeId && item.name === holiday.name && !item.combined)
-        .sort((a, b) => b.startDate.localeCompare(a.startDate))[0] || null;
       const savedAdjustment = holiday.adjustments.find((item) => item.storeId === storeId)?.adjustmentPct ?? null;
-      const rows = planner.rows.filter((row) => row.storeId === storeId && !row.reason).map((row) => {
+      const rows = planner.rows.filter((row) => row.storeId === storeId && row.holidayReference?.qty !== 0).map((row) => {
         const period = row.forecast.filter((day) => day.date >= holiday.start_date && day.date <= holiday.end_date);
         const expectedDays = Math.round((Date.parse(`${holiday.end_date}T00:00:00Z`) - Date.parse(`${holiday.start_date}T00:00:00Z`)) / 86400000) + 1;
         return {
           productId: row.productId, productName: row.productName, productVariant: row.productVariant,
           baseUnit: row.baseUnit, purchasingUnit: row.purchasingUnit, conversionQty: row.conversionQty,
-          reason: row.reason, historyReference, savedAdjustmentPct: savedAdjustment,
+          reason: row.reason, historyReference: row.holidayReference, savedAdjustmentPct: savedAdjustment,
           forecastAvailable: period.length === expectedDays,
           normalDemand: period.length === expectedDays && period.every((day) => day.normalQty != null)
             ? period.reduce((sum, day) => sum + day.normalQty, 0) : null,
@@ -2962,7 +2965,7 @@ async function startServer() {
       });
       res.json({ success: true, rows });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.message.startsWith('Choose a valid sales history range') ? 400 : 500).json({ success: false, error: err.message });
     }
   });
 

@@ -88,12 +88,51 @@ test('ambiguous sales names identify affected stock products and suppress partia
   assert.equal(result.ambiguousMatches[0].salesName, 'Product');
   assert.deepEqual(result.ambiguousMatches[0].products.map((p) => p.productId).sort(), ['p', 'p2']);
   for (const row of result.rows) {
-    assert.match(row.reason, /Ambiguous sales match/);
+    assert.match(row.reason, /matches multiple stock products/);
     assert.equal(row.recommendation7, null);
   }
   sales.exec("DELETE FROM sales_transactions WHERE menu='Product'");
   const resolved = get();
   assert.equal(resolved.ambiguousMatches.length, 0);
   assert.ok(resolved.rows.find((row) => row.productId === 'p').recommendation7);
+  stock.close(); sales.close();
+});
+
+test('custom sales history changes averages and validates the inclusive range', () => {
+  const { stock, sales } = fixture();
+  sales.exec("UPDATE sales_transactions SET qty=9 WHERE sales_date_in LIKE '2026-01-20%'");
+  const match = (branch) => branch === 'Store' ? 's' : null;
+  const run = (range) => getPurchasingPlanner(stock, sales, match, '2026-01-30', range);
+  const result = run({ historyStart: '2026-01-19', historyEnd: '2026-01-25' });
+  assert.equal(result.rows[0].avgDailyRaw, 3);
+  assert.equal(result.rows[0].avgWeeklyRaw, 21);
+  assert.equal(result.rows[0].history.length, 7);
+  assert.throws(() => run({ historyStart: '2026-01-26', historyEnd: '2026-01-25' }), /valid sales history/);
+  assert.throws(() => run({ historyStart: '2026-01-01', historyEnd: '2026-02-01' }), /valid sales history/);
+  stock.close(); sales.close();
+});
+
+test('holiday references are product-specific and missing coverage remains unknown', () => {
+  const { stock, sales } = fixture();
+  stock.exec(`
+    INSERT INTO products VALUES ('p2','Other','Other variant','BEER','SKU-2','Can');
+    INSERT INTO store_stocks VALUES ('s','p2',3,3,'2026-01-26');
+    INSERT INTO stock_snapshots VALUES ('s','p2','2026-01-26',3);
+  `);
+  sales.prepare('INSERT INTO sales_transactions VALUES(?,?,?,?,?)').run('Store', 'Other', '2026-01-05 12:00', 1, 10);
+  getPurchasingPlanner(stock, sales, () => 's', '2026-01-30');
+  const insert = stock.prepare(`INSERT INTO purchasing_holidays(name,start_date,end_date,window_start,window_end,created_at,updated_at)
+    VALUES('Special',?,?,?,?,'now','now')`);
+  insert.run('2026-01-10', '2026-01-10', '2026-01-09', '2026-01-11');
+  const id = Number(insert.run('2026-02-10', '2026-02-10', '2026-02-09', '2026-02-10').lastInsertRowid);
+  const run = () => getPurchasingPlanner(stock, sales, () => 's', '2026-01-30', { holidayReferenceId: id });
+  let rows = run().rows;
+  assert.equal(rows.find((r) => r.productId === 'p').holidayReference.qty, 6);
+  assert.equal(rows.find((r) => r.productId === 'p').holidayReference.revenue, 60);
+  assert.equal(rows.find((r) => r.productId === 'p2').holidayReference.qty, 0);
+  sales.exec("DELETE FROM sales_transactions WHERE sales_date_in LIKE '2026-01-10%'");
+  rows = run().rows;
+  assert.equal(rows.find((r) => r.productId === 'p').holidayReference.qty, null);
+  assert.equal(rows.find((r) => r.productId === 'p2').holidayReference.qty, null);
   stock.close(); sales.close();
 });

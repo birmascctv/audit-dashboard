@@ -12,8 +12,13 @@ const error = ref('');
 const message = ref('');
 const tab = ref('recommendations');
 const storeFilter = ref('all');
+const holidayStoreFilter = ref('all');
 const statusFilter = ref('all');
 const movementFilter = ref('all');
+const historyStart = ref('');
+const historyEnd = ref('');
+const appliedRange = ref(null);
+const rangeError = ref('');
 const page = ref(1);
 const selected = ref(null);
 const settingsOpen = ref(false);
@@ -47,9 +52,11 @@ const stores = computed(() => {
   return [...map].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
 });
 const rows = computed(() => data.value.rows.filter((row) =>
+  row.currentStock != null && Number(row.currentStock) > 0 &&
   (storeFilter.value === 'all' || row.storeId === storeFilter.value) &&
   (statusFilter.value === 'all' || row.status === statusFilter.value) &&
-  (movementFilter.value === 'all' || row.movement === movementFilter.value)));
+  (movementFilter.value === 'all' || row.movement === movementFilter.value))
+  .sort((a, b) => (a.productName || a.product || '').localeCompare(b.productName || b.product || '', undefined, { sensitivity: 'base' }) || a.store.localeCompare(b.store)));
 const pages = computed(() => Math.max(1, Math.ceil(rows.value.length / 30)));
 const visibleRows = computed(() => rows.value.slice((page.value - 1) * 30, page.value * 30));
 const counts = computed(() => ({
@@ -59,14 +66,14 @@ const counts = computed(() => ({
   overstock: rows.value.filter((row) => row.status === 'Overstock').length,
 }));
 const holidayAnalysis = computed(() => data.value.holidayAnalysis.filter((row) =>
-  storeFilter.value === 'all' || row.storeId === storeFilter.value));
-const ambiguousMatches = computed(() => data.value.ambiguousMatches.filter((match) =>
-  storeFilter.value === 'all' || match.storeId === storeFilter.value));
+  holidayStoreFilter.value === 'all' || row.storeId === holidayStoreFilter.value)
+  .sort((a, b) => b.startDate.localeCompare(a.startDate) || a.name.localeCompare(b.name)));
 const adjustmentHoliday = computed(() => data.value.upcomingHolidays.find((holiday) => String(holiday.id) === String(selectedHolidayId.value)));
 const adjustmentOutlet = computed(() => stores.value.find((store) => store.id === selectedHolidayStore.value));
 const number = (value, digits = 0) => value == null || !Number.isFinite(Number(value)) ? '—' :
   Number(value).toLocaleString('id-ID', { maximumFractionDigits: digits });
 const money = (value) => value == null ? '—' : `Rp ${number(value)}`;
+const dateDisplay = (value) => value ? value.slice(0, 10).split('-').reverse().join('/') : '—';
 const dayLabel = (days) => days == null ? '—' : `${number(days)} days`;
 const dateLabel = (value) => !value ? '—' : value < data.value.today ? `${value} · overdue` : value === data.value.today ? `${value} · today` : value;
 const qtyLabel = (row, recommendation) => {
@@ -121,7 +128,9 @@ watch(() => supplierEdit.value.supplierName, (name) => {
 
 function initializeHolidayAdjustments() {
   if (!selectedHolidayStore.value && stores.value.length) selectedHolidayStore.value = stores.value[0].id;
-  if (!selectedHolidayId.value && data.value.upcomingHolidays.length) selectedHolidayId.value = String(data.value.upcomingHolidays[0].id);
+  if (!data.value.upcomingHolidays.some((holiday) => String(holiday.id) === selectedHolidayId.value)) {
+    selectedHolidayId.value = data.value.upcomingHolidays.length ? String(data.value.upcomingHolidays[0].id) : '';
+  }
   const next = {};
   for (const holiday of data.value.upcomingHolidays) {
     const adjustment = holiday.adjustments?.find((item) => item.storeId === selectedHolidayStore.value);
@@ -141,7 +150,7 @@ function initializeHolidayAdjustments() {
 
 async function loadPurchasing() {
   const selectedKey = selected.value ? { storeId: selected.value.storeId, productId: selected.value.productId } : null;
-  const result = await authFetchJson('/api/purchasing');
+  const result = await authFetchJson(`/api/purchasing${rangeQuery()}`);
   if (!['rows', 'holidays', 'holidayAnalysis', 'upcomingHolidays', 'imports', 'ambiguousMatches']
     .every((key) => Array.isArray(result[key])) || !result.settings ||
     result.rows.some((row) => !Array.isArray(row.suppliers) || !Array.isArray(row.holidayEvents))) {
@@ -157,12 +166,53 @@ async function loadPurchasing() {
   initializeHolidayAdjustments();
 }
 
+function rangeQuery() {
+  return appliedRange.value ? `?${new URLSearchParams(appliedRange.value)}` : '';
+}
+
+async function applyRange() {
+  rangeError.value = '';
+  if (!historyStart.value || !historyEnd.value || historyStart.value > historyEnd.value || historyEnd.value > data.value.today ||
+      (Date.parse(`${historyEnd.value}T00:00:00Z`) - Date.parse(`${historyStart.value}T00:00:00Z`)) / 86400000 >= 730) {
+    rangeError.value = 'Choose a valid date range of up to 730 days, ending no later than today.';
+    return;
+  }
+  const previous = appliedRange.value;
+  appliedRange.value = { historyStart: historyStart.value, historyEnd: historyEnd.value };
+  try { await loadPurchasing(); page.value = 1; }
+  catch (err) { appliedRange.value = previous; rangeError.value = err.message; }
+}
+
+function chooseRange(preset) {
+  const today = new Date(`${data.value.today}T00:00:00Z`);
+  if (preset === 'week') {
+    today.setUTCDate(today.getUTCDate() - 1);
+    historyEnd.value = today.toISOString().slice(0, 10);
+    today.setUTCDate(today.getUTCDate() - 6);
+    historyStart.value = today.toISOString().slice(0, 10);
+  } else {
+    historyStart.value = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+    historyEnd.value = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0)).toISOString().slice(0, 10);
+  }
+  applyRange();
+}
+
+async function resetRange() {
+  appliedRange.value = null;
+  historyStart.value = '';
+  historyEnd.value = '';
+  rangeError.value = '';
+  try { await loadPurchasing(); page.value = 1; }
+  catch (err) { rangeError.value = err.message; }
+}
+
 async function loadProductDetails(row) {
   const requestId = ++detailRequestId;
   detailError.value = '';
   detailLoading.value = true;
   try {
-    const result = await authFetchJson(`/api/purchasing/product-details?storeId=${encodeURIComponent(row.storeId)}&productId=${encodeURIComponent(row.productId)}`);
+    const params = new URLSearchParams({ storeId: row.storeId, productId: row.productId, ...(appliedRange.value || {}) });
+    const result = await authFetchJson(`/api/purchasing/product-details?${params}`);
     if (requestId === detailRequestId && selected.value?.storeId === row.storeId && selected.value?.productId === row.productId) {
       selected.value = result.row;
     }
@@ -186,7 +236,8 @@ async function loadHolidayForecast() {
   holidayForecastRows.value = [];
   if (tab.value !== 'settings' || !storeId || !holidayId) return;
   try {
-    const result = await authFetchJson(`/api/purchasing/holiday-forecast?storeId=${encodeURIComponent(storeId)}&holidayId=${encodeURIComponent(holidayId)}`);
+    const params = new URLSearchParams({ storeId, holidayId, ...(appliedRange.value || {}) });
+    const result = await authFetchJson(`/api/purchasing/holiday-forecast?${params}`);
     if (requestId === holidayForecastRequestId) holidayForecastRows.value = result.rows;
   } catch (err) {
     if (requestId === holidayForecastRequestId) holidayForecastError.value = err.message || 'Holiday forecasts could not be loaded.';
@@ -231,23 +282,6 @@ async function saveProductEdits() {
     });
     await loadPurchasing();
   } catch (err) { productError.value = err.message; }
-}
-
-async function selectSupplier(row, supplierName) {
-  const supplier = row.suppliers.find((item) => item.supplierName === supplierName);
-  if (!supplier) return;
-  try {
-    await authFetchJson('/api/purchasing/supplier', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        storeId: row.storeId, productId: row.productId, supplierName,
-        leadDays: supplier.leadDays, moq: supplier.moq,
-        purchasingUnit: supplier.purchasingUnit, conversionQty: supplier.conversionQty,
-        baseUnit: supplier.baseUnit, selected: true,
-      }),
-    });
-    await loadPurchasing();
-  } catch (err) { error.value = err.message; }
 }
 
 async function saveSupplier() {
@@ -356,41 +390,27 @@ async function downloadOriginal(file) {
   } catch (err) { purchaseImportError.value = err.message; }
 }
 
-function exportCsv() {
-  const headings = ['Product Name', 'Product Variant', 'Outlet', 'Movement', 'Current Stock', 'Minimum Stock', 'Monday Stock', 'Average Weekly Sales', 'Average Daily Sales', 'Days Left', 'Expected Stockout Date', 'Recommended Reorder Date', 'Supplier', 'Lead Time', 'Order Up to', 'Recommended Qty 7 days', 'Recommended Qty 10 days', 'MOQ', 'Purchasing Unit', 'Holiday Adjustment', 'Status'];
-  const quote = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-  const lines = rows.value.map((row) => [
-    row.productName, row.productVariant, row.store, row.movement, row.currentStock, row.minStock, row.reviewStock,
-    row.avgWeekly, row.avgDaily, row.daysLeft, row.expectedStockoutDate, row.recommendedReorderDate,
-    row.selectedSupplier, row.leadDays,
-    row.recommendation7?.orderUpTo, qtyLabel(row, row.recommendation7), qtyLabel(row, row.recommendation10),
-    row.supplier?.moq, row.purchasingUnit,
-    row.holidayEvents.map((holiday) => `${holiday.name}: ${holiday.adjustmentPct}%`).join('; '), row.status,
-  ].map(quote).join(','));
-  const blob = new Blob(['\ufeffsep=,\r\n', headings.map(quote).join(','), '\r\n', lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a'); link.href = url; link.download = 'purchasing-recommendations.csv'; link.click();
-  URL.revokeObjectURL(url);
-}
-
 const detailChart = computed(() => {
   if (!selected.value?.forecast || !selected.value?.history) return { labels: [], datasets: [] };
   const row = selected.value;
   const future = row.forecast.slice(0, 14);
-  let stock = Number(row.reviewStock);
+  let stock = row.reviewStock == null ? NaN : Number(row.reviewStock);
   const projected = future.map((day) => {
     if (!Number.isFinite(stock) || day.qty == null) return null;
     const beforeDemand = stock;
     stock = Math.max(0, stock - day.qty);
     return beforeDemand;
   });
+  const actual = new Map(row.history.map((item) => [item.date, item]));
+  const forecast = new Map(future.map((item, index) => [item.date, { ...item, stock: projected[index] }]));
+  const labels = [...new Set([...actual.keys(), ...forecast.keys()])].sort();
   return {
-    labels: [...row.history.map((item) => item.date), ...future.map((item) => item.date)],
+    labels,
     datasets: [
-      { label: 'Actual daily sales', data: [...row.history.map((item) => item.qty), ...future.map(() => null)], borderColor: '#0f766e', yAxisID: 'sales', pointRadius: 1, tension: 0.15, spanGaps: false },
-      { label: 'Forecast sales', data: [...row.history.map(() => null), ...future.map((item) => item.qty)], borderColor: '#ea580c', yAxisID: 'sales', borderDash: [6, 4], pointRadius: 0 },
-      { label: 'Observed stock', data: [...row.history.map((item) => item.stock), ...future.map(() => null)], borderColor: '#2563eb', yAxisID: 'stock', pointRadius: 2, spanGaps: false },
-      { label: 'Projected stock', data: [...row.history.map(() => null), ...projected], borderColor: '#2563eb', yAxisID: 'stock', borderDash: [6, 4], pointRadius: 0 },
+      { label: 'Actual daily sales', data: labels.map((date) => actual.get(date)?.qty ?? null), borderColor: '#0f766e', yAxisID: 'sales', pointRadius: 1, tension: 0.15, spanGaps: false },
+      { label: 'Forecast sales', data: labels.map((date) => forecast.get(date)?.qty ?? null), borderColor: '#ea580c', yAxisID: 'sales', borderDash: [6, 4], pointRadius: 1 },
+      { label: 'Observed stock', data: labels.map((date) => actual.get(date)?.stock ?? null), borderColor: '#2563eb', yAxisID: 'stock', pointRadius: 2, spanGaps: false },
+      { label: 'Projected stock', data: labels.map((date) => forecast.get(date)?.stock ?? null), borderColor: '#2563eb', yAxisID: 'stock', borderDash: [6, 4], pointRadius: 1 },
     ],
   };
 });
@@ -431,34 +451,37 @@ onMounted(async () => {
           <label class="text-xs font-bold">Outlet<select v-model="storeFilter" class="mt-1 block rounded-lg border p-2"><option value="all">All outlets</option><option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option></select></label>
           <label class="text-xs font-bold">Status<select v-model="statusFilter" class="mt-1 block rounded-lg border p-2"><option value="all">All statuses</option><option v-for="status in statuses" :key="status">{{ status }}</option></select></label>
           <label class="text-xs font-bold">Movement<select v-model="movementFilter" class="mt-1 block rounded-lg border p-2"><option value="all">Fast & slow</option><option>Fast Moving</option><option>Slow Moving</option><option>Unknown</option></select></label>
-          <p class="ml-auto text-xs text-slate-500">Monday reference: {{ data.reviewDate || 'missing' }} · Calculation: last {{ data.settings.historyWeeks }} weeks · 1-day buffer for Tuesday PO creation</p>
+          <p class="ml-auto text-xs text-slate-500">Monday reference: {{ data.reviewDate || 'missing' }} · Sales history: {{ dateDisplay(data.historyStart) }}–{{ dateDisplay(data.historyEnd) }} · 1-day buffer for Tuesday PO creation</p>
         </section>
-        <section class="rounded-xl border border-amber-300 bg-amber-50 p-4">
-          <h2 class="font-bold text-amber-900">Ambiguous sales-to-stock matches ({{ ambiguousMatches.length }})</h2>
-          <p class="mt-1 text-xs text-amber-900">These sales names match more than one stock product in the same outlet during the history window. Orders are withheld for the affected products; correct the product names or SKUs in the source data so each sales name identifies one product.</p>
-          <p v-if="!ambiguousMatches.length" class="mt-2 text-xs text-amber-900">No ambiguous matches found for the selected outlet.</p>
-          <div v-else class="mt-3 overflow-x-auto"><table class="w-full text-left text-xs"><thead><tr><th class="p-2">Outlet</th><th class="p-2">Sales name</th><th class="p-2">Matching stock products</th></tr></thead><tbody>
-            <tr v-for="match in ambiguousMatches" :key="`${match.storeId}-${match.salesName}`" class="border-t border-amber-200"><td class="p-2">{{ match.store }}</td><td class="p-2">{{ match.salesName }}</td><td class="p-2"><div v-for="product in match.products" :key="product.productId">{{ product.name || 'Unnamed' }} · {{ product.variant || 'No variant' }} · SKU: {{ product.sku || 'not supplied' }} · ID: {{ product.productId }}</div></td></tr>
-          </tbody></table></div>
+        <section class="rounded-xl border bg-white p-4">
+          <form class="flex flex-wrap items-end gap-3" @submit.prevent="applyRange">
+            <label class="text-xs font-bold">Sales from<input v-model="historyStart" type="date" :max="data.today" required class="mt-1 block rounded border p-2"></label>
+            <label class="text-xs font-bold">Sales to<input v-model="historyEnd" type="date" :max="data.today" required class="mt-1 block rounded border p-2"></label>
+            <button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white">Apply range</button>
+            <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="chooseRange('week')">Last 7 days</button>
+            <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="chooseRange('month')">Last month</button>
+            <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="resetRange">Default</button>
+          </form>
+          <p class="mt-2 text-xs text-slate-500">Last 7 days ends yesterday; last month is the previous calendar month. Days without outlet sales records, holiday windows and observed zero-stock days are excluded.</p>
+          <p v-if="rangeError" role="alert" class="mt-2 text-xs text-red-700">{{ rangeError }}</p>
         </section>
         <section class="overflow-hidden rounded-xl border bg-white shadow-sm">
-          <header class="flex flex-wrap items-center justify-between gap-2 border-b p-4"><div><h2 class="font-bold">Reorder recommendations</h2><p class="text-xs text-slate-500">Demand uses weekday averages; Friday–Sunday patterns are calculated separately. Order quantities are supplier purchasing units.</p></div><button class="rounded-lg border px-3 py-2 text-xs font-bold" @click="exportCsv">Export CSV</button></header>
+          <header class="flex flex-wrap items-center justify-between gap-2 border-b p-4"><div><h2 class="font-bold">Reorder recommendations</h2><p class="text-xs text-slate-500">Demand uses weekday averages; Friday–Sunday patterns are calculated separately. Order quantities are supplier purchasing units.</p></div></header>
           <p class="px-4 pt-3 text-xs text-slate-600">System order-up-to = forecast demand during lead time + Tuesday buffer + selected coverage. It is not a PO. The final quantity rounds to whole purchasing units and applies configured MOQ.</p>
           <p class="px-4 py-2 text-xs text-amber-800">Monday stock is the calculation reference; current ESB stock is shown separately. No incoming quantities or active orders are included. Holiday-analysis history is not automatically applied to future demand.</p>
           <div class="overflow-x-auto">
             <table class="w-full min-w-[1800px] text-left text-xs">
               <thead class="bg-slate-50 text-[10px] uppercase text-slate-600"><tr>
-                <th v-for="heading in ['Product name / variant','Outlet','Movement','Current stock','Minimum stock','Monday stock','Avg/week','Avg/day','Days left','Expected run out','Order by','Supplier','Lead time','Order up to','Qty 7 days','Qty 10 days','MOQ / unit','Holiday adjustment','Status']" :key="heading" class="p-3">{{ heading }}</th>
+                <th v-for="heading in ['Product name','Outlet','Movement','Current stock','Monday stock','Avg/week','Avg/day','Days left','Expected run out','Order by','Lead time','Order up to','Qty 7 days','Qty 10 days','MOQ / unit','Holiday adjustment','Status']" :key="heading" class="p-3">{{ heading }}</th>
               </tr></thead>
               <tbody>
                 <tr v-for="row in visibleRows" :key="`${row.storeId}-${row.productId}`" class="cursor-pointer border-t hover:bg-teal-50" tabindex="0" @click="openDetails(row)" @keydown.enter="openDetails(row)" @keydown.space.prevent="openDetails(row)">
-                  <td class="p-3 font-semibold">{{ row.productName }}<span class="block text-[10px] font-normal text-slate-500">{{ row.productVariant || row.sku || 'Variant not supplied' }}</span><span v-if="row.reason" class="block max-w-56 whitespace-normal text-[10px] font-normal text-slate-500">{{ row.reason }}</span><span v-else-if="row.lowData" class="block text-[10px] font-normal text-amber-700">Low data · {{ row.usableDays }} usable days</span></td>
+                  <td class="p-3 font-semibold">{{ row.productName || row.product }}<span v-if="row.reason" class="block max-w-56 whitespace-normal text-[10px] font-normal text-slate-500">{{ row.reason }}</span><span v-else-if="row.lowData" class="block text-[10px] font-normal text-amber-700">Low data · {{ row.usableDays }} usable days</span></td>
                   <td class="p-3">{{ row.store }}</td>
                   <td class="p-3"><span :class="row.movement === 'Fast Moving' ? 'text-teal-800' : row.movement === 'Slow Moving' ? 'text-violet-800' : 'text-slate-500'">{{ row.movement }}</span><span v-if="row.movementManual" class="block text-[10px] text-slate-500">Manual</span></td>
-                  <td class="p-3">{{ number(row.currentStock) }}</td><td class="p-3">{{ row.minStock == null ? '—' : number(row.minStock) }}<span v-if="row.belowMinStock" class="block text-[10px] font-bold text-red-700">Below minimum</span></td><td class="p-3">{{ number(row.reviewStock) }}<span class="block text-[10px] text-slate-500">{{ row.stockReferenceDate }}</span></td>
+                  <td class="p-3">{{ number(row.currentStock) }}</td><td class="p-3">{{ number(row.reviewStock) }}<span class="block text-[10px] text-slate-500">{{ row.stockReferenceDate }}</span></td>
                   <td class="p-3">{{ number(row.avgWeekly) }}</td><td class="p-3">{{ number(row.avgDaily) }}</td><td class="p-3">{{ dayLabel(row.daysLeft) }}</td>
                   <td class="p-3">{{ dateLabel(row.expectedStockoutDate) }}</td><td class="p-3" :class="row.recommendedReorderDate && row.recommendedReorderDate <= data.today ? 'font-bold text-red-700' : ''">{{ dateLabel(row.recommendedReorderDate) }}</td>
-                  <td class="p-3"><select class="max-w-40 rounded border bg-white p-1" :value="row.selectedSupplier" @click.stop @change="selectSupplier(row, $event.target.value)"><option value="">Select supplier</option><option v-for="supplier in row.suppliers" :key="supplier.supplierName" :value="supplier.supplierName">{{ supplier.supplierName }}{{ supplier.configured ? '' : ' · history' }}</option></select><span v-if="!row.suppliers.length" class="text-slate-500">No history</span></td>
                   <td class="p-3">{{ row.leadDays }} days</td><td class="p-3">{{ number(row.recommendation7?.orderUpTo) }} {{ row.baseUnit }}</td>
                   <td class="p-3" @click.stop><span v-if="row.recommendation7"><input type="number" min="0" step="1" class="w-16 rounded border p-1 font-bold" :value="row.recommendation7.orderQty" :aria-label="`Manual 7-day order quantity for ${row.productName}`" @change="saveManualQuantity(row,7,$event)"><span class="ml-1">{{ row.purchasingUnit }}</span><span class="block text-[10px] text-slate-500">System {{ number(row.recommendation7.calculatedQty) }} · {{ number(row.recommendation7.equivalentQty) }} {{ row.baseUnit }}</span></span><span v-else>—</span></td>
                   <td class="p-3" @click.stop><span v-if="row.recommendation10"><input type="number" min="0" step="1" class="w-16 rounded border p-1 font-bold" :value="row.recommendation10.orderQty" :aria-label="`Manual 10-day order quantity for ${row.productName}`" @change="saveManualQuantity(row,10,$event)"><span class="ml-1">{{ row.purchasingUnit }}</span><span class="block text-[10px] text-slate-500">System {{ number(row.recommendation10.calculatedQty) }} · {{ number(row.recommendation10.equivalentQty) }} {{ row.baseUnit }}</span></span><span v-else>—</span></td>
@@ -466,19 +489,21 @@ onMounted(async () => {
                   <td class="max-w-44 whitespace-normal p-3">{{ row.holidayEvents.length ? row.holidayEvents.map(h => `${h.name} ${h.adjustmentPct > 0 ? '+' : ''}${number(h.adjustmentPct)}%`).join(', ') : '—' }}<span v-if="row.holidayConflict" class="block text-[10px] text-red-700">Resolve overlapping adjustment</span></td>
                   <td class="p-3"><span class="whitespace-nowrap rounded-full px-2 py-1 font-bold" :class="statusClass(row.status)">{{ row.status }}</span></td>
                 </tr>
-                <tr v-if="!visibleRows.length"><td colspan="19" class="p-8 text-center text-slate-500">No products match these filters.</td></tr>
+                <tr v-if="!visibleRows.length"><td colspan="17" class="p-8 text-center text-slate-500">No products match these filters.</td></tr>
               </tbody>
             </table>
           </div>
-          <footer class="flex items-center justify-between border-t p-3 text-xs"><span>{{ rows.length }} outlet/product variants · Page {{ page }} of {{ pages }}</span><div class="space-x-2"><button class="rounded border px-3 py-1 disabled:opacity-40" :disabled="page <= 1" @click="page--">Previous</button><button class="rounded border px-3 py-1 disabled:opacity-40" :disabled="page >= pages" @click="page++">Next</button></div></footer>
+          <footer class="flex items-center justify-between border-t p-3 text-xs"><span>{{ rows.length }} outlet/products · Page {{ page }} of {{ pages }}</span><div class="space-x-2"><button class="rounded border px-3 py-1 disabled:opacity-40" :disabled="page <= 1" @click="page--">Previous</button><button class="rounded border px-3 py-1 disabled:opacity-40" :disabled="page >= pages" @click="page++">Next</button></div></footer>
         </section>
       </template>
 
       <template v-else-if="tab === 'holiday-analysis'">
         <section class="rounded-xl border bg-white p-4">
           <h2 class="font-bold">Holiday sales analysis</h2><p class="mt-1 text-xs text-slate-600">Historical windows and baselines are separate from future forecast adjustments. Individual holiday totals may overlap; combined entries count each sales date once.</p>
+          <p class="mt-1 text-xs text-slate-600">Difference = (holiday window sales − normal baseline) ÷ normal baseline × 100. The baseline sums the average sales for each matching weekday over the preceding {{ data.settings.historyWeeks }} weeks, excluding holiday windows and days without sales records.</p>
+          <label class="mt-3 block text-xs font-bold">Outlet<select v-model="holidayStoreFilter" class="ml-2 rounded border p-2"><option value="all">All outlets</option><option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option></select></label>
           <div class="mt-4 overflow-x-auto"><table class="w-full min-w-[1100px] text-left text-xs"><thead class="bg-slate-50"><tr><th v-for="heading in ['Holiday','Outlet','Holiday dates','Sales window','Total sales','Class','Normal baseline','Difference']" :key="heading" class="p-3">{{ heading }}</th></tr></thead><tbody>
-            <tr v-for="item in holidayAnalysis" :key="item.id" class="border-t"><td class="p-3 font-semibold">{{ item.name }}<span v-if="item.combined" class="ml-1 rounded bg-violet-100 px-1 text-violet-800">Combined</span></td><td class="p-3">{{ stores.find(s => s.id === item.storeId)?.name || item.storeId }}</td><td class="p-3">{{ item.startDate }}{{ item.endDate !== item.startDate ? ` – ${item.endDate}` : '' }}</td><td class="p-3">{{ item.windowStart }} – {{ item.windowEnd }}</td><td class="p-3">{{ money(item.totalSales) }}</td><td class="p-3">{{ item.classification }}</td><td class="p-3">{{ money(item.normalBaseline) }}</td><td class="p-3">{{ item.differencePct == null ? 'Unavailable' : `${number(item.differencePct,1)}%` }}</td></tr>
+            <tr v-for="item in holidayAnalysis" :key="item.id" class="border-t"><td class="p-3 font-semibold">{{ item.name }}<span v-if="item.combined" class="ml-1 rounded bg-violet-100 px-1 text-violet-800">Combined</span></td><td class="p-3">{{ stores.find(s => s.id === item.storeId)?.name || item.storeId }}</td><td class="p-3">{{ dateDisplay(item.startDate) }}{{ item.endDate !== item.startDate ? ` – ${dateDisplay(item.endDate)}` : '' }}</td><td class="p-3">{{ dateDisplay(item.windowStart) }} – {{ dateDisplay(item.windowEnd) }}</td><td class="p-3">{{ money(item.totalSales) }}</td><td class="p-3">{{ item.classification }}</td><td class="p-3">{{ money(item.normalBaseline) }}</td><td class="p-3">{{ item.differencePct == null ? 'Unavailable' : `${number(item.differencePct,1)}%` }}</td></tr>
             <tr v-if="!holidayAnalysis.length"><td colspan="8" class="p-8 text-center text-slate-500">No holiday sales in the selected outlet scope.</td></tr>
           </tbody></table></div>
         </section>
@@ -500,10 +525,11 @@ onMounted(async () => {
           <header class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="font-bold">Holiday calendar and forecast adjustment</h2><p class="mt-1 text-xs text-slate-600">Initial holiday dates are supplied through 2027. Correct dates and sales windows as needed; future years can be added.</p></div>
             <label class="text-xs font-bold">Outlet for adjustments<select v-model="selectedHolidayStore" class="ml-2 rounded border p-2"><option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option></select></label>
           </header>
+          <p class="mt-2 text-xs text-slate-600">Combined group is optional. Give overlapping occasions the same group name only when both adjustments should be added together; otherwise overlapping adjustments are blocked to prevent accidental double counting.</p>
           <div class="mt-4 overflow-x-auto"><table class="w-full min-w-[1120px] text-left text-xs"><thead class="bg-slate-50"><tr><th v-for="heading in ['Occasion','Holiday start','Holiday end','Sales window start','Sales window end','Expected adjustment %','Combined group','Action']" :key="heading" class="p-2">{{ heading }}</th></tr></thead><tbody>
             <tr v-for="holiday in data.upcomingHolidays" :key="holiday.id" class="border-t">
               <td class="p-2 font-semibold">{{ holiday.name }}</td>
-              <td class="p-2">{{ holiday.start_date }}</td><td class="p-2">{{ holiday.end_date }}</td><td class="p-2">{{ holiday.window_start }}</td><td class="p-2">{{ holiday.window_end }}</td>
+              <td class="p-2">{{ dateDisplay(holiday.start_date) }}</td><td class="p-2">{{ dateDisplay(holiday.end_date) }}</td><td class="p-2">{{ dateDisplay(holiday.window_start) }}</td><td class="p-2">{{ dateDisplay(holiday.window_end) }}</td>
               <td class="p-2"><input v-model="holidayAdjustments[holiday.id].adjustmentPct" type="number" min="-100" max="500" step="any" class="w-28 rounded border p-1" :aria-label="`Expected demand adjustment for ${holiday.name}`"></td>
               <td class="p-2"><input v-model.trim="holidayAdjustments[holiday.id].combinedGroup" type="text" maxlength="120" placeholder="Optional; same group to combine" class="w-44 rounded border p-1"></td>
               <td class="p-2"><button class="rounded bg-teal-700 px-2 py-1 font-bold text-white" @click="saveAdjustment(holiday)">Save adjustment</button></td>
@@ -511,10 +537,10 @@ onMounted(async () => {
             <tr v-if="!data.upcomingHolidays.length"><td colspan="8" class="p-5 text-center text-slate-500">Add a holiday calendar record below to configure future adjustments.</td></tr>
           </tbody></table></div>
           <p v-if="holidayAdjustmentError" role="alert" class="mt-3 text-sm text-red-700">{{ holidayAdjustmentError }}</p><p v-if="holidayAdjustmentMessage" role="status" class="mt-3 text-sm text-green-700">{{ holidayAdjustmentMessage }}</p><p v-if="holidayForecastError" role="alert" class="mt-3 text-sm text-red-700">{{ holidayForecastError }}</p>
-          <div v-if="adjustmentHoliday" class="mt-5 border-t pt-4"><h3 class="font-bold">Forecast impact: {{ adjustmentHoliday.name }} · {{ adjustmentOutlet?.name }}</h3><p class="mt-1 text-xs text-slate-600">Historical holiday sales are shown only as reference. Future percentages must be entered manually and apply to forecast demand, not directly to order quantity.</p>
+          <div v-if="adjustmentHoliday" class="mt-5 border-t pt-4"><h3 class="font-bold">Forecast impact: {{ adjustmentHoliday.name }} · {{ adjustmentOutlet?.name }}</h3><label class="mt-2 block text-xs font-bold">Occasion<select v-model="selectedHolidayId" class="ml-2 rounded border p-2"><option v-for="holiday in data.upcomingHolidays" :key="holiday.id" :value="String(holiday.id)">{{ holiday.name }} · {{ dateDisplay(holiday.start_date) }}</option></select></label><p class="mt-1 text-xs text-slate-600">Historical sales are for each product in the most recent matching holiday's sales window. Products with confirmed zero sales are omitted; unavailable references remain visible. Future percentages must be entered manually and apply to forecast demand, not directly to order quantity.</p>
             <p class="mt-2 text-xs text-slate-500">The projected maximum assumes the displayed 7-day recommendation is placed and arrives; it is not an active purchase order or confirmed incoming stock.</p>
             <p class="mt-2 text-xs text-slate-500">The forecast below reflects the last saved adjustment. Save a changed percentage above to recalculate demand and recommendations.</p>
-            <div class="mt-3 max-h-[28rem] overflow-auto"><table class="w-full min-w-[900px] text-left text-xs"><thead class="sticky top-0 bg-slate-50"><tr><th v-for="heading in ['Product','Historical sales reference','Saved expected %','Normal forecast','Adjusted forecast','Max stock after order arrival','Order qty 7d']" :key="heading" class="p-2">{{ heading }}</th></tr></thead><tbody><tr v-for="row in holidayForecastRows" :key="row.productId" class="border-t"><td class="p-2">{{ row.productName }} · {{ row.productVariant || '—' }}</td><td class="p-2">{{ row.historyReference ? `${money(row.historyReference.totalSales)} (${row.historyReference.classification})` : 'No comparable holiday reference' }}</td><td class="p-2">{{ row.savedAdjustmentPct == null ? 'Not set' : `${number(row.savedAdjustmentPct)}%` }}</td><td class="p-2">{{ row.forecastAvailable ? `${number(row.normalDemand)} ${row.baseUnit}/holiday` : 'Outside forecast horizon' }}</td><td class="p-2">{{ row.forecastAvailable ? `${number(row.adjustedDemand)} ${row.baseUnit}/holiday` : 'Outside forecast horizon' }}</td><td class="p-2">{{ number(row.maximumProjectedStock7) }} {{ row.baseUnit }}</td><td class="p-2">{{ qtyLabel(row,row.recommendation7) }}</td></tr></tbody></table></div>
+            <div class="mt-3 max-h-[28rem] overflow-auto"><table class="w-full min-w-[900px] text-left text-xs"><thead class="sticky top-0 bg-slate-50"><tr><th v-for="heading in ['Product','Historical sales reference','Saved expected %','Normal forecast','Adjusted forecast','Max stock after order arrival','Order qty 7d']" :key="heading" class="p-2">{{ heading }}</th></tr></thead><tbody><tr v-for="row in holidayForecastRows" :key="row.productId" class="border-t"><td class="p-2">{{ row.productName }}</td><td class="p-2">{{ row.historyReference?.qty != null ? `${number(row.historyReference.qty,2)} ${row.baseUnit} · ${money(row.historyReference.revenue)} (${dateDisplay(row.historyReference.windowStart)}–${dateDisplay(row.historyReference.windowEnd)})` : 'Unavailable / no comparable reference' }}</td><td class="p-2">{{ row.savedAdjustmentPct == null ? 'Not set' : `${number(row.savedAdjustmentPct)}%` }}</td><td class="p-2">{{ row.forecastAvailable ? `${number(row.normalDemand)} ${row.baseUnit}/holiday` : 'Outside forecast horizon' }}</td><td class="p-2">{{ row.forecastAvailable ? `${number(row.adjustedDemand)} ${row.baseUnit}/holiday` : 'Outside forecast horizon' }}</td><td class="p-2">{{ number(row.maximumProjectedStock7) }} {{ row.baseUnit }}</td><td class="p-2">{{ qtyLabel(row,row.recommendation7) }}</td></tr><tr v-if="!holidayForecastRows.length"><td colspan="7" class="p-4 text-slate-500">No products with sales or available references for this occasion.</td></tr></tbody></table></div>
           </div>
         </section>
         <section class="rounded-xl border bg-white p-4">
@@ -552,14 +578,14 @@ onMounted(async () => {
         <div v-if="selected" class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4" @click.self="selected = null" @keydown.esc="selected = null">
           <section role="dialog" aria-modal="true" aria-label="Purchasing recommendation details" class="max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
             <header class="flex justify-between gap-3"><div><h2 class="text-lg font-extrabold">{{ selected.productName }} · {{ selected.productVariant || selected.sku || 'No variant identifier' }}</h2><p class="text-sm text-slate-600">{{ selected.store }} · {{ selected.movement }} · Monday stock {{ number(selected.reviewStock) }} ({{ selected.reviewDate }}) · current ESB stock {{ number(selected.currentStock) }}</p></div><button class="rounded border px-3 py-1" aria-label="Close details" @click="selected = null">Close</button></header>
-            <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Average sales/week</p><strong>{{ number(selected.avgWeekly) }} {{ selected.baseUnit }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Average sales/day</p><strong>{{ number(selected.avgDaily) }} {{ selected.baseUnit }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Days left · run out</p><strong>{{ dayLabel(selected.daysLeft) }} · {{ dateLabel(selected.expectedStockoutDate) }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Order by</p><strong>{{ dateLabel(selected.recommendedReorderDate) }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Usable history</p><strong>{{ selected.usableDays }} days / {{ selected.historyWeeks }} weeks</strong></article></div>
+            <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Average sales/week</p><strong>{{ number(selected.avgWeekly) }} {{ selected.baseUnit }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Average sales/day</p><strong>{{ number(selected.avgDaily) }} {{ selected.baseUnit }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Days left · run out</p><strong>{{ dayLabel(selected.daysLeft) }} · {{ dateLabel(selected.expectedStockoutDate) }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Order by</p><strong>{{ dateLabel(selected.recommendedReorderDate) }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Usable history</p><strong>{{ selected.usableDays }} days · {{ dateDisplay(data.historyStart) }}–{{ dateDisplay(data.historyEnd) }}</strong></article></div>
             <p v-if="detailLoading" role="status" class="mt-3 rounded bg-teal-50 p-3 text-sm text-teal-900">Loading product history and forecast…</p>
             <p v-if="detailError" role="alert" class="mt-3 rounded bg-red-50 p-3 text-sm text-red-800">{{ detailError }}</p>
             <p v-if="selected.reason" class="mt-3 rounded bg-amber-50 p-3 text-sm text-amber-900">{{ selected.reason }}. System quantities are unavailable until this data issue is resolved.</p>
             <p v-if="selected.lowData" class="mt-3 text-sm text-amber-800">Low data: some weekdays or historical days are missing; review the demand estimate.</p>
             <p v-if="selected.holidayConflict" class="mt-2 text-sm text-red-700">Overlapping holiday adjustments are not combined. Set the same explicit combined group for overlapping occasions before using the affected forecast.</p>
-            <div v-if="selected.forecast && selected.history" class="mt-4 h-72"><Line :data="detailChart" :options="{responsive:true,maintainAspectRatio:false,scales:{sales:{position:'left',beginAtZero:true,title:{display:true,text:'Sales / day'}},stock:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'Stock'}}}}" /></div>
-            <p class="mt-2 text-xs text-slate-500">Actual sales and observed stock snapshots are shown when available. Forecast projections assume no deliveries or transfers and use date-specific weekday averages. Snapshot days with observed zero stock are excluded from normal demand; they are observations, not proof of a full-day stockout.</p>
+            <div v-if="selected.forecast && selected.history" class="mt-4 h-72"><Line :data="detailChart" :options="{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{mode:'index',intersect:false}},scales:{sales:{position:'left',beginAtZero:true,title:{display:true,text:'Sales / day'}},stock:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'Stock'}}}}" /></div>
+            <p class="mt-2 text-xs text-slate-500">Hover over a date to see all available values. Projected stock starts with Monday stock and subtracts forecast sales each day, assuming no deliveries or transfers; it is not confirmed stock. Snapshot days with observed zero stock are excluded from normal demand; they are observations, not proof of a full-day stockout.</p>
             <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings</h3><div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label class="text-xs font-semibold">Movement classification<select v-model="productEdits.movement" class="mt-1 block w-full rounded border p-2"><option value="">Automatic ({{ selected.movement }})</option><option>Fast Moving</option><option>Slow Moving</option></select></label>
               <label class="text-xs font-semibold">Minimum stock (optional)<input v-model="productEdits.minStock" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
@@ -570,7 +596,7 @@ onMounted(async () => {
               <label class="text-xs font-semibold">Purchasing unit<input v-model.trim="supplierEdit.purchasingUnit" maxlength="80" placeholder="Carton, pack, piece…" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Base units per purchasing unit<input v-model="supplierEdit.conversionQty" type="number" min="0.0001" step="any" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Base unit<input v-model.trim="supplierEdit.baseUnit" maxlength="80" placeholder="Can, bottle, piece…" class="mt-1 block w-full rounded border p-2"></label>
-            </div><p v-if="selected.historicalPurchase" class="mt-3 text-xs text-slate-600">Purchase history reference: avg {{ number(selected.historicalPurchase.averageOrderQty,2) }} {{ selected.historicalPurchase.unit }} / order, equivalent to {{ number(selected.historicalPurchase.equivalentQty,2) }} {{ selected.historicalPurchase.baseUnit }}; last historical purchase {{ selected.historicalPurchase.lastPurchaseDate }}. This does not confirm MOQ or an open PO.</p>
+            </div><p class="mt-3 text-xs text-slate-600">Lead time priority: the selected supplier's lead time is used first; if unset, the product override applies; otherwise the default applies.</p><p v-if="selected.historicalPurchase" class="mt-3 text-xs text-slate-600">Purchase history reference: avg {{ number(selected.historicalPurchase.averageOrderQty,2) }} {{ selected.historicalPurchase.unit }} / order, equivalent to {{ number(selected.historicalPurchase.equivalentQty,2) }} {{ selected.historicalPurchase.baseUnit }}; last historical purchase {{ selected.historicalPurchase.lastPurchaseDate }}. This does not confirm MOQ or an open PO.</p>
               <div class="mt-3 flex flex-wrap gap-2"><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="saveProductEdits">Save product settings</button><button class="rounded border px-3 py-2 text-xs font-bold" @click="saveSupplier">Save supplier settings & select</button></div><p v-if="productError || supplierError" role="alert" class="mt-2 text-xs text-red-700">{{ productError || supplierError }}</p>
             </section>
             <section class="mt-4 rounded-xl border p-4"><h3 class="font-bold">Transparent order calculation</h3><p class="mt-1 text-xs text-slate-600">Protection horizon = supplier lead time + 1-day Tuesday buffer + stock coverage. The purchase-history file never contributes incoming stock.</p>

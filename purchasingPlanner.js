@@ -170,7 +170,7 @@ function salesClassification(total) {
   return 'High';
 }
 
-export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date())) {
+export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date()), options = {}) {
   ensurePurchasingSchema(stockDb);
   const settings = getSettings(stockDb);
   const stocks = stockDb.prepare(`SELECT ss.store_id storeId,ss.product_id productId,ss.stock_qty stock,
@@ -193,8 +193,17 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     snapshotByKey.get(key).set(snapshot.date, snapshot.stock);
   }
   const reviewIsStale = !reviewDate || daysBetween(reviewDate, today) >= 7;
-  const historyStart = reviewDate ? addDays(reviewDate, -settings.historyWeeks * 7) : addDays(today, -settings.historyWeeks * 7);
-  const historyEnd = reviewDate ? addDays(reviewDate, -1) : addDays(today, -1);
+  const historyStart = options.historyStart || (reviewDate ? addDays(reviewDate, -settings.historyWeeks * 7) : addDays(today, -settings.historyWeeks * 7));
+  const historyEnd = options.historyEnd || (reviewDate ? addDays(reviewDate, -1) : addDays(today, -1));
+  if ((options.historyStart || options.historyEnd) && (!options.historyStart || !options.historyEnd ||
+      !isValidDate(historyStart) || !isValidDate(historyEnd) || historyStart > historyEnd || historyEnd > today ||
+      daysBetween(historyStart, historyEnd) >= 730)) {
+    throw new Error('Choose a valid sales history range of up to 730 days, ending no later than today.');
+  }
+  const historyDays = daysBetween(historyStart, historyEnd) + 1;
+  const selectedHoliday = holidays.find((item) => item.id === Number(options.holidayReferenceId));
+  const referenceHoliday = selectedHoliday && holidays.filter((item) => item.name === selectedHoliday.name && item.end_date < today)
+    .sort((a, b) => b.start_date.localeCompare(a.start_date))[0];
   const allSalesStart = '2024-01-01';
   const saleRows = salesDb.prepare(`SELECT branch,menu,substr(sales_date_in,1,10) date,SUM(qty) qty,
     SUM(total_after_bill_discount) revenue FROM sales_transactions
@@ -202,6 +211,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     .all(allSalesStart, addDays(today, 1));
   const productsByAlias = new Map(), storeSales = new Map(), productSales = new Map(), coverage = new Map();
   const ambiguousSales = new Map();
+  const ambiguousReferenceKeys = new Set();
   const stockByKey = new Map(stocks.map((row) => [pair(row.storeId, row.productId), row]));
   for (const row of stocks) {
     if (isExcludedPurchasingCategory(row.category)) continue;
@@ -229,11 +239,16 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       if (!productSales.has(key)) productSales.set(key, new Map());
       const prior = productSales.get(key).get(sale.date) || { qty: 0, revenue: 0 };
       productSales.get(key).set(sale.date, { qty: prior.qty + Number(sale.qty), revenue: prior.revenue + Number(sale.revenue) });
-    } else if (matches?.size > 1 && sale.date >= historyStart && sale.date <= historyEnd) {
-      if (!ambiguousSales.has(aliasKey)) ambiguousSales.set(aliasKey, {
-        storeId, store: stockByKey.get(pair(storeId, [...matches][0]))?.store,
-        salesName: sale.menu, productIds: [...matches],
-      });
+    } else if (matches?.size > 1) {
+      if (sale.date >= historyStart && sale.date <= historyEnd && !ambiguousSales.has(aliasKey)) {
+        ambiguousSales.set(aliasKey, {
+          storeId, store: stockByKey.get(pair(storeId, [...matches][0]))?.store,
+          salesName: sale.menu, productIds: [...matches],
+        });
+      }
+      if (referenceHoliday && sale.date >= referenceHoliday.window_start && sale.date <= referenceHoliday.window_end) {
+        for (const productId of matches) ambiguousReferenceKeys.add(pair(storeId, productId));
+      }
     }
   }
   const ambiguousProductKeys = new Set();
@@ -351,14 +366,14 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     const history = productSales.get(key) || new Map();
     const outletCoverage = coverage.get(stock.storeId) || new Set();
     const matchingSales = history.size > 0;
-    const eligible = Array.from({ length: settings.historyWeeks * 7 }, (_, index) => addDays(historyEnd, -settings.historyWeeks * 7 + index + 1))
+    const eligible = Array.from({ length: historyDays }, (_, index) => addDays(historyStart, index))
       .filter((date) => outletCoverage.has(date) &&
         !holidayWindows.some((window) => date >= window.start && date <= window.end) &&
         !(snapshotByKey.get(key)?.has(date) && snapshotByKey.get(key).get(date) != null && Number(snapshotByKey.get(key).get(date)) <= 0));
     const reason = isExcludedPurchasingCategory(stock.category) ? 'Excluded category' :
       !reviewDate || reviewIsStale ? 'No recent Monday stock snapshot' :
         mondayStocks.get(key) == null ? 'Product missing from Monday stock snapshot' :
-          ambiguousProductKeys.has(key) ? 'Ambiguous sales match; see Ambiguous sales-to-stock matches' :
+          ambiguousProductKeys.has(key) ? 'Sales name matches multiple stock products; recommendation unavailable' :
             !matchingSales ? 'No exact product match in sales history' :
               eligible.length === 0 ? 'No usable sales days in history window' : '';
     const avgDailyRaw = !reason ? eligible.reduce((sum, date) => sum + (history.get(date)?.qty || 0), 0) / eligible.length : null;
@@ -367,6 +382,17 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       return dates.length ? dates.reduce((sum, date) => sum + (history.get(date)?.qty || 0), 0) / dates.length : null;
     });
     const avgWeeklyRaw = avgDailyRaw == null ? null : avgDailyRaw * 7;
+    const referenceDates = referenceHoliday
+      ? Array.from({ length: daysBetween(referenceHoliday.window_start, referenceHoliday.window_end) + 1 }, (_, index) => addDays(referenceHoliday.window_start, index))
+      : [];
+    const referenceComplete = referenceDates.length && referenceDates.every((date) => outletCoverage.has(date));
+    const holidayReference = referenceHoliday ? {
+      startDate: referenceHoliday.start_date, windowStart: referenceHoliday.window_start, windowEnd: referenceHoliday.window_end,
+      qty: referenceComplete && matchingSales && !ambiguousReferenceKeys.has(key)
+        ? referenceDates.reduce((sum, date) => sum + (history.get(date)?.qty || 0), 0) : null,
+      revenue: referenceComplete && matchingSales && !ambiguousReferenceKeys.has(key)
+        ? referenceDates.reduce((sum, date) => sum + (history.get(date)?.revenue || 0), 0) : null,
+    } : null;
     const suppliers = [...(supplierHistory.get(key)?.values() || [])].map((historySupplier) => {
       const saved = supplierSettings.get(pair(stock.storeId, `${stock.productId}::${historySupplier.supplierName}`));
       return {
@@ -479,6 +505,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       supplier, suppliers, purchasingUnit: purchaseUnit, baseUnit, conversionQty,
       holidayEvents, holidayConflict, forecast, recommendation7, recommendation10,
       maximumProjectedStock7, maximumProjectedStock10,
+      holidayReference,
       orderUpTo: recommendation7?.orderUpTo ?? null, calculatedOrderQty: recommendation7?.calculatedQty ?? null,
       orderQty: recommendation7?.orderQty ?? null, status, reason: effectiveReason,
       historicalPurchase: supplier ? {
@@ -486,8 +513,8 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
         conversionQty: supplier.conversionQty, equivalentQty: supplier.historicalAverageQty * supplier.conversionQty,
         lastPurchaseDate: supplier.lastPurchaseDate,
       } : null,
-      history: Array.from({ length: settings.historyWeeks * 7 }, (_, i) => {
-        const date = addDays(historyEnd, -settings.historyWeeks * 7 + i + 1);
+      history: Array.from({ length: historyDays }, (_, i) => {
+        const date = addDays(historyStart, i);
         const stockHistory = snapshotByKey.get(key);
         const observedStock = stockHistory?.get(date);
         return { date, qty: outletCoverage.has(date) ? (daily.get(date)?.qty || 0) : null,

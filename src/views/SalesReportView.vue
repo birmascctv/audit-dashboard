@@ -1,6 +1,7 @@
 <script setup>
 import DateField from '../components/DateField.vue';
 import { fmtDate, fmtDateTime } from '../utils/date.js';
+import { aggregateVisitPurpose } from '../utils/visitPurpose.js';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { BarChart3, Download, FileSpreadsheet, LoaderCircle, Package, RefreshCw, Store, Trash2, TrendingUp, UploadCloud } from 'lucide-vue-next';
 import UploadSalesCsvModal from '../components/UploadSalesCsvModal.vue';
@@ -503,18 +504,9 @@ const selectedStoreLabel = computed(() => selectedStores.value === null
   : selectedStores.value.length
     ? selectedStores.value.join(', ')
     : 'No stores selected');
-const visitPurposeRows = computed(() => (summary.value.topVisitPurposes || [])
-  .map((item) => ({ ...item, name: item.name || 'Unspecified' })));
-const visitPurposeChartRows = computed(() => {
-  const grouped = new Map();
-  for (const item of summary.value.byStoreVisitPurpose || []) {
-    if (visitPurposeChartStores.value !== null && !visitPurposeChartStores.value.includes(item.branch)) continue;
-    const name = item.name || 'Unspecified';
-    grouped.set(name, (grouped.get(name) || 0) + Number(item.sales || 0));
-  }
-  return [...grouped].map(([name, sales]) => ({ name, sales }))
-    .sort((a, b) => b.sales - a.sales);
-});
+const visitPurposeChartRows = computed(() => aggregateVisitPurpose(summary.value.byStoreVisitPurpose, visitPurposeChartStores.value));
+const visitPurposeRows = computed(() => visitPurposeChartRows.value.slice(0, 10));
+const visitPurposeTotal = computed(() => visitPurposeChartRows.value.reduce((sum, item) => sum + item.sales, 0));
 const productPaymentPieItems = computed(() => selectedPivotRow.value
   ? pivotPaymentMethods.value.map((method) => ({ name: method, sales: Number(selectedPivotRow.value.methods[method] || 0) })).filter((item) => item.sales > 0)
   : []);
@@ -1066,7 +1058,7 @@ onBeforeUnmount(() => {
           </header>
 <div class="overflow-x-auto">
             <table class="sales-data-table w-full text-left text-xs"><thead class="bg-slate-50 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-4 py-2">Visit purpose</th><th class="px-4 py-2 text-right">Sales</th><th class="px-4 py-2 text-right">Share</th></tr></thead>
-              <tbody class="sales-table-body"><tr v-for="item in visitPurposeRows" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td><td class="px-4 py-2 text-right">{{ formatPercent(item.sales, summary.totalNetSales) }}</td></tr>
+              <tbody class="sales-table-body"><tr v-for="item in visitPurposeRows" :key="item.name" class="border-t border-slate-100"><td class="px-4 py-2 font-semibold">{{ item.name }}</td><td class="px-4 py-2 text-right font-mono">{{ formatMoney(item.sales) }}</td><td class="px-4 py-2 text-right">{{ formatPercent(item.sales, visitPurposeTotal) }}</td></tr>
                 <tr v-if="!visitPurposeRows.length"><td colspan="3" class="p-0"><EmptyState title="No visit-purpose sales in this period." /></td></tr>
               </tbody>
             </table>
