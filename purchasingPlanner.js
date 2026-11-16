@@ -162,7 +162,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
   ensurePurchasingSchema(stockDb);
   const settings = getSettings(stockDb);
   const stocks = stockDb.prepare(`SELECT ss.store_id storeId,ss.product_id productId,ss.stock_qty stock,
-    ss.observed_stock_qty observedStock,ss.last_synced lastSynced,s.name store,
+    ss.last_synced lastSynced,s.name store,
     p.sku,p.product_title productName,p.varian productVariant,p.category,p.default_unit defaultUnit
     FROM store_stocks ss JOIN stores s ON s.id=ss.store_id JOIN products p ON p.id=ss.product_id
     WHERE UPPER(TRIM(COALESCE(NULLIF(p.product_title,''),p.varian,''))) NOT LIKE '%(DRAFT)'`).all();
@@ -249,39 +249,6 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       return { productId, name: stock.productName, variant: stock.productVariant, sku: stock.sku };
     }),
   })).sort((a, b) => a.store.localeCompare(b.store) || a.salesName.localeCompare(b.salesName));
-  const historyPurchases = stockDb.prepare(`SELECT * FROM purchasing_history_records WHERE excluded=0 ORDER BY purchase_date DESC,id DESC`).all();
-  const stockAliases = new Map();
-  for (const row of stocks) {
-    for (const alias of new Set([row.productName, row.productVariant, row.sku].filter(Boolean).map(cleanName))) {
-      const key = pair(row.storeId, alias);
-      if (!stockAliases.has(key)) stockAliases.set(key, new Set());
-      stockAliases.get(key).add(row.productId);
-    }
-  }
-  const supplierHistory = new Map();
-  for (const purchase of historyPurchases) {
-    const storeId = matchStore(purchase.branch);
-    if (!storeId) continue;
-    const codeMatches = stockAliases.get(pair(storeId, cleanName(purchase.product_code)));
-    const matches = codeMatches?.size === 1 ? codeMatches : stockAliases.get(pair(storeId, cleanName(purchase.product_name)));
-    if (matches?.size !== 1) continue;
-    const productId = [...matches][0];
-    const key = pair(storeId, productId);
-    if (!supplierHistory.has(key)) supplierHistory.set(key, new Map());
-    const suppliers = supplierHistory.get(key);
-    if (!suppliers.has(purchase.supplier_name)) suppliers.set(purchase.supplier_name, {
-      supplierName: purchase.supplier_name, lastPurchaseDate: purchase.purchase_date, purchasingUnit: purchase.purchasing_unit,
-      conversionQty: purchase.conversion_qty, baseUnit: purchase.base_unit, historicalAverageQty: 0, historicalCount: 0,
-    });
-    const supplier = suppliers.get(purchase.supplier_name);
-    supplier.historicalAverageQty += Number(purchase.po_qty);
-    supplier.historicalCount++;
-  }
-  for (const suppliers of supplierHistory.values()) for (const supplier of suppliers.values()) {
-    supplier.historicalAverageQty /= supplier.historicalCount;
-  }
-  const supplierSettings = new Map(stockDb.prepare('SELECT * FROM purchasing_supplier_settings').all()
-    .map((row) => [pair(row.store_id, `${row.product_id}::${row.supplier_name}`), row]));
   const productSettings = new Map(stockDb.prepare('SELECT * FROM purchasing_product_settings').all()
     .map((row) => [pair(row.store_id, row.product_id), row]));
   const holidayWindows = holidays.map((event) => ({ start: event.window_start, end: event.window_end }));
@@ -383,26 +350,13 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       revenue: referenceComplete && matchingSales && !ambiguousReferenceKeys.has(key)
         ? referenceDates.reduce((sum, date) => sum + (history.get(date)?.revenue || 0), 0) : null,
     } : null;
-    const suppliers = [...(supplierHistory.get(key)?.values() || [])].map((historySupplier) => {
-      const saved = supplierSettings.get(pair(stock.storeId, `${stock.productId}::${historySupplier.supplierName}`));
-      return {
-        ...historySupplier, leadDays: saved?.lead_days ?? null, moq: saved?.moq ?? null,
-        purchasingUnit: saved?.purchasing_unit || null,
-        conversionQty: saved?.conversion_qty ?? 1,
-        baseUnit: saved?.base_unit || null,
-        configured: !!saved,
-      };
-    });
-    for (const saved of stockDb.prepare('SELECT * FROM purchasing_supplier_settings WHERE store_id=? AND product_id=?').all(stock.storeId, stock.productId)) {
-      if (!suppliers.some((supplier) => supplier.supplierName === saved.supplier_name)) suppliers.push({
+    const suppliers = stockDb.prepare('SELECT * FROM purchasing_supplier_settings WHERE store_id=? AND product_id=?')
+      .all(stock.storeId, stock.productId).map((saved) => ({
         supplierName: saved.supplier_name, leadDays: saved.lead_days, moq: saved.moq, purchasingUnit: saved.purchasing_unit,
         conversionQty: saved.conversion_qty, baseUnit: saved.base_unit, configured: true,
-      });
-    }
+      }));
     const selectedSupplierName = preferences.selected_supplier || '';
     const supplier = suppliers.find((item) => item.supplierName === selectedSupplierName) || null;
-    const historySuppliers = supplierHistory.get(key);
-    const referenceSupplier = historySuppliers?.get(selectedSupplierName) || historySuppliers?.values().next().value;
     const leadDays = supplier?.leadDays ?? settings.defaultLeadDays;
     const conversionQty = supplier?.conversionQty || 1;
     const purchaseUnit = supplier?.purchasingUnit || stock.default_unit || 'Piece';
@@ -484,7 +438,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     const daily = history;
     return {
       ...stock, product: stock.productName || stock.productVariant || stock.productId, store: stock.store,
-      stock: stock.observedStock ?? stock.stock, currentStock: stock.observedStock ?? stock.stock,
+      stock: stock.stock, currentStock: stock.stock,
       reviewStock: stockAtReview, reviewDate, stockReferenceDate: reviewDate,
       avgDaily: dailySales, avgWeekly: weeklySales, avgDailyRaw, avgWeeklyRaw,
       daysLeft, expectedStockoutDate, recommendedReorderDate,
@@ -499,11 +453,6 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       holidayReference,
       orderUpTo: recommendation7?.orderUpTo ?? null, calculatedOrderQty: recommendation7?.calculatedQty ?? null,
       orderQty: recommendation7?.orderQty ?? null, status, reason: effectiveReason,
-      historicalPurchase: referenceSupplier ? {
-        averageOrderQty: referenceSupplier.historicalAverageQty, unit: referenceSupplier.purchasingUnit,
-        conversionQty: referenceSupplier.conversionQty, equivalentQty: referenceSupplier.historicalAverageQty * referenceSupplier.conversionQty,
-        lastPurchaseDate: referenceSupplier.lastPurchaseDate,
-      } : null,
       history: Array.from({ length: historyDays }, (_, i) => {
         const date = addDays(historyStart, i);
         const stockHistory = snapshotByKey.get(key);

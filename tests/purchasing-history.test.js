@@ -118,21 +118,26 @@ test('purchase history report groups orders and filters their dates', () => {
   db.close();
 });
 
-test('purchase history does not change recommendation quantities or select a supplier', () => {
+test('purchase history is reference-only and does not change sales or recommendations', () => {
   const { stock, sales, match } = fixture();
   const before = getPurchasingPlanner(stock, sales, match, '2026-11-13').rows[0];
   const [record] = parsePurchasingCsv(csv());
   insertPurchaseHistoryRows(stock, { importId: 'reference', filename: 'purchases.csv', uploadedBy: 'Bertha', rows: [record] });
   const after = getPurchasingPlanner(stock, sales, match, '2026-11-13').rows[0];
   assert.equal(after.selectedSupplier, '');
+  assert.equal(after.historicalPurchase, undefined);
+  assert.equal(after.suppliers.length, 0);
+  assert.equal(after.avgDailyRaw, before.avgDailyRaw);
+  assert.equal(after.avgWeeklyRaw, before.avgWeeklyRaw);
+  assert.equal(after.daysLeft, before.daysLeft);
+  assert.equal(after.expectedStockoutDate, before.expectedStockoutDate);
   assert.equal(after.conversionQty, before.conversionQty);
   assert.equal(after.recommendation7.orderQty, before.recommendation7.orderQty);
-  assert.equal(after.historicalPurchase.averageOrderQty, 2);
+  assert.equal(after.recommendation10.orderQty, before.recommendation10.orderQty);
   savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', supplier: 'Vendor A' });
   const selected = getPurchasingPlanner(stock, sales, match, '2026-11-13').rows[0];
   assert.equal(selected.conversionQty, 1);
   assert.equal(selected.recommendation7.orderQty, before.recommendation7.orderQty);
-  assert.equal(selected.historicalPurchase.conversionQty, 24);
   stock.close(); sales.close();
 });
 test('holiday analysis reports incomplete windows instead of treating missing sales as zero', () => {

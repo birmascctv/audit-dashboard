@@ -16,7 +16,7 @@ function fixture() {
     CREATE TABLE stock_snapshots(store_id TEXT,product_id TEXT,business_date TEXT,stock_qty REAL,PRIMARY KEY(store_id,product_id,business_date));
     INSERT INTO stores VALUES ('s','Store');
     INSERT INTO products VALUES ('p','Product','Product variant','BEER','SKU-1','Can');
-    INSERT INTO store_stocks VALUES ('s','p',2,2,'2026-01-31T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('s','p',2,99,'2026-01-31T12:00:00Z');
     INSERT INTO stock_snapshots VALUES ('s','p','2026-01-26',2);
   `);
   sales.exec('CREATE TABLE sales_transactions(branch TEXT,menu TEXT,sales_date_in TEXT,qty REAL,total_after_bill_discount REAL)');
@@ -42,6 +42,7 @@ test('recommendations ignore legacy manual quantities and product lead overrides
   saveSupplierSettings(stock, { storeId: 's', productId: 'p', supplierName: 'Vendor', leadDays: 2, moq: 3, purchasingUnit: 'Carton', conversionQty: 24, baseUnit: 'Can' });
   savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', movement: 'Slow Moving', supplier: 'Vendor', minStock: 100 });
   let row = get().rows[0];
+  assert.equal(row.currentStock, 2);
   assert.equal(row.movement, 'Slow Moving');
   assert.equal(row.status, 'Critical Stock');
   assert.equal(row.belowMinStock, true);

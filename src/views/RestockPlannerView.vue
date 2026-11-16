@@ -2,10 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { Line } from 'vue-chartjs';
 import 'chart.js/auto';
-import { authFetchJson, getAuthToken } from '../services/authFetch.js';
+import { authFetchJson } from '../services/authFetch.js';
 import PurchasingHistoryUpload from '../components/PurchasingHistoryUpload.vue';
 
-const empty = { rows: [], stores: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], imports: [], ambiguousMatches: [], settings: {} };
+const empty = { rows: [], stores: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], ambiguousMatches: [], settings: {} };
 const data = ref({ ...empty });
 const loading = ref(true);
 const error = ref('');
@@ -40,7 +40,6 @@ const productEdits = ref({});
 const supplierEdit = ref({});
 const supplierError = ref('');
 const productError = ref('');
-const purchaseImportError = ref('');
 const purchaseDates = ref({ start: '', end: '' });
 const purchaseOffset = ref(0);
 const purchaseReport = ref({ total: 0, orders: [] });
@@ -158,7 +157,7 @@ function initializeHolidayAdjustments() {
 async function loadPurchasing() {
   const selectedKey = selected.value ? { storeId: selected.value.storeId, productId: selected.value.productId } : null;
   const result = await authFetchJson(`/api/purchasing${rangeQuery()}`);
-  if (!['rows', 'holidays', 'holidayAnalysis', 'upcomingHolidays', 'imports', 'ambiguousMatches']
+  if (!['rows', 'holidays', 'holidayAnalysis', 'upcomingHolidays', 'ambiguousMatches']
     .every((key) => Array.isArray(result[key])) || !result.settings ||
     result.rows.some((row) => !Array.isArray(row.suppliers) || !Array.isArray(row.holidayEvents))) {
     throw new Error('Purchasing server data is incompatible with this page. The server needs to be updated and restarted.');
@@ -391,20 +390,6 @@ async function saveAdjustment(holiday) {
   } catch (err) { holidayAdjustmentError.value = err.message; }
 }
 
-async function downloadOriginal(file) {
-  try {
-    const response = await fetch(`/api/purchasing/history/${encodeURIComponent(file.id)}/original`, {
-      headers: { Authorization: `Bearer ${getAuthToken()}` },
-    });
-    if (!response.ok) throw new Error(`Original file download failed (HTTP ${response.status}).`);
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url; link.download = file.filename; link.click();
-    URL.revokeObjectURL(url);
-  } catch (err) { purchaseImportError.value = err.message; }
-}
-
 const detailChart = computed(() => {
   if (!selected.value?.forecast || !selected.value?.history) return { labels: [], datasets: [] };
   const row = selected.value;
@@ -440,7 +425,6 @@ onMounted(async () => {
   <div class="space-y-5">
     <header class="flex flex-wrap items-center justify-between gap-3">
       <div><h1 class="text-2xl font-extrabold text-slate-900">Purchasing</h1><p class="mt-1 text-sm text-slate-600">Weekly outlet and product-variant reorder recommendations · PO creation and tracking are out of scope.</p></div>
-      <button class="rounded-lg bg-teal-700 px-4 py-2 text-sm font-bold text-white" @click="uploadOpen = true">Upload purchase history CSV</button>
     </header>
 
     <p v-if="loading" class="rounded-xl bg-white p-5">Loading Purchasing data…</p>
@@ -484,7 +468,7 @@ onMounted(async () => {
         <section class="overflow-hidden rounded-xl border bg-white shadow-sm">
           <header class="flex flex-wrap items-center justify-between gap-2 border-b p-4"><div><h2 class="font-bold">Reorder recommendations</h2><p class="text-xs text-slate-500">Demand uses weekday averages; Friday–Sunday patterns are calculated separately. Order quantities are supplier purchasing units.</p></div></header>
           <p class="px-4 pt-3 text-xs text-slate-600">System order-up-to = forecast demand during lead time + Tuesday buffer + selected coverage. It is not a PO. The final quantity rounds to whole purchasing units and applies configured MOQ.</p>
-          <p class="px-4 py-2 text-xs text-amber-800">Monday stock is the calculation reference; current ESB stock is shown separately. No incoming quantities or active orders are included. Holiday-analysis history is not automatically applied to future demand.</p>
+          <p class="px-4 py-2 text-xs text-amber-800">Monday stock is the calculation reference; current stock is shown separately. No incoming quantities or active orders are included. Holiday-analysis history is not automatically applied to future demand.</p>
           <div class="overflow-x-auto">
             <table class="w-full min-w-[1800px] text-left text-xs">
               <thead class="bg-slate-50 text-[10px] uppercase text-slate-600"><tr>
@@ -578,7 +562,7 @@ onMounted(async () => {
 
       <template v-else>
         <section class="rounded-xl border bg-white p-4">
-          <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="font-bold">Historical purchase reference</h2><p class="mt-1 text-xs text-slate-600">Archived source files and historical purchase lines only. No active PO quantities, receiving dates, or incoming stock are tracked.</p></div><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="uploadOpen = true">Upload CSV</button></div>
+          <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="font-bold">Purchase order history</h2><p class="mt-1 text-xs text-slate-600">For reference only; purchase history does not affect sales averages, forecasts, or stock recommendations.</p></div><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="uploadOpen = true">Upload purchase history CSV</button></div>
           <form class="mt-4 flex flex-wrap items-end gap-3" @submit.prevent="applyPurchaseDates">
             <label class="text-xs font-bold">From<input v-model="purchaseDates.start" type="date" class="mt-1 block rounded border p-2"></label>
             <label class="text-xs font-bold">To<input v-model="purchaseDates.end" type="date" class="mt-1 block rounded border p-2"></label>
@@ -595,12 +579,6 @@ onMounted(async () => {
             <p v-if="!purchaseReport.orders.length" class="text-xs text-slate-500">No purchase orders for this date range.</p>
             <div v-if="purchaseReport.total > 25" class="flex items-center gap-2 text-xs"><button class="rounded border px-2 py-1 disabled:opacity-40" :disabled="purchaseOffset === 0" @click="purchaseOffset = Math.max(0, purchaseOffset - 25)">Previous</button><span>{{ purchaseOffset + 1 }}–{{ Math.min(purchaseOffset + 25, purchaseReport.total) }} of {{ purchaseReport.total }}</span><button class="rounded border px-2 py-1 disabled:opacity-40" :disabled="purchaseOffset + 25 >= purchaseReport.total" @click="purchaseOffset += 25">Next</button></div>
           </div>
-          <p v-if="purchaseImportError" role="alert" class="mt-3 text-sm text-red-700">{{ purchaseImportError }}</p>
-          <div class="mt-4 overflow-x-auto"><table class="w-full min-w-[700px] text-left text-xs"><thead class="bg-slate-50"><tr><th v-for="heading in ['File','Uploaded','Uploaded by','Rows saved','Duplicates','Original CSV']" :key="heading" class="p-3">{{ heading }}</th></tr></thead><tbody>
-            <tr v-for="item in data.imports" :key="item.id" class="border-t"><td class="p-3">{{ item.filename }}</td><td class="p-3">{{ item.uploadedAt }}</td><td class="p-3">{{ item.uploadedBy }}</td><td class="p-3">{{ number(item.rowCount) }}</td><td class="p-3">{{ number(item.duplicateCount) }}</td><td class="p-3"><button v-if="item.archived" class="text-teal-800 underline" @click="downloadOriginal(item)">Download original</button><span v-else class="text-amber-700">Archive incomplete</span></td></tr>
-            <tr v-if="!data.imports.length"><td colspan="6" class="p-8 text-center text-slate-500">No purchase-history CSVs uploaded yet.</td></tr>
-          </tbody></table></div>
-          <div class="mt-5 border-t pt-4"><h3 class="font-bold">Supplier and unit references</h3><p class="mt-1 text-xs text-slate-600">Historical purchases are reference only. Supplier, lead time, units and MOQ used for recommendations must be configured manually.</p></div>
         </section>
       </template>
     </template>
@@ -609,7 +587,7 @@ onMounted(async () => {
       <Transition name="purchasing-pop">
         <div v-if="selected" class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4" @click.self="selected = null" @keydown.esc="selected = null">
           <section role="dialog" aria-modal="true" aria-label="Purchasing recommendation details" class="max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
-            <header class="flex justify-between gap-3"><div><h2 class="text-lg font-extrabold">{{ selected.productName }} · {{ selected.productVariant || selected.sku || 'No variant identifier' }}</h2><p class="text-sm text-slate-600">{{ selected.store }} · {{ selected.movement }} · Monday stock {{ number(selected.reviewStock) }} ({{ selected.reviewDate }}) · current ESB stock {{ number(selected.currentStock) }}</p></div><button class="rounded border px-3 py-1" aria-label="Close details" @click="selected = null">Close</button></header>
+            <header class="flex justify-between gap-3"><div><h2 class="text-lg font-extrabold">{{ selected.productName }} · {{ selected.productVariant || selected.sku || 'No variant identifier' }}</h2><p class="text-sm text-slate-600">{{ selected.store }} · {{ selected.movement }} · Monday stock {{ number(selected.reviewStock) }} ({{ selected.reviewDate }}) · current stock {{ number(selected.currentStock) }}</p></div><button class="rounded border px-3 py-1" aria-label="Close details" @click="selected = null">Close</button></header>
             <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Average sales/week</p><strong>{{ number(selected.avgWeekly) }} {{ selected.baseUnit }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Average sales/day</p><strong>{{ number(selected.avgDaily) }} {{ selected.baseUnit }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Days left · run out</p><strong>{{ dayLabel(selected.daysLeft) }} · {{ dateLabel(selected.expectedStockoutDate) }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Order by</p><strong>{{ dateLabel(selected.recommendedReorderDate) }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Usable history</p><strong>{{ selected.usableDays }} days · {{ dateDisplay(data.historyStart) }}–{{ dateDisplay(data.historyEnd) }}</strong></article></div>
             <p v-if="detailLoading" role="status" class="mt-3 rounded bg-teal-50 p-3 text-sm text-teal-900">Loading product history and forecast…</p>
             <p v-if="detailError" role="alert" class="mt-3 rounded bg-red-50 p-3 text-sm text-red-800">{{ detailError }}</p>
@@ -627,7 +605,7 @@ onMounted(async () => {
               <label class="text-xs font-semibold">Purchasing unit<input v-model.trim="supplierEdit.purchasingUnit" maxlength="80" placeholder="Carton, pack, piece…" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Base units per purchasing unit<input v-model="supplierEdit.conversionQty" type="number" min="0.0001" step="any" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Base unit<input v-model.trim="supplierEdit.baseUnit" maxlength="80" placeholder="Can, bottle, piece…" class="mt-1 block w-full rounded border p-2"></label>
-            </div><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p><p v-if="selected.historicalPurchase" class="mt-3 text-xs text-slate-600">Purchase history reference: avg {{ number(selected.historicalPurchase.averageOrderQty,2) }} {{ selected.historicalPurchase.unit }} / order, equivalent to {{ number(selected.historicalPurchase.equivalentQty,2) }} {{ selected.historicalPurchase.baseUnit }}; last historical purchase {{ selected.historicalPurchase.lastPurchaseDate }}. This does not confirm MOQ or an open PO.</p>
+            </div><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p>
               <div class="mt-3 flex flex-wrap gap-2"><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="saveProductEdits">Save product settings</button><button class="rounded border px-3 py-2 text-xs font-bold" @click="saveSupplier">Save supplier settings & select</button></div><p v-if="productError || supplierError" role="alert" class="mt-2 text-xs text-red-700">{{ productError || supplierError }}</p>
             </section>
             <section class="mt-4 rounded-xl border p-4"><h3 class="font-bold">Transparent order calculation</h3><p class="mt-1 text-xs text-slate-600">Protection horizon = supplier lead time + 1-day Tuesday buffer + stock coverage. The purchase-history file never contributes incoming stock.</p>
