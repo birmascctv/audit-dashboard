@@ -35,7 +35,9 @@ test('Sales Report initializes and renders the category rankings section', async
     const { default: SalesReport } = await vite.ssrLoadModule('/src/views/SalesReportView.vue');
     const app = createSSRApp(SalesReport);
     app.component('RouterLink', { render: () => null });
-    assert.match(await renderToString(app), /Top 10 Products Per Category/);
+    const html = await renderToString(app);
+    assert.match(html, /Top 10 Products Per Category/);
+    assert.doesNotMatch(html, /Stock vs Sold/);
   } finally { await vite.close(); }
 });
 

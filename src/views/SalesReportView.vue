@@ -69,13 +69,6 @@ const timeSelectedStores = ref(null);
 const timeSummary = ref({});
 const timeRangeError = ref('');
 const weekdayTooltip = ref(null);
-const stockCompareStore = ref('');
-const stockCompareDate = ref(jakartaToday());
-const stockCompare = ref({ rows: [], needsSnapshots: true, collectingSince: null });
-const stockCompareError = ref('');
-const stockStatusFilter = ref('all');
-const stockCompareRows = computed(() => stockCompare.value.rows.filter((r) => stockStatusFilter.value === 'all' || r.status === stockStatusFilter.value));
-const stockCompareLoading = ref(false);
 const hourTooltip = ref(null);
 const loading = ref(false);
 const toast = useToast();
@@ -788,19 +781,6 @@ async function loadTopCategory() {
     if (requestId === topCategoryRequestId) topCategoryLoading.value = false;
   }
 }
-async function loadStockCompare() {
-  if (!stockCompareStore.value || !stockCompareDate.value) return;
-  stockCompareLoading.value = true;
-  stockCompareError.value = '';
-  try {
-    const result = await getJson(`/api/sales/stock-compare?${queryString({ store: stockCompareStore.value, date: stockCompareDate.value })}`);
-    stockCompare.value = result;
-  } catch (loadError) {
-    stockCompareError.value = loadError.message || 'Could not load stock comparison.';
-  } finally {
-    stockCompareLoading.value = false;
-  }
-}
 async function loadFiles() {
   try {
     const result = await getJson('/api/sales/files');
@@ -813,7 +793,6 @@ async function loadStores() {
   try {
     const result = await getJson('/api/sales/stores');
     stores.value = result.stores || [];
-    if (!stockCompareStore.value) stockCompareStore.value = stores.value[0]?.name || '';
   } catch (loadError) {
     error.value = loadError.message || 'Could not load sales branches.';
   }
@@ -824,7 +803,6 @@ function handleImported() {
   loadFiles();
   loadReport();
   loadTimeSummary();
-  loadStockCompare();
 }
 async function downloadFile(file, original = false) {
   if (downloadingFileId.value) return;
@@ -883,8 +861,6 @@ function syncChartStores(selection) {
 watch(selectedStores, syncChartStores, { deep: true });
 watch([topCategory, topCategoryStore, topCategoryRank], loadTopCategory);
 watch([timeRangeStart, timeRangeEnd, timeSelectedStores], loadTimeSummary);
-watch([stockCompareStore, stockCompareDate], loadStockCompare);
-watch(() => summary.value.latestBusinessDate, (date) => { if (date && !stockCompareDate.value) stockCompareDate.value = date; });
 watch([pivotRows, allPivotRows], ([filteredItems, allItems]) => {
   if (selectedPivotProduct.value === '__all__') return;
   if (!allItems.some((item) => item.item === selectedPivotProduct.value) ||
@@ -902,12 +878,10 @@ onMounted(() => {
   loadFiles();
   loadReport();
   loadTimeSummary();
-  loadStockCompare();
   autoRefreshTimer = setInterval(() => {
     if (document.hidden || loading.value || uploadOpen.value) return;
     loadReport();
     loadTimeSummary();
-    loadStockCompare();
   }, 60000);
 });
 // Close every open dropdown when clicking anywhere outside it
@@ -941,7 +915,7 @@ onBeforeUnmount(() => {
         <button type="button" class="flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-teal-800" @click="uploadOpen = true">
           <UploadCloud class="h-4 w-4" />Upload CSV
         </button>
-        <button type="button" class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" :disabled="loading" title="Refresh" @click="loadReport(); loadFiles(); loadStores(); loadTimeSummary(); loadStockCompare()">
+        <button type="button" class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" :disabled="loading" title="Refresh" @click="loadReport(); loadFiles(); loadStores(); loadTimeSummary()">
           <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />
         </button>
       </div>
@@ -1384,24 +1358,6 @@ onBeforeUnmount(() => {
             </div>
           </article>
         </div>
-        <section class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <header class="mb-3 flex flex-wrap items-end justify-between gap-3">
-            <div><h3 class="text-sm font-bold text-slate-900">Stock vs Sold</h3><p class="text-[11px] text-slate-500">Products with opening stock (snapshot before 06:00) versus what was sold that business day.</p></div>
-            <div class="flex flex-wrap gap-2">
-              <label class="text-[10px] font-bold uppercase text-slate-500">Store<select v-model="stockCompareStore" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800"><option v-for="store in stores" :key="store.name" :value="store.name">{{ store.name }}</option></select></label>
-              <label class="text-[10px] font-bold uppercase text-slate-500">Status<select v-model="stockStatusFilter" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-800"><option value="all">All</option><option value="Restocked">Restocked</option><option value="Missing">Missing</option><option value="matched">Matched</option><option value="unmatched">Unmatched</option></select></label>
-              <label class="text-[10px] font-bold uppercase text-slate-500">Business date<DateField v-model="stockCompareDate" class="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case text-slate-800" /></label>
-            </div>
-          </header>
-          <p v-if="stockCompareError" class="text-xs text-rose-700">{{ stockCompareError }}</p>
-          <SkeletonBlock v-else-if="stockCompareLoading && !stockCompare.rows.length" :rows="4" />
-          <p v-else-if="stockCompare.needsSnapshots" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">No opening stock snapshot for this date; snapshots are collected since {{ stockCompare.collectingSince || 'the next successful inventory sync' }}.</p>
-          <div v-else>          <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-            <table class="w-full min-w-[760px] text-left text-xs"><thead class="bg-slate-100 text-[10px] font-bold uppercase text-slate-500"><tr><th class="px-3 py-2">Product (sales / stock)</th><th class="px-3 py-2 text-right">Opening</th><th class="px-3 py-2 text-right">Sold</th><th class="px-3 py-2 text-right">Expected closing</th><th class="px-3 py-2 text-right">Actual closing</th><th class="px-3 py-2 text-right">Difference</th><th class="px-3 py-2">Status</th></tr></thead>
-              <tbody><tr v-for="(row,index) in stockCompareRows" :key="`${row.product}-${index}`" class="border-t border-slate-100"><td class="px-3 py-2 font-medium">{{ row.product }}<span v-if="row.stockProduct && row.stockProduct !== row.product" class="block text-[10px] text-slate-500">Matched stock: {{ row.stockProduct }}</span></td><td class="px-3 py-2 text-right">{{ row.opening ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.sold ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.expectedClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.actualClosing ?? '—' }}</td><td class="px-3 py-2 text-right">{{ row.difference ?? '—' }}</td><td class="px-3 py-2"><span class="font-semibold" :class="row.status === 'matched' ? 'text-emerald-700' : row.status === 'Restocked' ? 'text-sky-700' : row.status === 'Missing' ? 'text-rose-700' : 'text-slate-500'">{{ row.status }}</span></td></tr>
-                <tr v-if="!stockCompare.rows.length"><td colspan="7" class="p-0"><EmptyState title="No stock or sales products found for this store and date." /></td></tr></tbody></table>
-          </div></div>
-        </section>
       </section>
     <Teleport v-if="hourTooltip" to="body">
       <div class="pointer-events-none fixed z-[100] max-h-[70vh] max-w-[22rem] overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${hourTooltip.x}px`, top: `${hourTooltip.y}px` }">

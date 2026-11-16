@@ -13,7 +13,7 @@ const tasks = computed(() => {
   if (role.value === 'admin') return [
     ['Pick a date with Quick Range', 'Use Today, Last 7 Days or Date Range at the top of Sales Report.'],
     ['Choose a store', 'Use the store dropdown to see one store only.'],
-    ['Check Stock vs Sold', 'Scroll to Sales by Time Range to compare stock with sales.'],
+    ['Review top products', 'Scroll to Top Products to see what sold best.'],
   ];
   return [
     ['Upload the monthly audit CSV', 'Audit > Upload Audits. The file name must contain the outlet and month.'],
