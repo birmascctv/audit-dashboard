@@ -2,10 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { Line } from 'vue-chartjs';
 import 'chart.js/auto';
-import { authFetchJson } from '../services/authFetch.js';
+import { authFetchJson, getAuthToken } from '../services/authFetch.js';
 import PurchasingHistoryUpload from '../components/PurchasingHistoryUpload.vue';
 
-const empty = { rows: [], stores: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], ambiguousMatches: [], settings: {} };
+const empty = { rows: [], stores: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], imports: [], ambiguousMatches: [], settings: {} };
 const data = ref({ ...empty });
 const loading = ref(true);
 const error = ref('');
@@ -40,12 +40,7 @@ const productEdits = ref({});
 const supplierEdit = ref({});
 const supplierError = ref('');
 const productError = ref('');
-const purchaseDates = ref({ start: '', end: '' });
-const purchaseOffset = ref(0);
-const purchaseReport = ref({ total: 0, orders: [] });
-const purchaseReportError = ref('');
-const purchaseReportLoading = ref(false);
-let purchaseReportRequestId = 0;
+const purchaseImportError = ref('');
 const detailError = ref('');
 const detailLoading = ref(false);
 let detailRequestId = 0;
@@ -104,7 +99,6 @@ const statusClass = (status) => ({
 watch([storeFilter, statusFilter, movementFilter], () => { page.value = 1; });
 watch([selectedHolidayStore, data], () => initializeHolidayAdjustments());
 watch([selectedHolidayStore, selectedHolidayId, data, tab], loadHolidayForecast);
-watch([tab, purchaseOffset], () => { if (tab.value === 'history') loadPurchaseReport(); });
 watch(selected, (row) => {
   if (!row) return;
   productEdits.value = {
@@ -157,7 +151,7 @@ function initializeHolidayAdjustments() {
 async function loadPurchasing() {
   const selectedKey = selected.value ? { storeId: selected.value.storeId, productId: selected.value.productId } : null;
   const result = await authFetchJson(`/api/purchasing${rangeQuery()}`);
-  if (!['rows', 'holidays', 'holidayAnalysis', 'upcomingHolidays', 'ambiguousMatches']
+  if (!['rows', 'holidays', 'holidayAnalysis', 'upcomingHolidays', 'imports', 'ambiguousMatches']
     .every((key) => Array.isArray(result[key])) || !result.settings ||
     result.rows.some((row) => !Array.isArray(row.suppliers) || !Array.isArray(row.holidayEvents))) {
     throw new Error('Purchasing server data is incompatible with this page. The server needs to be updated and restarted.');
@@ -256,31 +250,22 @@ async function refresh() {
   catch (err) { error.value = err.message || 'Purchasing data could not be loaded.'; }
 }
 
-async function loadPurchaseReport() {
-  const requestId = ++purchaseReportRequestId;
-  purchaseReportLoading.value = true;
-  purchaseReportError.value = '';
+async function downloadOriginal(file) {
   try {
-    const params = new URLSearchParams({ offset: String(purchaseOffset.value) });
-    if (purchaseDates.value.start) params.set('startDate', purchaseDates.value.start);
-    if (purchaseDates.value.end) params.set('endDate', purchaseDates.value.end);
-    const result = await authFetchJson(`/api/purchasing/history/report?${params}`);
-    if (requestId === purchaseReportRequestId) purchaseReport.value = result;
-  } catch (err) {
-    if (requestId === purchaseReportRequestId) purchaseReportError.value = err.message;
-  } finally {
-    if (requestId === purchaseReportRequestId) purchaseReportLoading.value = false;
-  }
-}
-
-function applyPurchaseDates() {
-  if (purchaseOffset.value) purchaseOffset.value = 0;
-  else loadPurchaseReport();
+    const response = await fetch(`/api/purchasing/history/${encodeURIComponent(file.id)}/original`, {
+      headers: { Authorization: `Bearer ${getAuthToken()}` },
+    });
+    if (!response.ok) throw new Error(`Original file download failed (HTTP ${response.status}).`);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = file.filename; link.click();
+    URL.revokeObjectURL(url);
+  } catch (err) { purchaseImportError.value = err.message; }
 }
 
 async function purchaseImported() {
   await refresh();
-  if (tab.value === 'history') loadPurchaseReport();
 }
 
 async function saveProductEdits() {
@@ -562,23 +547,12 @@ onMounted(async () => {
 
       <template v-else>
         <section class="rounded-xl border bg-white p-4">
-          <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="font-bold">Purchase order history</h2><p class="mt-1 text-xs text-slate-600">For reference only; purchase history does not affect sales averages, forecasts, or stock recommendations.</p></div><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="uploadOpen = true">Upload purchase history CSV</button></div>
-          <form class="mt-4 flex flex-wrap items-end gap-3" @submit.prevent="applyPurchaseDates">
-            <label class="text-xs font-bold">From<input v-model="purchaseDates.start" type="date" class="mt-1 block rounded border p-2"></label>
-            <label class="text-xs font-bold">To<input v-model="purchaseDates.end" type="date" class="mt-1 block rounded border p-2"></label>
-            <button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white">Apply dates</button>
-            <span class="text-xs font-bold">{{ number(purchaseReport.total) }} purchase orders</span>
-          </form>
-          <p v-if="purchaseReportError" role="alert" class="mt-2 text-xs text-red-700">{{ purchaseReportError }}</p>
-          <p v-else-if="purchaseReportLoading" class="mt-2 text-xs text-slate-500">Loading purchase history…</p>
-          <div v-else class="mt-3 space-y-2">
-            <details v-for="order in purchaseReport.orders" :key="`${order.number}-${order.branch}-${order.supplier}`" class="rounded border p-3 text-xs">
-              <summary class="cursor-pointer font-bold">{{ order.number }} · {{ dateDisplay(order.date) }} · {{ order.branch }} · {{ order.supplier }} · {{ order.items.length }} product lines</summary>
-              <table class="mt-2 w-full text-left"><thead><tr><th class="p-1">Product</th><th class="p-1">Code</th><th class="p-1 text-right">PO quantity</th></tr></thead><tbody><tr v-for="(item, index) in order.items" :key="index" class="border-t"><td class="p-1">{{ item.name }}</td><td class="p-1">{{ item.code || '—' }}</td><td class="p-1 text-right">{{ number(item.quantity, 2) }} {{ item.unit }}</td></tr></tbody></table>
-            </details>
-            <p v-if="!purchaseReport.orders.length" class="text-xs text-slate-500">No purchase orders for this date range.</p>
-            <div v-if="purchaseReport.total > 25" class="flex items-center gap-2 text-xs"><button class="rounded border px-2 py-1 disabled:opacity-40" :disabled="purchaseOffset === 0" @click="purchaseOffset = Math.max(0, purchaseOffset - 25)">Previous</button><span>{{ purchaseOffset + 1 }}–{{ Math.min(purchaseOffset + 25, purchaseReport.total) }} of {{ purchaseReport.total }}</span><button class="rounded border px-2 py-1 disabled:opacity-40" :disabled="purchaseOffset + 25 >= purchaseReport.total" @click="purchaseOffset += 25">Next</button></div>
-          </div>
+          <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="font-bold">Uploaded purchase history files</h2><p class="mt-1 text-xs text-slate-600">Import status and original CSV files only; purchase order details are not displayed here.</p></div><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="uploadOpen = true">Upload purchase history CSV</button></div>
+          <p v-if="purchaseImportError" role="alert" class="mt-3 text-sm text-red-700">{{ purchaseImportError }}</p>
+          <div class="mt-4 overflow-x-auto"><table class="w-full min-w-[700px] text-left text-xs"><thead class="bg-slate-50"><tr><th v-for="heading in ['File','Uploaded','Uploaded by','Rows saved','Duplicates','Original CSV']" :key="heading" class="p-3">{{ heading }}</th></tr></thead><tbody>
+            <tr v-for="item in data.imports" :key="item.id" class="border-t"><td class="p-3">{{ item.filename }}</td><td class="p-3">{{ item.uploadedAt }}</td><td class="p-3">{{ item.uploadedBy }}</td><td class="p-3">{{ number(item.rowCount) }}</td><td class="p-3">{{ number(item.duplicateCount) }}</td><td class="p-3"><button v-if="item.archived" class="text-teal-800 underline" @click="downloadOriginal(item)">Download original</button><span v-else class="text-amber-700">Archive incomplete</span></td></tr>
+            <tr v-if="!data.imports.length"><td colspan="6" class="p-8 text-center text-slate-500">No purchase-history CSVs uploaded yet.</td></tr>
+          </tbody></table></div>
         </section>
       </template>
     </template>
