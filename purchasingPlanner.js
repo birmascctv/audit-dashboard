@@ -357,9 +357,12 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       .filter((date) => outletCoverage.has(date) &&
         !holidayWindows.some((window) => date >= window.start && date <= window.end) &&
         !(snapshotByKey.get(key)?.has(date) && snapshotByKey.get(key).get(date) != null && Number(snapshotByKey.get(key).get(date)) <= 0));
+    const syncedAt = new Date(stock.lastSynced || '');
+    const syncedDate = Number.isNaN(syncedAt.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(syncedAt);
     const reason = isExcludedPurchasingCategory(stock.category) ? 'Excluded category' :
       !reviewDate || reviewIsStale ? 'No recent Monday stock snapshot' :
         mondayStocks.get(key) == null ? 'Product missing from Monday stock snapshot' :
+          syncedDate < reviewDate ? 'Stock not synced since the Monday review' :
           ambiguousProductKeys.has(key) ? 'Sales name matches multiple stock products; recommendation unavailable' :
             !matchingSales ? 'No exact product match in sales history' :
               eligible.length === 0 ? 'No usable sales days in history window' : '';
@@ -384,9 +387,9 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       const saved = supplierSettings.get(pair(stock.storeId, `${stock.productId}::${historySupplier.supplierName}`));
       return {
         ...historySupplier, leadDays: saved?.lead_days ?? null, moq: saved?.moq ?? null,
-        purchasingUnit: saved?.purchasing_unit || historySupplier.purchasingUnit,
-        conversionQty: saved?.conversion_qty ?? historySupplier.conversionQty,
-        baseUnit: saved?.base_unit || historySupplier.baseUnit,
+        purchasingUnit: saved?.purchasing_unit || null,
+        conversionQty: saved?.conversion_qty ?? 1,
+        baseUnit: saved?.base_unit || null,
         configured: !!saved,
       };
     });
@@ -396,8 +399,10 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
         conversionQty: saved.conversion_qty, baseUnit: saved.base_unit, configured: true,
       });
     }
-    const selectedSupplierName = preferences.selected_supplier || suppliers[0]?.supplierName || '';
+    const selectedSupplierName = preferences.selected_supplier || '';
     const supplier = suppliers.find((item) => item.supplierName === selectedSupplierName) || null;
+    const historySuppliers = supplierHistory.get(key);
+    const referenceSupplier = historySuppliers?.get(selectedSupplierName) || historySuppliers?.values().next().value;
     const leadDays = supplier?.leadDays ?? settings.defaultLeadDays;
     const conversionQty = supplier?.conversionQty || 1;
     const purchaseUnit = supplier?.purchasingUnit || stock.default_unit || 'Piece';
@@ -494,10 +499,10 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       holidayReference,
       orderUpTo: recommendation7?.orderUpTo ?? null, calculatedOrderQty: recommendation7?.calculatedQty ?? null,
       orderQty: recommendation7?.orderQty ?? null, status, reason: effectiveReason,
-      historicalPurchase: supplier ? {
-        averageOrderQty: supplier.historicalAverageQty, unit: supplier.purchasingUnit,
-        conversionQty: supplier.conversionQty, equivalentQty: supplier.historicalAverageQty * supplier.conversionQty,
-        lastPurchaseDate: supplier.lastPurchaseDate,
+      historicalPurchase: referenceSupplier ? {
+        averageOrderQty: referenceSupplier.historicalAverageQty, unit: referenceSupplier.purchasingUnit,
+        conversionQty: referenceSupplier.conversionQty, equivalentQty: referenceSupplier.historicalAverageQty * referenceSupplier.conversionQty,
+        lastPurchaseDate: referenceSupplier.lastPurchaseDate,
       } : null,
       history: Array.from({ length: historyDays }, (_, i) => {
         const date = addDays(historyStart, i);

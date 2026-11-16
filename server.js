@@ -21,7 +21,7 @@ import {
 } from './purchasingPlanner.js';
 import {
   ensurePurchasingSchema, insertPurchaseHistoryRows, putPurchaseArchiveChunk,
-  finishPurchaseArchive, listPurchaseHistoryImports, recordPurchasingWeeklyReview,
+  finishPurchaseArchive, listPurchaseHistoryImports, recordPurchasingWeeklyReview, getPurchaseHistoryReport,
 } from './purchasingStore.js';
 
 export function parseSafeMoney(val) {
@@ -430,15 +430,16 @@ async function runEsbFeedSync() {
       return close.length === 1 ? close[0][1] : null;
     })();
     if (!found || usedBarcodes.has(found)) return null;
+    sqlite.prepare("UPDATE products SET barcode = NULL WHERE id LIKE 'erp-%' AND barcode = ?").run(found);
     usedBarcodes.add(found);
     return found;
   };
 
   let synced = 0;
   const sqlite = db.getDb();
+  const feedStoreIds = new Set();
   sqlite.exec('BEGIN');
   try {
-    sqlite.prepare("UPDATE products SET barcode = NULL WHERE id LIKE 'erp-%'").run();
     const idBarcode = new Map();
     const migrated = [];
     for (const row of body.rows) {
@@ -473,16 +474,18 @@ async function runEsbFeedSync() {
         lastUpdated: startedAt,
       });
       db.setProductStock(storeId, id, Math.round(Number(row.stock) || 0));
+      feedStoreIds.add(storeId);
       synced++;
     }
-    // Drop everything this feed no longer reports (old WP-based ids, excluded categories)
-    sqlite.prepare('DELETE FROM store_stocks WHERE last_synced < ?').run(startedAt);
+    // A feed that omits an outlet must not erase stock obtained from another source.
+    db.pruneMissingFeedStocks(sqlite, startedAt, [...feedStoreIds]);
     for (const [oldId, newId] of migrated) {
       sqlite.prepare('UPDATE OR IGNORE audit_scans SET barcode = ? WHERE barcode = ?;').run(`id:${newId}`, `id:${oldId}`);
     }
-    // Legacy erp-* rows are duplicates of the esb-* products; one id per product for all stores
-    sqlite.prepare("DELETE FROM store_stocks WHERE product_id LIKE 'erp-%'").run();
-    sqlite.prepare("DELETE FROM products WHERE id LIKE 'erp-%'").run();
+    // Replace legacy rows only for outlets present in this feed.
+    if (feedStoreIds.size) {
+      sqlite.prepare(`DELETE FROM store_stocks WHERE product_id LIKE 'erp-%' AND store_id IN (${[...feedStoreIds].map(() => '?').join(',')})`).run(...feedStoreIds);
+    }
     sqlite.prepare("DELETE FROM products WHERE id NOT IN (SELECT product_id FROM store_stocks) AND (id LIKE 'erp-%' OR id LIKE 'esb-%')").run();
     sqlite.exec('COMMIT');
   } catch (err) {
@@ -490,7 +493,7 @@ async function runEsbFeedSync() {
     throw err;
   }
   db.setConfig('last_birmas_server_synced_at', new Date().toISOString());
-  try { captureStockSnapshot(db.getDb()); } catch (snapshotError) { console.warn('[Stock Snapshots] Capture failed:', snapshotError.message); }
+  try { captureStockSnapshot(db.getDb(), new Date(), { minimumSyncedAt: startedAt }); } catch (snapshotError) { console.warn('[Stock Snapshots] Capture failed:', snapshotError.message); }
   console.log(`[ESB Feed Sync] Synced ${synced} store stocks.`);
   return synced;
 }
@@ -585,6 +588,7 @@ export async function runBirmasServerSync(options = {}) {
     let hasMore = true;
     let fetchFailed = false;
     const syncStartedAt = new Date().toISOString();
+    const syncedStores = new Set();
 
     while (hasMore && page <= maxPages) {
       let url = targetUrl;
@@ -735,6 +739,7 @@ export async function runBirmasServerSync(options = {}) {
 
               const defaultStore = db.getAllStores()[0]?.id || 'birmas-sudirman';
               db.setProductStock(defaultStore, prodId, qty);
+              syncedStores.add(defaultStore);
               totalSyncedProducts++;
             }
           }
@@ -807,6 +812,7 @@ export async function runBirmasServerSync(options = {}) {
         });
 
         db.setProductStock(storeId, prodId, stockQty);
+        syncedStores.add(storeId);
         totalSyncedProducts++;
       }
 
@@ -821,14 +827,14 @@ export async function runBirmasServerSync(options = {}) {
 
     // After a complete pull, drop stock rows the server no longer reports so stale imports can't linger
     if (totalSyncedProducts > 0 && !fetchFailed && !isSingleShotEsbEndpoint) {
-      const pruned = db.getDb().prepare('DELETE FROM store_stocks WHERE last_synced < ?').run(syncStartedAt);
-      if (pruned.changes) console.log(`[Birmas Server Sync] Removed ${pruned.changes} stale stock rows.`);
+      const pruned = db.pruneMissingFeedStocks(db.getDb(), syncStartedAt, [...syncedStores]);
+      if (pruned) console.log(`[Birmas Server Sync] Removed ${pruned} stale stock rows.`);
     }
 
     if (totalSyncedProducts > 0) {
       db.setConfig('last_birmas_server_synced_at', new Date().toISOString());
       if (!fetchFailed) {
-        try { captureStockSnapshot(db.getDb()); } catch (snapshotError) { console.warn('[Stock Snapshots] Capture failed:', snapshotError.message); }
+        try { captureStockSnapshot(db.getDb(), new Date(), { minimumSyncedAt: syncStartedAt }); } catch (snapshotError) { console.warn('[Stock Snapshots] Capture failed:', snapshotError.message); }
       } else {
         try { recordStockSnapshotStatus(db.getDb(), 'failed', 'Partial stock response; daily snapshot not captured.'); } catch (logError) { console.warn('[Stock Snapshot Log] Failed:', logError.message); }
       }
@@ -1169,9 +1175,13 @@ async function startServer() {
       const all = Array.from(map.values());
       let nextId = Math.max(0, ...all.map((s) => Number(s.store_id) || 0)) + 1;
       all.forEach((s) => { if (!s.store_id) s.store_id = nextId++; });
-      const activeRows = db.getDb().prepare('SELECT DISTINCT store_id FROM store_stocks WHERE stock_qty <> 0').all();
-      const activeIds = new Set(activeRows.map((r) => r.store_id));
-      all.forEach((s) => { s.hasStock = activeIds.has(s.id); });
+      const activeRows = db.getDb().prepare(`SELECT store_id,
+        MAX(CASE WHEN stock_qty <> 0 THEN 1 ELSE 0 END) AS hasStock,
+        MAX(CASE WHEN observed_stock_qty IS NOT NULL AND last_synced IS NOT NULL THEN 1 ELSE 0 END) AS hasInventory
+        FROM store_stocks GROUP BY store_id`).all();
+      const inventoryIds = new Set(activeRows.filter((r) => r.hasInventory).map((r) => r.store_id));
+      const stockedIds = new Set(activeRows.filter((r) => r.hasStock).map((r) => r.store_id));
+      all.forEach((s) => { s.hasInventory = inventoryIds.has(s.id); s.hasStock = stockedIds.has(s.id); });
       const result = all.sort((a, b) => a.store_id - b.store_id);
       res.json(req.authUser?.role === 'crew'
         ? result.filter((store) => ['birmas-kuningan', 'birmas-kwitang', 'birmas-sudirman'].includes(store.id))
@@ -1582,7 +1592,8 @@ async function startServer() {
 
   // ESB freshness: when the ESB quantities last actually changed (not just when we last pulled them)
   app.get('/api/audit/esb-freshness', (req, res) => {
-    res.json({ success: true, ...db.getStockFreshness(String(req.query.storeId || '')) });
+    const offset = Number(req.query.offset || 0);
+    res.json({ success: true, ...db.getStockFreshness(String(req.query.storeId || ''), offset) });
   });
 
   // ---- Crew: deliveries that arrive at one store and are split across branches ----
@@ -3081,6 +3092,15 @@ async function startServer() {
     if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try { res.json({ success: true, imports: listPurchaseHistoryImports(db.getDb()) }); }
     catch (err) { res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  app.get('/api/purchasing/history/report', (req, res) => {
+    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    try {
+      res.json({ success: true, ...getPurchaseHistoryReport(db.getDb(), {
+        startDate: String(req.query.startDate || ''), endDate: String(req.query.endDate || ''), offset: Number(req.query.offset || 0),
+      }) });
+    } catch (err) { res.status(400).json({ success: false, error: err.message }); }
   });
 
   app.get('/api/purchasing/history/:id/original', (req, res) => {

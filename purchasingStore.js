@@ -152,6 +152,34 @@ export function ensurePurchasingSchema(db) {
 
 export const isExcludedPurchasingCategory = (category) => EXCLUDED.has(normalize(category));
 
+export function getPurchaseHistoryReport(db, { startDate = '', endDate = '', offset = 0 } = {}) {
+  const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+  if ((startDate && !validDate(startDate)) || (endDate && !validDate(endDate)) || (startDate && endDate && startDate > endDate) ||
+      !Number.isSafeInteger(offset) || offset < 0) throw new Error('Choose a valid purchase date range and page.');
+  ensurePurchasingSchema(db);
+  const conditions = [], values = [];
+  if (startDate) { conditions.push('purchase_date >= ?'); values.push(startDate); }
+  if (endDate) { conditions.push('purchase_date <= ?'); values.push(endDate); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const total = db.prepare(`SELECT COUNT(*) AS count FROM (SELECT 1 FROM purchasing_history_records ${where}
+    GROUP BY purchase_number, branch, supplier_name)`).get(...values).count;
+  const lines = db.prepare(`WITH filtered AS (SELECT * FROM purchasing_history_records ${where}),
+    orders AS (SELECT purchase_number, branch, supplier_name, MIN(purchase_date) AS purchase_date
+      FROM filtered GROUP BY purchase_number, branch, supplier_name
+      ORDER BY purchase_date DESC, purchase_number, branch, supplier_name LIMIT 25 OFFSET ?)
+    SELECT o.purchase_number, o.branch, o.supplier_name, o.purchase_date,
+      f.product_name, f.product_code, f.po_qty, f.unit
+    FROM orders o JOIN filtered f ON f.purchase_number=o.purchase_number AND f.branch=o.branch AND f.supplier_name=o.supplier_name
+    ORDER BY o.purchase_date DESC, o.purchase_number, o.branch, o.supplier_name, f.product_name, f.id`).all(...values, offset);
+  const orders = new Map();
+  for (const line of lines) {
+    const key = JSON.stringify([line.purchase_number, line.branch, line.supplier_name]);
+    if (!orders.has(key)) orders.set(key, { number: line.purchase_number, branch: line.branch, supplier: line.supplier_name, date: line.purchase_date, items: [] });
+    orders.get(key).items.push({ name: line.product_name, code: line.product_code, quantity: line.po_qty, unit: line.unit });
+  }
+  return { total, orders: [...orders.values()] };
+}
+
 export function validatePurchaseHistoryRows(rows) {
   if (!Array.isArray(rows) || !rows.length || rows.length > 10000) throw new Error('Provide between 1 and 10,000 purchase-history records per batch.');
   return rows.map((row) => {

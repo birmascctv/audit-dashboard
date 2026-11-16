@@ -119,6 +119,7 @@ function initTables(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_stock_changes_store ON stock_changes (store_id, product_id, changed_at);
   `);
+  try { db.exec('ALTER TABLE stock_changes ADD COLUMN product_name TEXT;'); } catch (_) {}
   try { db.exec(`ALTER TABLE store_stocks ADD COLUMN changed_at TEXT;`); } catch (_) {}
   try {
     db.exec(`ALTER TABLE store_stocks ADD COLUMN observed_stock_qty REAL;`);
@@ -453,31 +454,51 @@ export function setProductStock(storeId, productId, qty, { observed = true } = {
   const next = Number(qty || 0);
   const prev = db.prepare('SELECT observed_stock_qty FROM store_stocks WHERE store_id = ? AND product_id = ?').get(storeId, productId);
   const changed = observed && prev?.observed_stock_qty != null && Number(prev.observed_stock_qty) !== next;
-  db.prepare(`
-    INSERT INTO store_stocks (store_id, product_id, stock_qty, last_synced, observed_stock_qty)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(store_id, product_id) DO UPDATE SET
-      stock_qty = excluded.stock_qty,
-      last_synced = COALESCE(excluded.last_synced, store_stocks.last_synced),
-      observed_stock_qty = COALESCE(excluded.observed_stock_qty, store_stocks.observed_stock_qty);
-  `).run(storeId, productId, next, observed ? now : null, observed ? next : null);
-  if (changed) {
-    db.prepare('UPDATE store_stocks SET changed_at = ? WHERE store_id = ? AND product_id = ?').run(now, storeId, productId);
-    db.prepare('INSERT INTO stock_changes (store_id, product_id, old_qty, new_qty, changed_at) VALUES (?, ?, ?, ?, ?)').run(storeId, productId, Number(prev.observed_stock_qty), next, now);
+  db.exec('SAVEPOINT stock_observation');
+  try {
+    db.prepare(`
+      INSERT INTO store_stocks (store_id, product_id, stock_qty, last_synced, observed_stock_qty)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(store_id, product_id) DO UPDATE SET
+        stock_qty = excluded.stock_qty,
+        last_synced = COALESCE(excluded.last_synced, store_stocks.last_synced),
+        observed_stock_qty = COALESCE(excluded.observed_stock_qty, store_stocks.observed_stock_qty);
+    `).run(storeId, productId, next, observed ? now : null, observed ? next : null);
+    if (changed) {
+      db.prepare('UPDATE store_stocks SET changed_at = ? WHERE store_id = ? AND product_id = ?').run(now, storeId, productId);
+      db.prepare(`INSERT INTO stock_changes (store_id, product_id, old_qty, new_qty, changed_at, product_name)
+        VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(NULLIF(product_title, ''), varian) FROM products WHERE id = ?))`)
+        .run(storeId, productId, Number(prev.observed_stock_qty), next, now, productId);
+    }
+    db.exec('RELEASE stock_observation');
+  } catch (error) {
+    db.exec('ROLLBACK TO stock_observation');
+    db.exec('RELEASE stock_observation');
+    throw error;
   }
 }
 
-export function getStockFreshness(storeId) {
+export function pruneMissingFeedStocks(db, startedAt, storeIds) {
+  if (!storeIds.length) return 0;
+  const placeholders = storeIds.map(() => '?').join(',');
+  return db.prepare(`DELETE FROM store_stocks WHERE last_synced < ? AND store_id IN (${placeholders})`).run(startedAt, ...storeIds).changes;
+}
+
+export function getStockFreshness(storeId, offset = 0) {
   const db = getDb();
+  const pageOffset = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
   const row = db.prepare('SELECT MAX(last_synced) AS lastPulledAt, MAX(changed_at) AS lastChangedAt FROM store_stocks WHERE store_id = ?').get(storeId) || {};
   // Sales also lower ESB stock all day, so stock-in (increases) are reported separately
   const stockIn = db.prepare('SELECT MAX(changed_at) AS t FROM stock_changes WHERE store_id = ? AND new_qty > old_qty').get(storeId) || {};
   const recent = db.prepare(`
-    SELECT c.product_id AS productId, COALESCE(p.product_title, c.product_id) AS name, c.old_qty AS oldQty, c.new_qty AS newQty, c.changed_at AS changedAt
+    SELECT c.id, c.product_id AS productId, COALESCE(NULLIF(c.product_name, ''), NULLIF(p.product_title, ''), c.product_id) AS name,
+      c.old_qty AS oldQty, c.new_qty AS newQty, ABS(c.new_qty - c.old_qty) AS quantity,
+      CASE WHEN c.new_qty < c.old_qty THEN 'sold' ELSE 'restocked' END AS kind, c.changed_at AS changedAt
     FROM stock_changes c LEFT JOIN products p ON p.id = c.product_id
-    WHERE c.store_id = ? ORDER BY c.changed_at DESC LIMIT 15
-  `).all(storeId);
-  return { lastPulledAt: row.lastPulledAt || null, lastChangedAt: row.lastChangedAt || null, lastStockInAt: stockIn.t || null, recentChanges: recent };
+    WHERE c.store_id = ? ORDER BY c.changed_at DESC, c.id DESC LIMIT 15 OFFSET ?
+  `).all(storeId, pageOffset);
+  const totalChanges = db.prepare('SELECT COUNT(*) AS count FROM stock_changes WHERE store_id = ?').get(storeId).count;
+  return { lastPulledAt: row.lastPulledAt || null, lastChangedAt: row.lastChangedAt || null, lastStockInAt: stockIn.t || null, recentChanges: recent, totalChanges };
 }
 
 // Scans Queries

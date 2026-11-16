@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { applyStockRowsToDatabase } from '../db.js';
+import { applyStockRowsToDatabase, pruneMissingFeedStocks } from '../db.js';
 
 function createTestDb() {
   const database = new DatabaseSync(':memory:');
@@ -89,4 +89,13 @@ test('keeps distinct products/stores independent while summing only true duplica
   } finally {
     database.close();
   }
+});
+
+test('partial feeds do not delete stock belonging to an omitted outlet', () => {
+  const db = createTestDb();
+  db.exec(`INSERT INTO store_stocks(store_id, product_id, stock_qty, last_synced) VALUES
+    ('sudirman','old',2,'2026-01-01'),('sudirman','fresh',3,'2026-02-01'),('nomadic','p',4,'2026-01-01');`);
+  assert.equal(pruneMissingFeedStocks(db, '2026-02-01', ['sudirman']), 1);
+  assert.deepEqual(db.prepare('SELECT product_id FROM store_stocks ORDER BY product_id').all().map((row) => row.product_id), ['fresh', 'p']);
+  db.close();
 });

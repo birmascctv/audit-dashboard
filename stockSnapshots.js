@@ -36,7 +36,7 @@ export function recordStockSnapshotStatus(sqlite, status, error = null, rowCount
     VALUES(?,?,?,?,?)`).run(businessDate, date.toISOString(), status, rowCount, error ? String(error).slice(0, 1000) : null);
 }
 
-export function captureStockSnapshot(sqlite, date = new Date()) {
+export function captureStockSnapshot(sqlite, date = new Date(), { minimumSyncedAt = null } = {}) {
   ensureStockSnapshots(sqlite);
   const parts = jakartaParts(date);
   const businessDate = `${parts.year}-${parts.month}-${parts.day}`;
@@ -54,7 +54,8 @@ export function captureStockSnapshot(sqlite, date = new Date()) {
       ss.stock_qty
     FROM store_stocks ss
     LEFT JOIN products p ON p.id = ss.product_id
-  `).all();
+    ${minimumSyncedAt ? 'WHERE ss.last_synced >= ?' : ''}
+  `).all(...(minimumSyncedAt ? [minimumSyncedAt] : []));
   if (!rows.length) {
     sqlite.prepare(`INSERT INTO stock_snapshot_sync_log(business_date,captured_at,status,row_count,error)
       VALUES(?,?,'no_data',0,'No inventory rows were available to snapshot.')`).run(businessDate, capturedAt);

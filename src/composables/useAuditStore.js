@@ -255,7 +255,7 @@ export function useAuditStore() {
   const visibleStores = computed(() => {
     if (!stores.value || stores.value.length === 0) return [];
     // Hide stores whose ESB stock is entirely 0 (inactive); keep all if none have stock yet
-    const active = stores.value.filter((s) => s.hasStock !== false);
+    const active = stores.value.filter((s) => s.hasStock !== false || s.id === 'birmas-nomadic');
     const list = active.length > 0 ? active : stores.value;
     return list.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   });

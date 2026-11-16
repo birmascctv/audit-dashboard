@@ -155,5 +155,9 @@ test('Nomadic is available without stock and uses its own stock and sales when p
   const row = result.rows.find((item) => item.storeId === 'birmas-nomadic');
   assert.equal(row.currentStock, 5);
   assert.equal(row.avgDailyRaw, 4);
+  stock.prepare("UPDATE store_stocks SET last_synced='2026-01-25' WHERE store_id='birmas-nomadic'").run();
+  const stale = getPurchasingPlanner(stock, sales, match, '2026-01-30').rows.find((item) => item.storeId === 'birmas-nomadic');
+  assert.equal(stale.recommendation7, null);
+  assert.equal(stale.reason, 'Stock not synced since the Monday review');
   stock.close(); sales.close();
 });

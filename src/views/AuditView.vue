@@ -103,6 +103,8 @@ const {
   unlockCurrentSession,
 } = useAuditStore();
 
+const missingNomadicStock = computed(() => selectedStoreId.value === 'birmas-nomadic' && currentStore.value?.hasInventory === false);
+
 watch(() => currentUser.value?.storeId, (storeId) => {
   if (isCrew.value && storeId && selectedStoreId.value !== storeId) selectStore(storeId);
 }, { immediate: true });
@@ -409,7 +411,14 @@ const { scanFeedback, processBarcode, isListening } = useScanner({
     return result;
   },
 });
-watch(readOnlyStock, (readOnly) => { isListening.value = !readOnly; }, { immediate: true });
+watch([readOnlyStock, missingNomadicStock], ([readOnly, missingStock]) => {
+  isListening.value = !readOnly && !missingStock;
+  if (missingStock) {
+    scanMode.value = false;
+    isCompleteModalOpen.value = false;
+    isAddBarcodeModalOpen.value = false;
+  }
+}, { immediate: true });
 
 // Keep the scan notification in sync when the count is edited in the table
 watch(
@@ -632,18 +641,22 @@ let timerInterval = null;
 watch(selectedStoreId, () => { undoStack.value = []; });
 const esbFreshness = ref(null);
 const freshnessError = ref('');
+const changeOffset = ref(0);
+let freshnessRequest = 0;
 async function loadFreshness() {
   if (!selectedStoreId.value) return;
   const storeId = selectedStoreId.value;
+  const request = ++freshnessRequest;
   try {
-    const data = await authFetchJson(`/api/audit/esb-freshness?storeId=${encodeURIComponent(storeId)}`);
-    if (storeId === selectedStoreId.value) { esbFreshness.value = data; freshnessError.value = ''; }
+    const data = await authFetchJson(`/api/audit/esb-freshness?storeId=${encodeURIComponent(storeId)}&offset=${changeOffset.value}`);
+    if (request === freshnessRequest && storeId === selectedStoreId.value) { esbFreshness.value = data; freshnessError.value = ''; }
   } catch {
-    if (storeId === selectedStoreId.value) { esbFreshness.value = null; freshnessError.value = 'Unable to load ESB change times.'; }
+    if (request === freshnessRequest && storeId === selectedStoreId.value) { esbFreshness.value = null; freshnessError.value = 'Unable to load ESB change times.'; }
   }
 }
 let freshnessTimer = null;
-watch(selectedStoreId, loadFreshness, { immediate: true });
+watch(selectedStoreId, () => { changeOffset.value = 0; esbFreshness.value = null; loadFreshness(); }, { immediate: true });
+watch(changeOffset, loadFreshness);
 onMounted(() => { freshnessTimer = setInterval(loadFreshness, 60000); });
 onUnmounted(() => clearInterval(freshnessTimer));
 onUnmounted(() => { clearInterval(silentRefreshTimer); clearInterval(timerInterval); });
@@ -710,7 +723,7 @@ const showAuditSuccess = ref(false);
 
         <!-- Add New Barcode Button -->
         <button
-          v-if="(!isCrew || isDevMode) && !readOnlyStock"
+          v-if="(!isCrew || isDevMode) && !readOnlyStock && !missingNomadicStock"
           @click="openAddBarcodeWithPrefill()"
           type="button"
           class="px-3.5 py-2 min-h-12 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
@@ -722,7 +735,7 @@ const showAuditSuccess = ref(false);
 
         <!-- Finalize Audit Button -->
         <button
-          v-if="(!isCrew || isDevMode) && !readOnlyStock"
+          v-if="(!isCrew || isDevMode) && !readOnlyStock && !missingNomadicStock"
           @click="isCompleteModalOpen = true"
           type="button"
           class="px-4 py-2 min-h-12 rounded-xl bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all cursor-pointer"
@@ -733,7 +746,22 @@ const showAuditSuccess = ref(false);
       </div>
     </div>
 
-    <template v-if="!readOnlyStock">
+    <p v-if="missingNomadicStock" role="status" class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">Nomadic is available to select, but its ESB stock has not been received. Counting and purchasing recommendations need an inventory feed for this outlet.</p>
+
+    <section v-if="esbFreshness" class="rounded-xl border border-slate-200 bg-white p-4">
+      <h3 class="text-sm font-bold text-slate-900">Stock change history</h3>
+      <p class="mt-1 text-xs text-slate-500">Estimated from the net change between ESB syncs. Sold and restocked labels may also include transfers or adjustments; times are when changes were observed.</p>
+      <div v-if="esbFreshness.recentChanges.length" class="mt-3 overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead><tr class="border-b text-slate-500"><th class="p-2">Observed</th><th class="p-2">Product</th><th class="p-2">Change</th><th class="p-2 text-right">Quantity</th><th class="p-2 text-right">Stock before → after</th></tr></thead>
+          <tbody><tr v-for="change in esbFreshness.recentChanges" :key="change.id" class="border-b border-slate-100"><td class="whitespace-nowrap p-2">{{ fmtJakarta(change.changedAt) }}</td><td class="p-2">{{ change.name }}</td><td class="p-2">{{ change.kind === 'sold' ? 'Estimated sold' : 'Estimated restocked' }}</td><td class="p-2 text-right">{{ change.quantity }}</td><td class="p-2 text-right">{{ change.oldQty }} → {{ change.newQty }}</td></tr></tbody>
+        </table>
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-600"><span>{{ changeOffset + 1 }}–{{ Math.min(changeOffset + 15, esbFreshness.totalChanges) }} of {{ esbFreshness.totalChanges }}</span><div class="flex gap-2"><button type="button" class="rounded border px-2 py-1 disabled:opacity-40" :disabled="changeOffset === 0" @click="changeOffset = Math.max(0, changeOffset - 15)">Previous</button><button type="button" class="rounded border px-2 py-1 disabled:opacity-40" :disabled="changeOffset + 15 >= esbFreshness.totalChanges" @click="changeOffset += 15">Next</button></div></div>
+      </div>
+      <p v-else class="mt-3 text-xs text-slate-500">No stock changes recorded for this outlet yet.</p>
+    </section>
+
+    <template v-if="!readOnlyStock && !missingNomadicStock">
     <!-- Audit Session Lock Status Banner (Superadmin approval workflow) -->
     <div
       v-if="isSessionLocked"
@@ -1166,8 +1194,8 @@ const showAuditSuccess = ref(false);
     </template>
 
     <!-- Main Comparison Table (Physical Count vs ESB, light theme) -->
-    <StockComparisonTable v-if="isDevMode || readOnlyStock" :items="auditItems" :history="auditHistory" :store-id="selectedStoreId" :store-name="currentStore.name" :loading="!isInitialized" :positive-stock-only="isDevMode" />
-    <div v-else class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+    <StockComparisonTable v-if="(isDevMode || readOnlyStock) && !missingNomadicStock" :items="auditItems" :history="auditHistory" :store-id="selectedStoreId" :store-name="currentStore.name" :loading="!isInitialized" :positive-stock-only="isDevMode" />
+    <div v-else-if="!missingNomadicStock" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
       <!-- Table Header & Filter Toolbar -->
       <div class="p-5 border-b border-slate-100 bg-slate-50/80">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

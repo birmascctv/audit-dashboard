@@ -5,7 +5,7 @@ import { parsePurchasingCsv } from '../purchasingCsv.js';
 import { captureStockSnapshot } from '../stockSnapshots.js';
 import {
   calculateHolidayWindow, ensurePurchasingSchema, insertPurchaseHistoryRows,
-  isExcludedPurchasingCategory,
+  isExcludedPurchasingCategory, getPurchaseHistoryReport,
 } from '../purchasingStore.js';
 import {
   DEFAULT_PURCHASING_SETTINGS, getPurchasingPlanner, saveHolidayAdjustment,
@@ -90,6 +90,51 @@ test('empty inventory sync is recorded without creating a stock snapshot', () =>
   db.close();
 });
 
+test('snapshot includes only stock observed in the current sync', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE store_stocks(store_id TEXT,product_id TEXT,stock_qty REAL,last_synced TEXT);
+    CREATE TABLE products(id TEXT,product_title TEXT,varian TEXT);
+    INSERT INTO products VALUES('p','Product','Product');
+    INSERT INTO store_stocks VALUES('s','p',3,'2026-11-09T01:00:00.000Z'),('nomadic','p',5,'2026-11-08T01:00:00.000Z');`);
+  captureStockSnapshot(db, new Date('2026-11-09T01:05:00.000Z'), { minimumSyncedAt: '2026-11-09T01:00:00.000Z' });
+  assert.deepEqual(db.prepare('SELECT store_id FROM stock_snapshots').all().map((row) => row.store_id), ['s']);
+  db.close();
+});
+
+test('purchase history report groups orders and filters their dates', () => {
+  const db = new DatabaseSync(':memory:');
+  const [record] = parsePurchasingCsv(csv());
+  insertPurchaseHistoryRows(db, { importId: 'report', filename: 'purchases.csv', uploadedBy: 'Bertha', rows: [
+    record,
+    { ...record, product_code: 'SKU-2', product_name: 'Product B', source_row: 14 },
+    { ...record, purchase_number: 'PO-2', purchase_date: '2026-11-15', source_row: 15 },
+  ] });
+  const report = getPurchaseHistoryReport(db, { startDate: '2026-11-12', endDate: '2026-11-12' });
+  assert.equal(report.total, 1);
+  assert.equal(report.orders[0].number, 'PO-1');
+  assert.deepEqual(report.orders[0].items.map((item) => item.quantity), [2, 2]);
+  assert.equal(getPurchaseHistoryReport(db).total, 2);
+  assert.throws(() => getPurchaseHistoryReport(db, { startDate: '2026-11-30', endDate: '2026-11-01' }), /valid purchase date range/);
+  db.close();
+});
+
+test('purchase history does not change recommendation quantities or select a supplier', () => {
+  const { stock, sales, match } = fixture();
+  const before = getPurchasingPlanner(stock, sales, match, '2026-11-13').rows[0];
+  const [record] = parsePurchasingCsv(csv());
+  insertPurchaseHistoryRows(stock, { importId: 'reference', filename: 'purchases.csv', uploadedBy: 'Bertha', rows: [record] });
+  const after = getPurchasingPlanner(stock, sales, match, '2026-11-13').rows[0];
+  assert.equal(after.selectedSupplier, '');
+  assert.equal(after.conversionQty, before.conversionQty);
+  assert.equal(after.recommendation7.orderQty, before.recommendation7.orderQty);
+  assert.equal(after.historicalPurchase.averageOrderQty, 2);
+  savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', supplier: 'Vendor A' });
+  const selected = getPurchasingPlanner(stock, sales, match, '2026-11-13').rows[0];
+  assert.equal(selected.conversionQty, 1);
+  assert.equal(selected.recommendation7.orderQty, before.recommendation7.orderQty);
+  assert.equal(selected.historicalPurchase.conversionQty, 24);
+  stock.close(); sales.close();
+});
 test('holiday analysis reports incomplete windows instead of treating missing sales as zero', () => {
   const { stock, sales, match } = fixture();
   const result = getPurchasingPlanner(stock, sales, match, '2026-11-13');
