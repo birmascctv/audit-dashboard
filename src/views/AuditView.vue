@@ -641,22 +641,20 @@ let timerInterval = null;
 watch(selectedStoreId, () => { undoStack.value = []; });
 const esbFreshness = ref(null);
 const freshnessError = ref('');
-const changeOffset = ref(0);
 let freshnessRequest = 0;
 async function loadFreshness() {
   if (!selectedStoreId.value) return;
   const storeId = selectedStoreId.value;
   const request = ++freshnessRequest;
   try {
-    const data = await authFetchJson(`/api/audit/esb-freshness?storeId=${encodeURIComponent(storeId)}&offset=${changeOffset.value}`);
+    const data = await authFetchJson(`/api/audit/esb-freshness?storeId=${encodeURIComponent(storeId)}`);
     if (request === freshnessRequest && storeId === selectedStoreId.value) { esbFreshness.value = data; freshnessError.value = ''; }
   } catch {
     if (request === freshnessRequest && storeId === selectedStoreId.value) { esbFreshness.value = null; freshnessError.value = 'Unable to load ESB change times.'; }
   }
 }
 let freshnessTimer = null;
-watch(selectedStoreId, () => { changeOffset.value = 0; esbFreshness.value = null; loadFreshness(); }, { immediate: true });
-watch(changeOffset, loadFreshness);
+watch(selectedStoreId, () => { esbFreshness.value = null; loadFreshness(); }, { immediate: true });
 onMounted(() => { freshnessTimer = setInterval(loadFreshness, 60000); });
 onUnmounted(() => clearInterval(freshnessTimer));
 onUnmounted(() => { clearInterval(silentRefreshTimer); clearInterval(timerInterval); });
@@ -747,19 +745,6 @@ const showAuditSuccess = ref(false);
     </div>
 
     <p v-if="missingNomadicStock" role="status" class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">Nomadic is available to select, but its ESB stock has not been received. Counting and purchasing recommendations need an inventory feed for this outlet.</p>
-
-    <section v-if="esbFreshness" class="rounded-xl border border-slate-200 bg-white p-4">
-      <h3 class="text-sm font-bold text-slate-900">Stock change history</h3>
-      <p class="mt-1 text-xs text-slate-500">Estimated from the net change between ESB syncs. Sold and restocked labels may also include transfers or adjustments; times are when changes were observed.</p>
-      <div v-if="esbFreshness.recentChanges.length" class="mt-3 overflow-x-auto">
-        <table class="w-full text-left text-xs">
-          <thead><tr class="border-b text-slate-500"><th class="p-2">Observed</th><th class="p-2">Product</th><th class="p-2">Change</th><th class="p-2 text-right">Quantity</th><th class="p-2 text-right">Stock before → after</th></tr></thead>
-          <tbody><tr v-for="change in esbFreshness.recentChanges" :key="change.id" class="border-b border-slate-100"><td class="whitespace-nowrap p-2">{{ fmtJakarta(change.changedAt) }}</td><td class="p-2">{{ change.name }}</td><td class="p-2">{{ change.kind === 'sold' ? 'Estimated sold' : 'Estimated restocked' }}</td><td class="p-2 text-right">{{ change.quantity }}</td><td class="p-2 text-right">{{ change.oldQty }} → {{ change.newQty }}</td></tr></tbody>
-        </table>
-        <div class="mt-3 flex items-center justify-between text-xs text-slate-600"><span>{{ changeOffset + 1 }}–{{ Math.min(changeOffset + 15, esbFreshness.totalChanges) }} of {{ esbFreshness.totalChanges }}</span><div class="flex gap-2"><button type="button" class="rounded border px-2 py-1 disabled:opacity-40" :disabled="changeOffset === 0" @click="changeOffset = Math.max(0, changeOffset - 15)">Previous</button><button type="button" class="rounded border px-2 py-1 disabled:opacity-40" :disabled="changeOffset + 15 >= esbFreshness.totalChanges" @click="changeOffset += 15">Next</button></div></div>
-      </div>
-      <p v-else class="mt-3 text-xs text-slate-500">No stock changes recorded for this outlet yet.</p>
-    </section>
 
     <template v-if="!readOnlyStock && !missingNomadicStock">
     <!-- Audit Session Lock Status Banner (Superadmin approval workflow) -->
