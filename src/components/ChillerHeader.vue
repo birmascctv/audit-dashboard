@@ -5,16 +5,10 @@ import { useAuth } from '../composables/useAuth.js';
 import { online, lastUpdatedAt } from '../composables/useSyncStatus.js';
 import { authFetchJson } from '../services/authFetch.js';
 import {
-  BookOpen,
   ChevronDown,
-  ChevronRight,
   ClipboardCheck,
   LogOut,
-  Store,
-  TrendingUp,
-  UploadCloud,
-  Volume2,
-  VolumeX,
+  Menu,
 } from 'lucide-vue-next';
 
 defineProps({
@@ -24,7 +18,7 @@ defineProps({
   },
 });
 
-const emit = defineEmits(['toggleSound', 'openGuide']);
+defineEmits(['openNavigation']);
 const route = useRoute();
 const router = useRouter();
 const now = ref(Date.now());
@@ -54,22 +48,11 @@ const updatedLabel = computed(() => {
   if (s < 60) return `Updated ${s}s ago`;
   return `Updated ${Math.round(s / 60)}m ago`;
 });
-const menuRoot = ref(null);
-const auditButton = ref(null);
-const dropdownPosition = ref({});
-const auditMenuOpen = ref(false);
-const storeSubmenuOpen = ref(false);
 const {
   currentUser,
   isAuditor,
   isAdmin,
   isSuperAdmin,
-  canAccessStoreAudit,
-  canAccessUploadAudits,
-  canAccessStockAudit,
-  canAccessAuditRecords,
-  canAccessSalesReport,
-  canAccessRestockPlanner,
   logout
 } = useAuth();
 
@@ -77,59 +60,16 @@ const cleanUserName = computed(() => {
   if (!currentUser.value?.name) return 'User';
   return currentUser.value.name.replace(/\s*\([^)]*\)/g, '').trim();
 });
-const isStoreAuditRoute = computed(() => route.path === '/store-audit' || route.path === '/store-audit2025');
-const isAuditRoute = computed(() => isStoreAuditRoute.value || ['/upload-audits', '/stock-audit', '/stock-audit-crew', '/audit-records'].includes(route.path));
-const canAccessAuditMenu = computed(() =>
-  canAccessStoreAudit.value || canAccessUploadAudits.value || canAccessStockAudit.value || canAccessAuditRecords.value
-);
-
-function closeMenus() {
-  auditMenuOpen.value = false;
-  storeSubmenuOpen.value = false;
-}
-
-function updateDropdownPosition() {
-  const rect = auditButton.value?.getBoundingClientRect();
-  if (!rect) return;
-  const width = Math.min(288, window.innerWidth - 32);
-  dropdownPosition.value = {
-    left: `${Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))}px`,
-    top: `${rect.bottom + 8}px`,
-    width: `${width}px`,
-  };
-}
-
-// Hover already opens the menu, so a click only needs to keep it open (touch devices open it here)
-function toggleAuditMenu() {
-  hoverOpen();
-}
-
-let hoverTimer = null;
-function hoverOpen() {
-  clearTimeout(hoverTimer);
-  if (!auditMenuOpen.value) {
-    auditMenuOpen.value = true;
-    storeSubmenuOpen.value = isStoreAuditRoute.value;
-    updateDropdownPosition();
-  }
-}
-function hoverClose() {
-  clearTimeout(hoverTimer);
-  hoverTimer = setTimeout(closeMenus, 200);
-}
-
 function handleOutsidePointerDown(event) {
-  if (menuRoot.value && !menuRoot.value.contains(event.target)) closeMenus();
   if (!event.target.closest?.('[data-profile-menu]')) profileOpen.value = false;
 }
 
 function handleLogout() {
   logout();
-  closeMenus();
   router.push('/login');
 }
 
-watch(() => route.fullPath, closeMenus);
+watch(() => route.fullPath, () => { profileOpen.value = false; });
 watch(profileOpen, (open) => {
   clearInterval(sessionsTimer);
   if (open && currentUser.value?.id === 'user-bertha') {
@@ -140,23 +80,20 @@ watch(profileOpen, (open) => {
 onMounted(() => {
   clockTimer = setInterval(() => { now.value = Date.now(); }, 5000);
   document.addEventListener('pointerdown', handleOutsidePointerDown);
-  window.addEventListener('resize', updateDropdownPosition);
-  window.addEventListener('scroll', updateDropdownPosition, true);
 });
 onUnmounted(() => {
   clearInterval(clockTimer);
   clearInterval(sessionsTimer);
   document.removeEventListener('pointerdown', handleOutsidePointerDown);
-  window.removeEventListener('resize', updateDropdownPosition);
-  window.removeEventListener('scroll', updateDropdownPosition, true);
 });
 </script>
 
 <template>
-  <header class="bg-white border-b border-slate-200 text-slate-800 sticky top-0 z-50 shadow-xs" @keydown.esc.stop.prevent="closeMenus">
+  <header class="bg-white border-b border-slate-200 text-slate-800 sticky top-0 z-40 shadow-xs" @keydown.esc="profileOpen = false">
     <div class="max-w-[1560px] mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
-      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div class="flex items-center justify-between gap-2">
         <div class="flex min-w-0 items-center gap-3">
+          <button type="button" class="rounded-lg border p-2 text-slate-700 lg:hidden" aria-label="Open navigation" aria-controls="main-sidebar" @click="$emit('openNavigation')"><Menu class="h-5 w-5" /></button>
           <router-link :to="isAdmin ? '/sales' : '/store-audit'" class="flex min-w-0 items-center gap-2.5 group">
             <div class="w-9 h-9 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform p-0.5 shrink-0">
               <img src="/birmas_logo.png" alt="Birmas Logo" class="w-full h-full object-contain" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
@@ -173,95 +110,6 @@ onUnmounted(() => {
             </div>
           </router-link>
 
-          <nav ref="menuRoot" class="relative flex shrink-0 items-center gap-2" aria-label="Main navigation">
-            <div v-if="canAccessAuditMenu" class="relative" @mouseenter="hoverOpen" @mouseleave="hoverClose">
-              <button
-                ref="auditButton"
-                type="button"
-                class="inline-flex w-40 items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
-                :class="isAuditRoute || auditMenuOpen ? 'border-teal-600 bg-teal-600 text-white shadow-xs' : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'"
-                aria-haspopup="true"
-                aria-controls="audit-navigation-menu"
-                :aria-expanded="auditMenuOpen"
-                @click="toggleAuditMenu"
-              >
-                Audit
-                <ChevronDown class="w-4 h-4 transition-transform" :class="auditMenuOpen ? 'rotate-180' : ''" />
-              </button>
-
-              <Transition name="menu-slide">
-              <div
-                v-if="auditMenuOpen"
-                id="audit-navigation-menu"
-                class="fixed z-[70] max-w-[calc(100vw-2rem)] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black/5"
-                :style="dropdownPosition"
-              >
-                <div v-if="canAccessStoreAudit" class="rounded-xl">
-                  <button
-                    type="button"
-                    class="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
-                    :class="isStoreAuditRoute ? 'bg-teal-50 text-teal-800' : 'text-slate-700 hover:bg-slate-100'"
-                    aria-controls="store-audit-years"
-                    :aria-expanded="storeSubmenuOpen"
-                    @click="storeSubmenuOpen = !storeSubmenuOpen"
-                  >
-                    <span class="flex items-center gap-2"><Store class="h-4 w-4" />Store Audit</span>
-                    <ChevronRight class="h-4 w-4 transition-transform" :class="storeSubmenuOpen ? 'rotate-90' : ''" />
-                  </button>
-                  <div v-if="storeSubmenuOpen" id="store-audit-years" class="ml-7 border-l border-slate-200 py-1 pl-3">
-                    <router-link
-                      to="/store-audit2025"
-                      class="block rounded-lg px-3 py-2 text-sm font-semibold transition-colors"
-                      :class="route.path === '/store-audit2025' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'"
-                      @click="closeMenus"
-                    >2025</router-link>
-                    <router-link
-                      to="/store-audit"
-                      class="mt-1 block rounded-lg px-3 py-2 text-sm font-semibold transition-colors"
-                      :class="route.path === '/store-audit' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'"
-                      @click="closeMenus"
-                    >2026</router-link>
-                  </div>
-                </div>
-
-                <router-link
-                  v-if="canAccessUploadAudits"
-                  to="/upload-audits"
-                  class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
-                  :class="route.path === '/upload-audits' ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
-                  @click="closeMenus"
-                ><UploadCloud class="h-4 w-4" />Upload Audits</router-link>
-                <router-link
-                  v-if="canAccessStockAudit"
-                  :to="currentUser?.role === 'crew' ? '/stock-audit-crew' : '/stock-audit'"
-                  class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
-                  :class="['/stock-audit', '/stock-audit-crew'].includes(route.path) ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
-                  @click="closeMenus"
-                ><ClipboardCheck class="h-4 w-4" />Stock Audit</router-link>
-                <router-link
-                  v-if="canAccessAuditRecords"
-                  to="/audit-records"
-                  class="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
-                  :class="route.path === '/audit-records' ? 'bg-teal-600 text-white' : 'text-slate-700 hover:bg-slate-100'"
-                  @click="closeMenus"
-                ><ClipboardCheck class="h-4 w-4" />Audit Records</router-link>
-              </div>
-              </Transition>
-            </div>
-
-            <router-link
-              v-if="canAccessSalesReport"
-              to="/sales"
-              class="inline-flex w-40 items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
-              :class="route.path === '/sales' ? 'border-teal-600 bg-teal-600 text-white shadow-xs' : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'"
-            ><TrendingUp class="h-4 w-4" />Sales Report</router-link>
-            <router-link
-              v-if="canAccessRestockPlanner"
-              to="/purchasing"
-              class="inline-flex items-center justify-center whitespace-nowrap rounded-xl border px-3.5 py-2 text-sm font-bold transition-colors"
-              :class="route.path === '/purchasing' ? 'border-teal-600 bg-teal-600 text-white shadow-xs' : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'"
-            >Purchasing</router-link>
-          </nav>
         </div>
 
         <div class="flex items-center justify-between gap-2 sm:justify-end sm:gap-3 flex-wrap">
@@ -273,9 +121,9 @@ onUnmounted(() => {
           <div v-if="currentUser" class="relative" data-profile-menu>
             <button type="button" class="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 shadow-xs hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500" aria-haspopup="true" :aria-expanded="profileOpen" @click="profileOpen = !profileOpen">
               <div class="flex h-6 w-6 items-center justify-center rounded-lg bg-teal-100 text-[11px] font-black text-teal-800">{{ cleanUserName.charAt(0) }}</div>
-              <span class="text-xs font-bold leading-tight text-slate-900">{{ cleanUserName }}</span>
+              <span class="hidden text-xs font-bold leading-tight text-slate-900 sm:inline">{{ cleanUserName }}</span>
               <span
-                class="rounded px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wider"
+                class="hidden rounded px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wider sm:inline"
                 :class="{
                   'bg-purple-100 text-purple-800 border border-purple-200': isSuperAdmin,
                   'bg-blue-100 text-blue-800 border border-blue-200': isAdmin,

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from './composables/useAuth.js';
 import { isSessionExpired, SESSION_MAX_AGE_MS } from './services/authFetch.js';
@@ -11,6 +11,7 @@ const route = useRoute();
 const router = useRouter();
 const { currentUser, logout, canAccessStoreAudit, canAccessUploadAudits, canAccessStockAudit, canAccessCrewPage, canAccessAuditRecords, canAccessSalesReport, canAccessRestockPlanner } = useAuth();
 const toast = useToast();
+const sidebarOpen = ref(false);
 
 const pageNames = {
   '/store-audit': ['Audit', 'Store Audit', '2026'],
@@ -25,16 +26,19 @@ const pageNames = {
 };
 const crumbs = computed(() => pageNames[route.path] || []);
 const navItems = computed(() => [
-  canAccessStoreAudit.value && { to: '/store-audit', label: 'Store' },
-  canAccessUploadAudits.value && { to: '/upload-audits', label: 'Upload' },
-  canAccessStockAudit.value && { to: canAccessCrewPage.value && currentUser.value?.role === 'crew' ? '/stock-audit-crew' : '/stock-audit', label: 'Stock' },
-  canAccessAuditRecords.value && { to: '/audit-records', label: 'Records' },
-  canAccessSalesReport.value && { to: '/sales', label: 'Sales' },
+  canAccessStoreAudit.value && { to: '/store-audit', label: 'Store Audit 2026' },
+  canAccessStoreAudit.value && { to: '/store-audit2025', label: 'Store Audit 2025' },
+  canAccessUploadAudits.value && { to: '/upload-audits', label: 'Upload Audits' },
+  canAccessStockAudit.value && { to: canAccessCrewPage.value && currentUser.value?.role === 'crew' ? '/stock-audit-crew' : '/stock-audit', label: 'Stock Audit' },
+  canAccessAuditRecords.value && { to: '/audit-records', label: 'Audit Records' },
+  canAccessSalesReport.value && { to: '/sales', label: 'Sales Report' },
   canAccessRestockPlanner.value && { to: '/purchasing', label: 'Purchasing' },
 ].filter(Boolean));
+watch(() => route.fullPath, () => { sidebarOpen.value = false; });
 
 let warned = false;
 function onKey(e) {
+  if (e.key === 'Escape' && sidebarOpen.value) { sidebarOpen.value = false; return; }
   const tag = (e.target?.tagName || '').toLowerCase();
   if (e.key !== '/' || ['input', 'textarea', 'select'].includes(tag) || e.target?.isContentEditable) return;
   const box = document.querySelector('input[type="search"], input[placeholder*="earch" i]');
@@ -61,11 +65,18 @@ onUnmounted(() => { clearInterval(expiryTimer); document.removeEventListener('ke
 <template>
   <div class="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans selection:bg-teal-500 selection:text-white">
     <!-- Header (shown on all pages except login) -->
-    <ChillerHeader
-      v-if="route.path !== '/login'"
-    />
+    <ChillerHeader v-if="route.path !== '/login'" @open-navigation="sidebarOpen = true" />
 
-    <nav v-if="crumbs.length && route.path !== '/login'" class="max-w-[1560px] w-full mx-auto px-4 sm:px-8 lg:px-12 xl:px-16 pt-3 text-xs text-slate-500 items-center gap-1.5" :class="route.path === '/sales/esb-analytics' ? 'flex' : 'hidden sm:flex'" aria-label="Breadcrumb">
+    <div class="flex flex-1 min-w-0">
+    <button v-if="sidebarOpen && route.path !== '/login'" type="button" class="fixed inset-0 z-50 bg-slate-950/50 lg:hidden" aria-label="Close navigation" @click="sidebarOpen = false"></button>
+    <aside v-if="route.path !== '/login'" id="main-sidebar" class="fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] overflow-y-auto border-r border-slate-200 bg-white p-4 shadow-xl transition-transform lg:sticky lg:top-16 lg:z-0 lg:h-[calc(100vh-4rem)] lg:w-56 lg:shrink-0 lg:translate-x-0 lg:visible lg:shadow-none" :class="sidebarOpen ? 'translate-x-0' : 'invisible -translate-x-full'">
+      <div class="mb-4 flex items-center justify-between"><span class="text-xs font-bold uppercase tracking-wider text-slate-500">Navigation</span><button class="rounded border px-3 py-1 text-sm lg:hidden" type="button" @click="sidebarOpen = false">Close</button></div>
+      <nav class="space-y-1" aria-label="Main navigation">
+        <router-link v-for="n in navItems" :key="n.to" :to="n.to" class="block rounded-lg px-3 py-3 text-sm font-bold focus-visible:outline-2 focus-visible:outline-teal-600" :class="route.path === n.to || (n.to === '/sales' && route.path.startsWith('/sales/')) ? 'bg-teal-700 text-white' : 'text-slate-700 hover:bg-slate-100'" :aria-current="route.path === n.to ? 'page' : undefined">{{ n.label }}</router-link>
+      </nav>
+    </aside>
+    <div class="flex min-w-0 flex-1 flex-col">
+    <nav v-if="crumbs.length && route.path !== '/login'" class="max-w-[1560px] w-full mx-auto px-4 sm:px-8 pt-3 text-xs text-slate-500 items-center gap-1.5 flex" aria-label="Breadcrumb">
       <template v-for="(c, i) in crumbs" :key="c">
         <span v-if="i" class="text-slate-300">/</span>
         <router-link v-if="route.path === '/sales/esb-analytics' && i === 0" to="/sales" class="hover:text-teal-700">{{ c }}</router-link>
@@ -76,7 +87,7 @@ onUnmounted(() => { clearInterval(expiryTimer); document.removeEventListener('ke
     <!-- Routed View with generous left & right gutters -->
     <main
       class="flex-1 w-full"
-      :class="route.path === '/login' ? '' : 'max-w-[1560px] mx-auto px-4 sm:px-8 lg:px-12 xl:px-16 py-8'"
+      :class="route.path === '/login' ? '' : 'max-w-[1560px] mx-auto px-4 sm:px-8 py-5 sm:py-8'"
     >
       <router-view />
     </main>
@@ -84,7 +95,7 @@ onUnmounted(() => { clearInterval(expiryTimer); document.removeEventListener('ke
     <!-- Footer -->
     <footer
       v-if="route.path !== '/login'"
-      class="border-t border-slate-200 bg-white py-4 pb-20 sm:pb-4 text-center text-xs text-slate-500"
+      class="border-t border-slate-200 bg-white py-4 text-center text-xs text-slate-500"
     >
       <div class="max-w-[1560px] mx-auto px-4 sm:px-8 lg:px-12 xl:px-16 flex flex-col sm:flex-row items-center justify-between gap-2">
         <p>
@@ -92,17 +103,9 @@ onUnmounted(() => { clearInterval(expiryTimer); document.removeEventListener('ke
         </p>
       </div>
     </footer>
+    </div>
+    </div>
 
     <ToastHost />
-
-    <nav v-if="route.path !== '/login' && navItems.length" class="sm:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t border-slate-200 flex justify-around py-1.5 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]" aria-label="Mobile navigation">
-      <router-link
-        v-for="n in navItems"
-        :key="n.to"
-        :to="n.to"
-        class="flex-1 text-center py-2.5 text-[11px] font-bold rounded-lg mx-0.5"
-        :class="route.path === n.to || (n.to === '/store-audit' && route.path === '/store-audit2025') ? 'bg-teal-600 text-white' : 'text-slate-600'"
-      >{{ n.label }}</router-link>
-    </nav>
   </div>
 </template>
