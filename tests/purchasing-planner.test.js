@@ -84,7 +84,7 @@ test('purchasing settings persist and validate the 8-week movement threshold', (
 test('recommendations ignore legacy manual quantities and product lead overrides', () => {
   const { stock, sales, get } = fixture();
   saveSupplierSettings(stock, { storeId: 's', productId: 'p', supplierName: 'Vendor', leadDays: 2, moq: 3, purchasingUnit: 'Carton', conversionQty: 24, baseUnit: 'Can' });
-  savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', movement: 'Slow Moving', supplier: 'Vendor', minStock: 100 });
+  savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', movement: 'Slow Moving', supplier: 'Vendor', minStock: 100, minStock10: 100 });
   let row = get().rows[0];
   assert.equal(row.currentStock, 2);
   assert.equal(row.movement, 'Slow Moving');
