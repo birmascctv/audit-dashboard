@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from './composables/useAuth.js';
 import { isSessionExpired, SESSION_MAX_AGE_MS } from './services/authFetch.js';
@@ -12,6 +12,21 @@ const router = useRouter();
 const { currentUser, logout, canAccessStoreAudit, canAccessUploadAudits, canAccessStockAudit, canAccessCrewPage, canAccessAuditRecords, canAccessSalesReport, canAccessRestockPlanner } = useAuth();
 const toast = useToast();
 const sidebarOpen = ref(false);
+const desktopNavigation = ref(false);
+let desktopQuery;
+
+function updateNavigationBreakpoint(event) {
+  desktopNavigation.value = event.matches;
+  sidebarOpen.value = event.matches && route.path !== '/login';
+}
+
+async function closeSidebar(restoreFocus = false) {
+  sidebarOpen.value = false;
+  if (restoreFocus) {
+    await nextTick();
+    document.getElementById('sidebar-toggle')?.focus();
+  }
+}
 
 const pageNames = {
   '/store-audit': ['Audit', 'Store Audit', '2026'],
@@ -34,11 +49,18 @@ const navItems = computed(() => [
   canAccessSalesReport.value && { to: '/sales', label: 'Sales Report' },
   canAccessRestockPlanner.value && { to: '/purchasing', label: 'Purchasing' },
 ].filter(Boolean));
-watch(() => route.fullPath, () => { sidebarOpen.value = false; });
+watch(() => route.fullPath, (path, previous) => {
+  if (path === '/login' || !desktopNavigation.value) sidebarOpen.value = false;
+  else if (previous === '/login') sidebarOpen.value = true;
+});
 
 let warned = false;
 function onKey(e) {
-  if (e.key === 'Escape' && sidebarOpen.value) { sidebarOpen.value = false; return; }
+  if (e.key === 'Escape' && sidebarOpen.value &&
+      (!desktopNavigation.value || document.getElementById('main-sidebar')?.contains(e.target) || e.target?.id === 'sidebar-toggle')) {
+    closeSidebar(true);
+    return;
+  }
   const tag = (e.target?.tagName || '').toLowerCase();
   if (e.key !== '/' || ['input', 'textarea', 'select'].includes(tag) || e.target?.isContentEditable) return;
   const box = document.querySelector('input[type="search"], input[placeholder*="earch" i]');
@@ -58,22 +80,35 @@ function enforceExpiry() {
     router.replace('/login');
   }
 }
-onMounted(() => { document.addEventListener('keydown', onKey); enforceExpiry(); expiryTimer = setInterval(enforceExpiry, 5000); });
-onUnmounted(() => { clearInterval(expiryTimer); document.removeEventListener('keydown', onKey); });
+onMounted(() => {
+  desktopQuery = window.matchMedia('(min-width: 1024px)');
+  updateNavigationBreakpoint(desktopQuery);
+  desktopQuery.addEventListener('change', updateNavigationBreakpoint);
+  document.addEventListener('keydown', onKey);
+  enforceExpiry();
+  expiryTimer = setInterval(enforceExpiry, 5000);
+});
+onUnmounted(() => {
+  clearInterval(expiryTimer);
+  desktopQuery?.removeEventListener('change', updateNavigationBreakpoint);
+  document.removeEventListener('keydown', onKey);
+});
 </script>
 
 <template>
   <div class="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans selection:bg-teal-500 selection:text-white">
     <!-- Header (shown on all pages except login) -->
-    <ChillerHeader v-if="route.path !== '/login'" @open-navigation="sidebarOpen = true" />
+    <ChillerHeader v-if="route.path !== '/login'" :sidebar-open="sidebarOpen" @toggle-navigation="sidebarOpen = !sidebarOpen" />
 
     <div class="flex flex-1 min-w-0">
-    <button v-if="sidebarOpen && route.path !== '/login'" type="button" class="fixed inset-0 z-50 bg-slate-950/50 lg:hidden" aria-label="Close navigation" @click="sidebarOpen = false"></button>
-    <aside v-if="route.path !== '/login'" id="main-sidebar" class="fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] overflow-y-auto border-r border-slate-200 bg-white p-4 shadow-xl transition-transform lg:sticky lg:top-16 lg:z-0 lg:h-[calc(100vh-4rem)] lg:w-56 lg:shrink-0 lg:translate-x-0 lg:visible lg:shadow-none" :class="sidebarOpen ? 'translate-x-0' : 'invisible -translate-x-full'">
-      <div class="mb-4 flex items-center justify-between"><span class="text-xs font-bold uppercase tracking-wider text-slate-500">Navigation</span><button class="rounded border px-3 py-1 text-sm lg:hidden" type="button" @click="sidebarOpen = false">Close</button></div>
+    <button v-if="sidebarOpen && route.path !== '/login'" type="button" class="fixed inset-0 z-50 bg-slate-950/50 lg:hidden" aria-label="Close navigation" @click="closeSidebar(true)"></button>
+    <aside v-if="route.path !== '/login'" id="main-sidebar" class="fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] overflow-hidden bg-white shadow-xl transition-[width,transform,visibility] duration-200 lg:sticky lg:top-16 lg:z-0 lg:h-[calc(100vh-4rem)] lg:max-w-none lg:shrink-0 lg:shadow-none" :class="sidebarOpen ? 'visible translate-x-0 lg:w-56 lg:border-r lg:border-slate-200' : 'invisible -translate-x-full lg:w-0 lg:translate-x-0'" :inert="!sidebarOpen" :aria-hidden="!sidebarOpen">
+      <div class="h-full w-64 max-w-[85vw] overflow-y-auto p-4 lg:w-56 lg:max-w-none">
+      <div class="mb-4 flex items-center justify-between"><span class="text-xs font-bold uppercase tracking-wider text-slate-500">Navigation</span><button class="rounded border px-3 py-1 text-sm" type="button" @click="closeSidebar(true)">Close</button></div>
       <nav class="space-y-1" aria-label="Main navigation">
-        <router-link v-for="n in navItems" :key="n.to" :to="n.to" class="block rounded-lg px-3 py-3 text-sm font-bold focus-visible:outline-2 focus-visible:outline-teal-600" :class="route.path === n.to || (n.to === '/sales' && route.path.startsWith('/sales/')) ? 'bg-teal-700 text-white' : 'text-slate-700 hover:bg-slate-100'" :aria-current="route.path === n.to ? 'page' : undefined">{{ n.label }}</router-link>
+        <router-link v-for="n in navItems" :key="n.to" :to="n.to" class="block rounded-lg px-3 py-3 text-sm font-bold focus-visible:outline-2 focus-visible:outline-teal-600" :class="route.path === n.to || (n.to === '/sales' && route.path.startsWith('/sales/')) ? 'bg-teal-700 text-white' : 'text-slate-700 hover:bg-slate-100'" :aria-current="route.path === n.to ? 'page' : undefined" @click="!desktopNavigation && closeSidebar()">{{ n.label }}</router-link>
       </nav>
+      </div>
     </aside>
     <div class="flex min-w-0 flex-1 flex-col">
     <nav v-if="crumbs.length && route.path !== '/login'" class="max-w-[1560px] w-full mx-auto px-4 sm:px-8 pt-3 text-xs text-slate-500 items-center gap-1.5 flex" aria-label="Breadcrumb">
