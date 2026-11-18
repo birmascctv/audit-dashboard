@@ -91,6 +91,7 @@ const rememberSupplierInputs = () => rememberInputs({
   baseUnit: manualBaseUnit.value ? supplierEdit.value.baseUnit : '',
 });
 const supplierError = ref('');
+const productMessage = ref('');
 const productError = ref('');
 const purchaseImportError = ref('');
 const detailError = ref('');
@@ -175,8 +176,9 @@ const statusClass = (status) => ({
 watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage], () => { page.value = 1; });
 watch([selectedHolidayStore, data], () => initializeHolidayAdjustments());
 watch([selectedHolidayStore, selectedHolidayId, data, tab], loadHolidayForecast);
-watch(selected, (row) => {
+function loadProductForm(row) {
   if (!row) return;
+  productMessage.value = '';
   productEdits.value = {
     movement: row.movementOverride || '',
     minStock: row.minStock ?? row.suggestedMinStock7 ?? '',
@@ -195,6 +197,15 @@ watch(selected, (row) => {
   };
   productError.value = '';
   supplierError.value = '';
+}
+
+let formProductKey = '';
+// Refreshes of the same product (e.g. details finishing loading) must not wipe what the user is typing.
+watch(selected, (row) => {
+  const key = row ? `${row.storeId}|${row.productId}` : '';
+  if (key === formProductKey) return;
+  formProductKey = key;
+  loadProductForm(row);
 });
 watch(() => supplierEdit.value.supplierName, (name) => {
   const supplier = selected.value?.suppliers.find((item) => item.supplierName === name);
@@ -421,6 +432,7 @@ const minStockPayload = (value, suggested) => value === '' || value == null || N
 async function saveProductDetails() {
   if (!selected.value) return;
   productError.value = '';
+  productMessage.value = '';
   supplierError.value = '';
   const row = selected.value;
   const hasSupplier = !!String(supplierEdit.value.supplierName || '').trim();
@@ -453,6 +465,8 @@ async function saveProductDetails() {
     });
     rememberProductInputs();
     await loadPurchasing();
+    loadProductForm(selected.value);
+    productMessage.value = 'Product details saved.';
   } catch (err) { productError.value = err.message; }
 }
 
@@ -787,7 +801,7 @@ onUnmounted(() => { clearInterval(clockTimer); });
               <label class="text-xs font-semibold">Base unit<select v-model="baseUnitChoice" class="mt-1 block w-full rounded border p-2"><option value="">Select base unit…</option><option v-for="unit in baseUnitOptions" :key="unit" :value="unit">{{ unit }}</option><option :value="MANUAL_OPTION">Enter manually…</option></select><input v-if="baseUnitChoice === MANUAL_OPTION" v-model.trim="supplierEdit.baseUnit" list="hist-baseUnit" maxlength="80" placeholder="Can, bottle, piece…" class="mt-2 block w-full rounded border p-2"></label>
               <datalist v-for="field in ['minStock','minStock10','supplierName','leadDays','moq','purchasingUnit','conversionQty','baseUnit']" :id="`hist-${field}`" :key="field"><option v-for="value in suggestionsFor(field)" :key="value" :value="value" /></datalist>
             </div><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p>
-              <div class="mt-3 flex flex-wrap gap-2"><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="saveProductDetails">Save product details</button></div><p v-if="productError" role="alert" class="mt-2 text-xs text-red-700">{{ productError }}</p>
+              <div class="mt-3 flex flex-wrap gap-2"><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="saveProductDetails">Save product details</button></div><p v-if="productError" role="alert" class="mt-2 text-xs text-red-700">{{ productError }}</p><p v-if="productMessage" role="status" class="mt-2 text-xs text-green-700">{{ productMessage }}</p>
             </section>
             <div v-if="selected.forecast && selected.history" class="mt-4 h-72"><Line :data="detailChart" :options="{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{mode:'index',intersect:false}},scales:{sales:{position:'left',beginAtZero:true,title:{display:true,text:'Sales / day'}},stock:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'Stock'}}}}" /></div>
             <p class="mt-2 text-xs text-slate-500">Hover over a date to see all available values. Projected stock starts with Monday stock and subtracts forecast sales each day, assuming no deliveries or transfers; it is not confirmed stock. Snapshot days with observed zero stock are excluded from normal demand; they are observations, not proof of a full-day stockout.</p>
