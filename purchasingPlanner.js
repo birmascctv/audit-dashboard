@@ -46,9 +46,11 @@ export function savePurchasingSettings(db, input) {
 }
 
 function areaSupplierDefaults(db) {
-  const defaults = new Map(db.prepare('SELECT area,product_key,supplier_name FROM purchasing_area_supplier_defaults').all()
-    .map((row) => [pair(row.area, row.product_key), row.supplier_name]));
-  const existing = db.prepare(`SELECT ps.store_id, ps.selected_supplier, p.product_title, p.varian
+  const defaults = new Map(db.prepare('SELECT * FROM purchasing_area_supplier_defaults').all()
+    .map((row) => [pair(row.area, row.product_key), {
+      supplierName: row.supplier_name, sourceStoreId: row.source_store_id, sourceProductId: row.source_product_id,
+    }]));
+  const existing = db.prepare(`SELECT ps.store_id, ps.product_id, ps.selected_supplier, p.product_title, p.varian
     FROM purchasing_product_settings ps JOIN products p ON p.id=ps.product_id
     LEFT JOIN purchasing_supplier_settings ss ON ss.store_id=ps.store_id AND ss.product_id=ps.product_id
       AND ss.supplier_name=ps.selected_supplier
@@ -57,9 +59,27 @@ function areaSupplierDefaults(db) {
   for (const row of existing) {
     const area = supplierArea(row.store_id);
     const productKey = supplierProductKey(row.product_title, row.varian);
-    if (area && productKey && !defaults.has(pair(area, productKey))) {
-      defaults.set(pair(area, productKey), row.selected_supplier);
+    if (!area || !productKey) continue;
+    const key = pair(area, productKey);
+    if (!defaults.has(key)) {
+      defaults.set(key, { supplierName: row.selected_supplier, sourceStoreId: row.store_id, sourceProductId: row.product_id });
     }
+    const candidate = defaults.get(key);
+    if (!candidate.sourceStoreId && candidate.supplierName === row.selected_supplier) {
+      candidate.sourceStoreId = row.store_id;
+      candidate.sourceProductId = row.product_id;
+    }
+  }
+  const findSource = db.prepare(`SELECT lead_days,moq,purchasing_unit,conversion_qty,base_unit
+    FROM purchasing_supplier_settings WHERE store_id=? AND product_id=? AND supplier_name=?`);
+  for (const value of defaults.values()) {
+    const details = value.sourceStoreId && value.sourceProductId
+      ? findSource.get(value.sourceStoreId, value.sourceProductId, value.supplierName) : null;
+    value.supplier = {
+      supplierName: value.supplierName, leadDays: details?.lead_days ?? null, moq: details?.moq ?? null,
+      purchasingUnit: details?.purchasing_unit ?? null, conversionQty: details?.conversion_qty ?? 1,
+      baseUnit: details?.base_unit ?? null, configured: false,
+    };
   }
   return defaults;
 }
@@ -80,9 +100,13 @@ export function savePurchasingProductSettings(db, { storeId, productId, minStock
     const product = db.prepare('SELECT product_title,varian FROM products WHERE id=?').get(productId);
     const productKey = supplierProductKey(product?.product_title, product?.varian);
     if (productKey) {
-      const defaultSupplier = areaSupplierDefaults(db).get(pair(area, productKey)) || supplier.trim();
-      db.prepare('INSERT OR IGNORE INTO purchasing_area_supplier_defaults(area,product_key,supplier_name) VALUES(?,?,?)')
-        .run(area, productKey, defaultSupplier);
+      const currentDefault = areaSupplierDefaults(db).get(pair(area, productKey));
+      db.prepare(`INSERT INTO purchasing_area_supplier_defaults(area,product_key,supplier_name,source_store_id,source_product_id)
+        VALUES(?,?,?,?,?) ON CONFLICT(area,product_key) DO UPDATE SET
+        source_store_id=COALESCE(purchasing_area_supplier_defaults.source_store_id,excluded.source_store_id),
+        source_product_id=COALESCE(purchasing_area_supplier_defaults.source_product_id,excluded.source_product_id)`)
+        .run(area, productKey, currentDefault?.supplierName || supplier.trim(),
+          currentDefault?.sourceStoreId || storeId, currentDefault?.sourceProductId || productId);
     }
   }
   const current = db.prepare('SELECT * FROM purchasing_product_settings WHERE store_id=? AND product_id=?').get(storeId, productId) || {};
@@ -412,10 +436,10 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
         conversionQty: saved.conversion_qty, baseUnit: saved.base_unit, configured: true,
       }));
     const defaultSupplier = areaDefaults.get(pair(supplierArea(stock.storeId), supplierProductKey(stock.productName, stock.productVariant)));
-    const selectedSupplierName = preferences.selected_supplier || defaultSupplier || '';
+    const selectedSupplierName = preferences.selected_supplier || defaultSupplier?.supplierName || '';
     let supplier = suppliers.find((item) => item.supplierName === selectedSupplierName) || null;
     if (!supplier && selectedSupplierName && !preferences.selected_supplier) {
-      supplier = { supplierName: selectedSupplierName, leadDays: null, moq: null, purchasingUnit: null, conversionQty: 1, baseUnit: null, configured: false };
+      supplier = { ...defaultSupplier.supplier };
       suppliers.push(supplier);
     }
     const leadDays = supplier?.leadDays ?? settings.defaultLeadDays;

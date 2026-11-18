@@ -136,6 +136,11 @@ export function ensurePurchasingSchema(db) {
     if (!db.prepare('PRAGMA table_info(purchasing_product_settings)').all().some((column) => column.name === name)) {
       db.exec(`ALTER TABLE purchasing_product_settings ADD COLUMN ${name} ${type}`);
     }
+    for (const name of ['source_store_id', 'source_product_id']) {
+      if (!db.prepare('PRAGMA table_info(purchasing_area_supplier_defaults)').all().some((column) => column.name === name)) {
+        db.exec(`ALTER TABLE purchasing_area_supplier_defaults ADD COLUMN ${name} TEXT`);
+      }
+    }
   }
   if (!holidayTableExists) {
     const insertHoliday = db.prepare(`INSERT OR IGNORE INTO purchasing_holidays

@@ -156,22 +156,37 @@ test('Jakarta supplier defaults apply to matching products without overwriting o
     INSERT INTO store_stocks VALUES ('birmas-nomadic','p',5,5,'2026-01-30T12:00:00Z');
   `);
   const save = (storeId, productId, supplierName, leadDays) => {
-    saveSupplierSettings(stock, { storeId, productId, supplierName, leadDays });
+    saveSupplierSettings(stock, { storeId, productId, supplierName, leadDays, moq: 4, purchasingUnit: 'CARTON', conversionQty: 24, baseUnit: 'CAN' });
     savePurchasingProductSettings(stock, { storeId, productId, supplier: supplierName });
   };
   const getRow = (storeId, productId) => getPurchasingPlanner(stock, sales, () => null, '2026-01-30').rows
     .find((row) => row.storeId === storeId && row.productId === productId);
   save('birmas-kuningan', 'p', 'Jakarta supplier', 5);
   assert.equal(getRow('birmas-kwitang', 'p').supplier.supplierName, 'Jakarta supplier');
-  assert.equal(getRow('birmas-kwitang', 'p').supplier.leadDays, null);
+  assert.deepEqual(getRow('birmas-kwitang', 'p').supplier, {
+    supplierName: 'Jakarta supplier', leadDays: 5, moq: 4, purchasingUnit: 'CARTON',
+    conversionQty: 24, baseUnit: 'CAN', configured: false,
+  });
+  assert.equal(getRow('birmas-kwitang', 'p').leadDays, 5);
+  assert.equal(getRow('birmas-kwitang', 'p').conversionQty, 24);
   assert.equal(getRow('birmas-sudirman', 'p2').selectedSupplier, 'Jakarta supplier');
   assert.equal(getRow('birmas-sudirman', 'p3').supplier, null);
   assert.equal(getRow('birmas-nomadic', 'p').supplier, null);
+  saveSupplierSettings(stock, { storeId: 'birmas-kuningan', productId: 'p', supplierName: 'Jakarta supplier',
+    leadDays: 7, moq: 8, purchasingUnit: 'PACK', conversionQty: 6, baseUnit: 'BOTOL' });
+  assert.deepEqual(getRow('birmas-sudirman', 'p2').supplier, {
+    supplierName: 'Jakarta supplier', leadDays: 7, moq: 8, purchasingUnit: 'PACK',
+    conversionQty: 6, baseUnit: 'BOTOL', configured: false,
+  });
+  save('birmas-sudirman', 'p2', 'Jakarta supplier', 9);
+  assert.equal(getRow('birmas-sudirman', 'p2').supplier.leadDays, 9);
+  assert.equal(getRow('birmas-kwitang', 'p').supplier.leadDays, 7);
   save('birmas-kwitang', 'p', 'Local supplier', 3);
   save('birmas-kuningan', 'p', 'Changed supplier', 2);
   assert.equal(getRow('birmas-kwitang', 'p').supplier.supplierName, 'Local supplier');
   assert.equal(getRow('birmas-kwitang', 'p').supplier.leadDays, 3);
   assert.equal(getRow('birmas-sudirman', 'p2').selectedSupplier, 'Jakarta supplier');
+  assert.equal(getRow('birmas-sudirman', 'p2').supplier.leadDays, 9);
   assert.equal(getRow('birmas-kuningan', 'p').selectedSupplier, 'Changed supplier');
   stock.close(); sales.close();
 });
@@ -185,11 +200,17 @@ test('existing Jakarta supplier is used as the default without overwriting saved
     INSERT INTO store_stocks VALUES ('birmas-sudirman','p',5,5,'2026-01-30T12:00:00Z');
   `);
   getPurchasingPlanner(stock, sales, () => null, '2026-01-30');
+  saveSupplierSettings(stock, { storeId: 'birmas-kuningan', productId: 'p', supplierName: 'Original',
+    leadDays: 6, moq: 3, purchasingUnit: 'PACK', conversionQty: 12, baseUnit: 'CAN' });
   stock.prepare("INSERT INTO purchasing_product_settings(store_id,product_id,selected_supplier) VALUES('birmas-kuningan','p','Original')").run();
+  stock.prepare("INSERT INTO purchasing_area_supplier_defaults(area,product_key,supplier_name) VALUES(?,?,?)")
+    .run('jakarta', JSON.stringify(['PRODUCT', 'PRODUCT VARIANT']), 'Original');
   saveSupplierSettings(stock, { storeId: 'birmas-kwitang', productId: 'p', supplierName: 'Override' });
   savePurchasingProductSettings(stock, { storeId: 'birmas-kwitang', productId: 'p', supplier: 'Override' });
   const rows = getPurchasingPlanner(stock, sales, () => null, '2026-01-30').rows;
   assert.equal(rows.find((row) => row.storeId === 'birmas-sudirman').selectedSupplier, 'Original');
+  assert.equal(rows.find((row) => row.storeId === 'birmas-sudirman').supplier.leadDays, 6);
+  assert.equal(rows.find((row) => row.storeId === 'birmas-sudirman').supplier.conversionQty, 12);
   assert.equal(rows.find((row) => row.storeId === 'birmas-kwitang').selectedSupplier, 'Override');
   stock.close(); sales.close();
 });
