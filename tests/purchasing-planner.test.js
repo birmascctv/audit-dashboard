@@ -74,6 +74,19 @@ test('rows expose PO-history suppliers and units, and 10-day minimum stock is se
   stock.close(); sales.close();
 });
 
+test('supplier settings are shared by product name across outlets', () => {
+  const { stock, sales } = fixture();
+  stock.prepare("INSERT INTO stores(id,name) VALUES('s2','Other')").run();
+  stock.prepare("INSERT INTO products(id,product_title,varian,default_unit) SELECT 'p2',product_title,varian,default_unit FROM products WHERE id='p'").run();
+  stock.prepare("INSERT INTO store_stocks(store_id,product_id,stock_qty) VALUES('s2','p2',1)").run();
+  saveSupplierSettings(stock, { storeId: 's', productId: 'p', supplierName: 'Vendor', leadDays: 3, moq: 2, purchasingUnit: 'Carton', conversionQty: 24, baseUnit: 'Can', selected: true });
+  const copy = stock.prepare("SELECT * FROM purchasing_supplier_settings WHERE store_id='s2' AND product_id='p2'").get();
+  assert.equal(copy.purchasing_unit, 'Carton');
+  assert.equal(copy.conversion_qty, 24);
+  assert.equal(stock.prepare("SELECT selected_supplier FROM purchasing_product_settings WHERE store_id='s2'").get().selected_supplier, 'Vendor');
+  stock.close(); sales.close();
+});
+
 test('purchasing settings persist and validate the 8-week movement threshold', () => {
   const { stock, sales } = fixture();
   assert.deepEqual(savePurchasingSettings(stock, { ...DEFAULT_PURCHASING_SETTINGS, fastMovingThreshold: 14 }), DEFAULT_PURCHASING_SETTINGS);
