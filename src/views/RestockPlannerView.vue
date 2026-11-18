@@ -5,7 +5,7 @@ import 'chart.js/auto';
 import { authFetchJson, getAuthToken } from '../services/authFetch.js';
 import { useAuth } from '../composables/useAuth.js';
 import PurchasingHistoryUpload from '../components/PurchasingHistoryUpload.vue';
-import { normalizePurchasingPreferences, summarizeOutletSync } from '../utils/purchasingPreferences.js';
+import { normalizePurchasingPreferences } from '../utils/purchasingPreferences.js';
 
 const { currentUser } = useAuth();
 const empty = { rows: [], stores: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], imports: [], ambiguousMatches: [], settings: {} };
@@ -25,7 +25,6 @@ const historyStart = ref('');
 const historyEnd = ref('');
 const appliedRange = ref(null);
 const rangeError = ref('');
-const preferenceMessage = ref('');
 const preferenceError = ref('');
 const clockNow = ref(Date.now());
 let clockTimer;
@@ -106,9 +105,8 @@ const stores = computed(() => {
   for (const store of data.value.stores || []) if (store.id === 'birmas-nomadic') map.set(store.id, store.name);
   return [...map].map(([id, name]) => ({ id, name: outletName(name, id) })).sort((a, b) => a.name.localeCompare(b.name));
 });
-const outletSync = computed(() => stores.value.map((store) => ({
-  ...store, ...summarizeOutletSync(data.value.rows.filter((row) => row.storeId === store.id), clockNow.value),
-})));
+const productNames = computed(() => [...new Set(data.value.rows.map((row) => row.productName || row.product).filter(Boolean))]
+  .sort((a, b) => a.localeCompare(b)));
 const baseRows = computed(() => data.value.rows.filter((row) =>
   row.currentStock != null && Number(row.currentStock) > 0 &&
   (storeFilter.value === 'all' || row.storeId === storeFilter.value) &&
@@ -319,23 +317,13 @@ function savePreferences() {
       search: productSearch.value, coverage: coverage.value, sort: sortMode.value,
       ...appliedRange.value,
     }));
-    preferenceMessage.value = 'Preferences saved on this browser. The applied sales date range is saved; unapplied dates are not.';
   } catch {
-    preferenceMessage.value = '';
-    preferenceError.value = 'Preferences could not be saved in this browser.';
+    preferenceError.value = 'Filters could not be saved in this browser.';
   }
 }
 
-function clearPreferences() {
-  preferenceError.value = '';
-  try {
-    localStorage.removeItem(preferenceKey());
-    preferenceMessage.value = 'Saved preferences cleared. Current filters remain unchanged.';
-  } catch {
-    preferenceMessage.value = '';
-    preferenceError.value = 'Saved preferences could not be cleared.';
-  }
-}
+// The last used filters are remembered automatically; the sales range is saved once applied.
+watch([storeFilter, statusFilter, movementFilter, productSearch, coverage, sortMode, appliedRange], savePreferences, { deep: true });
 
 function restorePreferences() {
   try {
@@ -436,6 +424,16 @@ async function saveProductDetails() {
   supplierError.value = '';
   const row = selected.value;
   const hasSupplier = !!String(supplierEdit.value.supplierName || '').trim();
+  const edit = supplierEdit.value;
+  const supplierFieldsChanged = String(edit.leadDays ?? '') !== String(row.supplier?.leadDays ?? '') ||
+    String(edit.moq ?? '') !== String(row.supplier?.moq ?? '') ||
+    (edit.purchasingUnit || '') !== (row.supplier?.purchasingUnit || row.purchasingUnit || '') ||
+    (edit.baseUnit || '') !== (row.supplier?.baseUnit || row.baseUnit || '') ||
+    Number(edit.conversionQty) !== Number(row.supplier?.conversionQty || row.conversionQty || 1);
+  if (!hasSupplier && supplierFieldsChanged) {
+    productError.value = 'Select or enter a Supplier name to save lead time, MOQ and units — they are stored per supplier.';
+    return;
+  }
   const product = {
     storeId: row.storeId, productId: row.productId,
     minStock: minStockPayload(productEdits.value.minStock, row.suggestedMinStock7),
@@ -588,11 +586,6 @@ onUnmounted(() => { clearInterval(clockTimer); });
       <p v-if="data.reviewIsStale" role="alert" class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">No stock snapshot from Monday within the last 7 days. Order recommendations are withheld until fresh Monday inventory is available.</p>
 
       <template v-if="tab === 'recommendations'">
-        <section class="rounded-xl border bg-white p-4">
-          <h2 class="text-sm font-bold">Stock sync by outlet</h2>
-          <p class="mt-1 text-xs text-slate-500">Latest recorded product sync per outlet; older or missing product timestamps are shown separately. This does not confirm that every product was refreshed.</p>
-          <div class="mt-3 flex flex-wrap gap-2"><div v-for="store in outletSync" :key="store.id" class="rounded-lg border bg-slate-50 px-3 py-2 text-xs"><strong>{{ store.name }}</strong> · {{ store.latestAge }}<span v-if="store.oldest != null && store.oldest !== store.latest" class="block text-slate-600">Oldest product: {{ store.oldestAge }}</span><span v-if="store.missing" class="block text-amber-700">{{ store.missing }} product(s) with missing or invalid sync time</span></div></div>
-        </section>
         <section class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <button type="button" class="rounded-xl bg-red-100 p-4 text-left text-red-800 ring-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-600" :class="statusFilter === 'Critical Stock' ? 'ring-2 ring-red-600' : ''" @click="toggleStatus('Critical Stock')"><span class="text-sm font-bold">Critical stock</span><span class="mt-1 block text-3xl font-extrabold tabular-nums">{{ counts.critical }}</span><span class="mt-1 block text-xs">Expected to run out within 7 days.</span></button>
           <button type="button" class="rounded-xl bg-amber-100 p-4 text-left text-amber-800 ring-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-600" :class="statusFilter === 'Low Stock' ? 'ring-2 ring-amber-600' : ''" @click="toggleStatus('Low Stock')"><span class="text-sm font-bold">Low stock</span><span class="mt-1 block text-3xl font-extrabold tabular-nums">{{ counts.low }}</span><span class="mt-1 block text-xs">Expected to run out within 14 days.</span></button>
@@ -601,7 +594,7 @@ onUnmounted(() => { clearInterval(clockTimer); });
         </section>
         <section class="space-y-3 rounded-xl border bg-white p-4">
           <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-            <label class="text-xs font-bold">Search product<input v-model="productSearch" type="search" placeholder="Product, variant, or SKU ( / )" class="mt-1 block w-full rounded-lg border p-2 font-normal"></label>
+            <label class="text-xs font-bold">Search product<input v-model="productSearch" list="purchasing-product-list" type="search" placeholder="Type or pick a product ( / )" class="mt-1 block w-full rounded-lg border p-2 font-normal"><datalist id="purchasing-product-list"><option v-for="name in productNames" :key="name" :value="name" /></datalist></label>
             <label class="text-xs font-bold">Outlet<select v-model="storeFilter" class="mt-1 block w-full rounded-lg border p-2"><option value="all">All outlets</option><option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option></select></label>
             <label class="text-xs font-bold">Status<select v-model="statusFilter" class="mt-1 block w-full rounded-lg border p-2"><option value="all">All statuses</option><option value="needs-order">Reorder required</option><option v-for="status in statuses" :key="status">{{ status }}</option></select></label>
             <label class="text-xs font-bold">Movement<select v-model="movementFilter" class="mt-1 block w-full rounded-lg border p-2"><option value="all">Fast & slow</option><option>Fast Moving</option><option>Slow Moving</option><option>Unknown</option></select></label>
@@ -615,13 +608,10 @@ onUnmounted(() => { clearInterval(clockTimer); });
             <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="chooseRange('week')">Last 7 days</button>
             <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="chooseRange('month')">Last month</button>
             <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="resetFilters">Reset</button>
-            <button type="button" class="rounded border border-teal-700 px-3 py-2 text-xs font-bold text-teal-800" @click="savePreferences">Save preferences</button>
-            <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="clearPreferences">Clear saved</button>
             <p class="ml-auto text-xs text-slate-500">Monday: {{ data.reviewDate || 'missing' }} · Sales: {{ dateDisplay(data.historyStart) }}–{{ dateDisplay(data.historyEnd) }}</p>
           </form>
           <p class="text-xs text-slate-500">Last 7 days ends yesterday; last month is the previous calendar month. Days without outlet sales records, holiday windows and observed zero-stock days are excluded.</p>
           <p v-if="rangeError" role="alert" class="text-xs text-red-700">{{ rangeError }}</p>
-          <p v-if="preferenceMessage" role="status" class="text-xs text-teal-800">{{ preferenceMessage }}</p>
           <p v-if="preferenceError" role="alert" class="text-xs text-red-700">{{ preferenceError }}</p>
         </section>
         <p v-if="storeFilter === 'birmas-nomadic' && !data.rows.some(row => row.storeId === 'birmas-nomadic')" role="status" class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">No Nomadic products with positive stock are available for recommendations. Check the inventory feed and stock quantities; zero and negative stock are excluded.</p>
