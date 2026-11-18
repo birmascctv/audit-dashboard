@@ -88,37 +88,11 @@ export function saveSupplierSettings(db, input) {
     throw new Error('Enter a valid supplier, lead time, MOQ and unit conversion.');
   }
   if (!db.prepare('SELECT 1 FROM store_stocks WHERE store_id=? AND product_id=?').get(storeId, productId)) throw new Error('Product and outlet not found.');
-  const save = db.prepare(`INSERT INTO purchasing_supplier_settings(store_id,product_id,supplier_name,lead_days,moq,purchasing_unit,conversion_qty,base_unit,updated_at)
+  db.prepare(`INSERT INTO purchasing_supplier_settings(store_id,product_id,supplier_name,lead_days,moq,purchasing_unit,conversion_qty,base_unit,updated_at)
     VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(store_id,product_id,supplier_name) DO UPDATE SET
     lead_days=excluded.lead_days,moq=excluded.moq,purchasing_unit=excluded.purchasing_unit,
-    conversion_qty=excluded.conversion_qty,base_unit=excluded.base_unit,updated_at=excluded.updated_at`);
-  const select = db.prepare(`INSERT INTO purchasing_product_settings(store_id,product_id,selected_supplier) VALUES(?,?,?)
-    ON CONFLICT(store_id,product_id) DO UPDATE SET selected_supplier=excluded.selected_supplier`);
-  const now = new Date().toISOString();
-  // The same product has a different ID in each outlet, so supplier details are shared by product name.
-  for (const target of sameProductRows(db, storeId, productId)) {
-    save.run(target.storeId, target.productId, supplierName.trim(), leadDays, moq, purchasingUnit || null, conversionQty, baseUnit || null, now);
-    if (input?.selected !== false && (target.storeId !== storeId || target.productId !== productId)) select.run(target.storeId, target.productId, supplierName.trim());
-  }
-}
-
-function sameProductRows(db, storeId, productId) {
-  const key = (row) => `${String(row.title || '').trim().toUpperCase()}|${String(row.variant || '').trim().toUpperCase()}`;
-  const rows = db.prepare(`SELECT ss.store_id storeId,ss.product_id productId,p.product_title title,p.varian variant
-    FROM store_stocks ss JOIN products p ON p.id=ss.product_id`).all();
-  const source = rows.find((row) => row.storeId === storeId && row.productId === productId);
-  if (!source || key(source) === '|') return [{ storeId, productId }];
-  return rows.filter((row) => key(row) === key(source));
-}
-
-export function shareSupplierSettingsAcrossOutlets(db) {
-  ensurePurchasingSchema(db);
-  const saved = db.prepare(`SELECT s.*,(SELECT selected_supplier FROM purchasing_product_settings x WHERE x.store_id=s.store_id AND x.product_id=s.product_id) chosen
-    FROM purchasing_supplier_settings s ORDER BY updated_at`).all();
-  for (const row of saved) {
-    saveSupplierSettings(db, { storeId: row.store_id, productId: row.product_id, supplierName: row.supplier_name, leadDays: row.lead_days,
-      moq: row.moq, purchasingUnit: row.purchasing_unit, conversionQty: row.conversion_qty, baseUnit: row.base_unit, selected: row.chosen === row.supplier_name });
-  }
+    conversion_qty=excluded.conversion_qty,base_unit=excluded.base_unit,updated_at=excluded.updated_at`)
+    .run(storeId, productId, supplierName.trim(), leadDays, moq, purchasingUnit || null, conversionQty, baseUnit || null, new Date().toISOString());
 }
 
 export function savePurchasingHoliday(db, input) {

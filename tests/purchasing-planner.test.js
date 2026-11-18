@@ -85,16 +85,21 @@ test('rows expose PO-history suppliers and units, and 10-day minimum stock is se
   stock.close(); sales.close();
 });
 
-test('supplier settings are shared by product name across outlets', () => {
+test('supplier settings and selection remain independent per outlet and product', () => {
   const { stock, sales } = fixture();
   stock.prepare("INSERT INTO stores(id,name) VALUES('s2','Other')").run();
   stock.prepare("INSERT INTO products(id,product_title,varian,default_unit) SELECT 'p2',product_title,varian,default_unit FROM products WHERE id='p'").run();
+  stock.prepare("INSERT INTO store_stocks(store_id,product_id,stock_qty) VALUES('s2','p',1)").run();
   stock.prepare("INSERT INTO store_stocks(store_id,product_id,stock_qty) VALUES('s2','p2',1)").run();
-  saveSupplierSettings(stock, { storeId: 's', productId: 'p', supplierName: 'Vendor', leadDays: 3, moq: 2, purchasingUnit: 'Carton', conversionQty: 24, baseUnit: 'Can', selected: true });
-  const copy = stock.prepare("SELECT * FROM purchasing_supplier_settings WHERE store_id='s2' AND product_id='p2'").get();
-  assert.equal(copy.purchasing_unit, 'Carton');
-  assert.equal(copy.conversion_qty, 24);
-  assert.equal(stock.prepare("SELECT selected_supplier FROM purchasing_product_settings WHERE store_id='s2'").get().selected_supplier, 'Vendor');
+  saveSupplierSettings(stock, { storeId: 's2', productId: 'p', supplierName: 'Vendor B', leadDays: 5, moq: 4, purchasingUnit: 'PACK', conversionQty: 6, baseUnit: 'CAN' });
+  savePurchasingProductSettings(stock, { storeId: 's2', productId: 'p', supplier: 'Vendor B' });
+  saveSupplierSettings(stock, { storeId: 's', productId: 'p', supplierName: 'Vendor A', leadDays: 3, moq: 2, purchasingUnit: 'CARTON', conversionQty: 24, baseUnit: 'CAN', selected: true });
+  savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', supplier: 'Vendor A' });
+  assert.equal(stock.prepare("SELECT selected_supplier FROM purchasing_product_settings WHERE store_id='s2' AND product_id='p'").get().selected_supplier, 'Vendor B');
+  const other = stock.prepare("SELECT supplier_name,lead_days,purchasing_unit,conversion_qty FROM purchasing_supplier_settings WHERE store_id='s2' AND product_id='p'").get();
+  assert.deepEqual({ ...other }, { supplier_name: 'Vendor B', lead_days: 5, purchasing_unit: 'PACK', conversion_qty: 6 });
+  assert.equal(stock.prepare("SELECT COUNT(*) AS count FROM purchasing_supplier_settings WHERE store_id='s2' AND product_id='p2'").get().count, 0);
+  assert.equal(stock.prepare("SELECT COUNT(*) AS count FROM purchasing_product_settings WHERE store_id='s2' AND product_id='p2'").get().count, 0);
   stock.close(); sales.close();
 });
 

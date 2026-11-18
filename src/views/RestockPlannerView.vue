@@ -66,7 +66,6 @@ const holidayError = ref('');
 const productEdits = ref({});
 const supplierEdit = ref({});
 const manualSupplier = ref(false);
-const manualUnit = ref(false);
 const MANUAL_OPTION = '__manual__';
 const INPUT_HISTORY_LIMIT = 8;
 const inputHistory = ref({});
@@ -88,8 +87,12 @@ function rememberInputs(values) {
 const suggestionsFor = (field) => inputHistory.value[field] || [];
 const historyList = (key, saved) => [...new Set([...(data.value.historyOptions?.[key] || []), ...saved])].sort((x, y) => x.localeCompare(y));
 const supplierOptions = computed(() => historyList('suppliers', (selected.value?.suppliers || []).map((item) => item.supplierName)));
-const purchasingUnitOptions = computed(() => historyList('purchasingUnits', (selected.value?.suppliers || []).map((item) => item.purchasingUnit).filter(Boolean)));
-const baseUnitOptions = computed(() => historyList('baseUnits', (selected.value?.suppliers || []).map((item) => item.baseUnit).filter(Boolean)));
+const purchasingUnitOptions = ['BOTOL', 'CAN', 'CARTON', 'PACK', 'SLOP'];
+const baseUnitOptions = ['BOTOL', 'CAN', 'PACK'];
+const unitValue = (value, options) => {
+  const trimmed = String(value || '').trim();
+  return options.includes(trimmed.toUpperCase()) ? trimmed.toUpperCase() : trimmed;
+};
 const choiceFor = (field, manualRef, options) => computed({
   get: () => manualRef.value || (supplierEdit.value[field] && !options.value.includes(supplierEdit.value[field])) ? MANUAL_OPTION : supplierEdit.value[field] || '',
   set: (value) => {
@@ -97,15 +100,11 @@ const choiceFor = (field, manualRef, options) => computed({
     supplierEdit.value[field] = manualRef.value ? '' : value;
   },
 });
-const manualBaseUnit = ref(false);
 const supplierChoice = choiceFor('supplierName', manualSupplier, supplierOptions);
-const unitChoice = choiceFor('purchasingUnit', manualUnit, purchasingUnitOptions);
-const baseUnitChoice = choiceFor('baseUnit', manualBaseUnit, baseUnitOptions);
 const rememberProductInputs = () => rememberInputs({ minStock: productEdits.value.minStock, minStock10: productEdits.value.minStock10 });
 const rememberSupplierInputs = () => rememberInputs({
   supplierName: manualSupplier.value ? supplierEdit.value.supplierName : '', leadDays: supplierEdit.value.leadDays, moq: supplierEdit.value.moq,
-  purchasingUnit: manualUnit.value ? supplierEdit.value.purchasingUnit : '', conversionQty: supplierEdit.value.conversionQty,
-  baseUnit: manualBaseUnit.value ? supplierEdit.value.baseUnit : '',
+  conversionQty: supplierEdit.value.conversionQty,
 });
 const supplierError = ref('');
 const productMessage = ref('');
@@ -211,15 +210,13 @@ function loadProductForm(row) {
     minStock10: row.minStock10 ?? row.suggestedMinStock10 ?? '',
   };
   manualSupplier.value = false;
-  manualUnit.value = false;
-  manualBaseUnit.value = false;
   supplierEdit.value = {
     supplierName: row.supplier?.supplierName || '',
     leadDays: row.supplier?.leadDays ?? '',
     moq: row.supplier?.moq ?? '',
-    purchasingUnit: row.supplier?.purchasingUnit || row.purchasingUnit || '',
+    purchasingUnit: unitValue(row.supplier?.purchasingUnit || row.purchasingUnit, purchasingUnitOptions),
     conversionQty: row.supplier?.conversionQty || row.conversionQty || 1,
-    baseUnit: row.supplier?.baseUnit || row.baseUnit || '',
+    baseUnit: unitValue(row.supplier?.baseUnit || row.baseUnit, baseUnitOptions),
   };
   productError.value = '';
   supplierError.value = '';
@@ -238,8 +235,8 @@ watch(() => supplierEdit.value.supplierName, (name) => {
   if (!supplier) return;
   supplierEdit.value = {
     supplierName: name, leadDays: supplier.leadDays ?? '',
-    moq: supplier.moq ?? '', purchasingUnit: supplier.purchasingUnit || '',
-    conversionQty: supplier.conversionQty || 1, baseUnit: supplier.baseUnit || '',
+    moq: supplier.moq ?? '', purchasingUnit: unitValue(supplier.purchasingUnit, purchasingUnitOptions),
+    conversionQty: supplier.conversionQty || 1, baseUnit: unitValue(supplier.baseUnit, baseUnitOptions),
   };
 });
 
@@ -470,8 +467,8 @@ async function saveProductDetails() {
   const edit = supplierEdit.value;
   const supplierFieldsChanged = String(edit.leadDays ?? '') !== String(row.supplier?.leadDays ?? '') ||
     String(edit.moq ?? '') !== String(row.supplier?.moq ?? '') ||
-    (edit.purchasingUnit || '') !== (row.supplier?.purchasingUnit || row.purchasingUnit || '') ||
-    (edit.baseUnit || '') !== (row.supplier?.baseUnit || row.baseUnit || '') ||
+    (edit.purchasingUnit || '') !== unitValue(row.supplier?.purchasingUnit || row.purchasingUnit, purchasingUnitOptions) ||
+    (edit.baseUnit || '') !== unitValue(row.supplier?.baseUnit || row.baseUnit, baseUnitOptions) ||
     Number(edit.conversionQty) !== Number(row.supplier?.conversionQty || row.conversionQty || 1);
   if (!hasSupplier && supplierFieldsChanged) {
     productError.value = 'Select or enter a Supplier name to save lead time, MOQ and units — they are stored per supplier.';
@@ -845,17 +842,17 @@ onUnmounted(() => {
             <p v-if="selected.reason" class="mt-3 rounded bg-amber-50 p-3 text-sm text-amber-900">{{ selected.reason }}. System quantities are unavailable until this data issue is resolved.</p>
             <p v-if="selected.lowData" class="mt-3 text-sm text-amber-800">Low data: some weekdays or historical days are missing; review the demand estimate.</p>
             <p v-if="selected.holidayConflict" class="mt-2 text-sm text-red-700">Overlapping holiday adjustments are not combined. Set the same explicit combined group for overlapping occasions before using the affected forecast.</p>
-            <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Pick a supplier and unit from purchase order history (or enter them manually). Minimum stock defaults to the system recommendation for that coverage and can be edited; clear it to return to automatic. Use Save product details to save everything. Inputs you type are remembered as suggestions. MOQ is configured per product and outlet.</p><fieldset :disabled="productSaving" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 disabled:opacity-50">
+            <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Choose a supplier from purchase order history or enter one manually, and select the units. Settings are saved for this product and outlet only. Minimum stock defaults to the system recommendation for that coverage and can be edited; clear it to return to automatic. Use Save product details to save everything. Inputs you type are remembered as suggestions.</p><fieldset :disabled="productSaving" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 disabled:opacity-50">
               <label class="text-xs font-semibold">Movement classification<select v-model="productEdits.movement" class="mt-1 block w-full rounded border p-2"><option value="">Automatic ({{ selected.movement }})</option><option>Fast Moving</option><option>Slow Moving</option></select></label>
               <label class="text-xs font-semibold">Minimum stock · 7-day (default = recommendation)<input v-model="productEdits.minStock" list="hist-minStock" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Minimum stock · 10-day (default = recommendation)<input v-model="productEdits.minStock10" list="hist-minStock10" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Supplier name<select v-model="supplierChoice" class="mt-1 block w-full rounded border p-2"><option value="">Select supplier…</option><option v-for="name in supplierOptions" :key="name" :value="name">{{ name }}</option><option :value="MANUAL_OPTION">Enter manually…</option></select><input v-if="supplierChoice === MANUAL_OPTION" v-model.trim="supplierEdit.supplierName" list="hist-supplierName" maxlength="200" placeholder="Type supplier name" class="mt-2 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Supplier lead time (days)<input v-model="supplierEdit.leadDays" list="hist-leadDays" type="number" min="1" max="365" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Minimum order quantity (supplier units)<input v-model="supplierEdit.moq" list="hist-moq" type="number" min="0" step="any" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Purchasing unit<select v-model="unitChoice" class="mt-1 block w-full rounded border p-2"><option value="">Select unit…</option><option v-for="unit in purchasingUnitOptions" :key="unit" :value="unit">{{ unit }}</option><option :value="MANUAL_OPTION">Enter manually…</option></select><input v-if="unitChoice === MANUAL_OPTION" v-model.trim="supplierEdit.purchasingUnit" list="hist-purchasingUnit" maxlength="80" placeholder="Carton, pack, piece…" class="mt-2 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Purchasing unit<select v-model="supplierEdit.purchasingUnit" class="mt-1 block w-full rounded border p-2"><option value="">Select unit…</option><option v-if="supplierEdit.purchasingUnit && !purchasingUnitOptions.includes(supplierEdit.purchasingUnit)" :value="supplierEdit.purchasingUnit" disabled>Current: {{ supplierEdit.purchasingUnit }} (not in list)</option><option v-for="unit in purchasingUnitOptions" :key="unit" :value="unit">{{ unit }}</option></select></label>
               <label class="text-xs font-semibold">Base units per purchasing unit<input v-model="supplierEdit.conversionQty" list="hist-conversionQty" type="number" min="0.0001" step="any" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Base unit<select v-model="baseUnitChoice" class="mt-1 block w-full rounded border p-2"><option value="">Select base unit…</option><option v-for="unit in baseUnitOptions" :key="unit" :value="unit">{{ unit }}</option><option :value="MANUAL_OPTION">Enter manually…</option></select><input v-if="baseUnitChoice === MANUAL_OPTION" v-model.trim="supplierEdit.baseUnit" list="hist-baseUnit" maxlength="80" placeholder="Can, bottle, piece…" class="mt-2 block w-full rounded border p-2"></label>
-              <datalist v-for="field in ['minStock','minStock10','supplierName','leadDays','moq','purchasingUnit','conversionQty','baseUnit']" :id="`hist-${field}`" :key="field"><option v-for="value in suggestionsFor(field)" :key="value" :value="value" /></datalist>
+              <label class="text-xs font-semibold">Base unit<select v-model="supplierEdit.baseUnit" class="mt-1 block w-full rounded border p-2"><option value="">Select base unit…</option><option v-if="supplierEdit.baseUnit && !baseUnitOptions.includes(supplierEdit.baseUnit)" :value="supplierEdit.baseUnit" disabled>Current: {{ supplierEdit.baseUnit }} (not in list)</option><option v-for="unit in baseUnitOptions" :key="unit" :value="unit">{{ unit }}</option></select></label>
+              <datalist v-for="field in ['minStock','minStock10','supplierName','leadDays','moq','conversionQty']" :id="`hist-${field}`" :key="field"><option v-for="value in suggestionsFor(field)" :key="value" :value="value" /></datalist>
             </fieldset><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p>
               <div class="mt-3 flex flex-wrap gap-2"><button :disabled="productSaving" class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50" @click="saveProductDetails">{{ productSaving ? 'Saving…' : 'Save product details' }}</button></div><p v-if="productError" role="alert" class="mt-2 text-xs text-red-700">{{ productError }}</p><p v-if="productMessage" role="status" class="mt-2 text-xs text-green-700">{{ productMessage }}</p>
             </section>
