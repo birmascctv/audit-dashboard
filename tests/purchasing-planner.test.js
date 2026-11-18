@@ -5,6 +5,35 @@ import {
   DEFAULT_PURCHASING_SETTINGS, getPurchasingPlanner,
   savePurchasingProductSettings, savePurchasingSettings, saveSupplierSettings,
 } from '../purchasingPlanner.js';
+import { normalizePurchasingPreferences, summarizeOutletSync } from '../src/utils/purchasingPreferences.js';
+
+test('saved purchasing preferences restore valid filters and reject invalid dates and options', () => {
+  const saved = normalizePurchasingPreferences({
+    store: 's', status: 'needs-order', movement: 'Fast Moving', search: 'IPA',
+    coverage: 'both', sort: 'product', historyStart: '2026-01-01', historyEnd: '2026-01-25',
+  }, '2026-01-30');
+  assert.deepEqual(saved.range, { historyStart: '2026-01-01', historyEnd: '2026-01-25' });
+  assert.equal(saved.coverage, 'both');
+  assert.equal(saved.store, 's');
+  const invalid = normalizePurchasingPreferences({ coverage: '20', status: 'bad', historyStart: '2026-02-31', historyEnd: '2026-03-01' }, '2026-03-01');
+  assert.equal(invalid.coverage, '7');
+  assert.equal(invalid.status, 'all');
+  assert.equal(invalid.range, null);
+});
+
+test('outlet sync ages identify missing, future, and older product observations', () => {
+  const now = Date.parse('2026-01-30T12:00:00Z');
+  const summary = summarizeOutletSync([
+    { lastSynced: '2026-01-30T11:50:00Z' },
+    { lastSynced: '2026-01-28T12:00:00Z' },
+    { lastSynced: null },
+    { lastSynced: '2026-02-01T00:00:00Z' },
+  ], now);
+  assert.equal(summary.latestAge, '10 min ago');
+  assert.equal(summary.oldestAge, '2 days ago');
+  assert.equal(summary.missing, 2);
+  assert.equal(summarizeOutletSync([], now).latestAge, 'Unavailable');
+});
 
 function fixture() {
   const stock = new DatabaseSync(':memory:');
