@@ -406,7 +406,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       const demand = forecast.slice(0, horizon);
       if (demand.length < horizon || demand.some((day) => day.qty == null || day.conflict)) return null;
       const orderUpTo = demand.reduce((sum, day) => sum + day.qty, 0);
-      const configuredMinimum = coverageDays === 10 && preferences.min_stock_10 != null ? preferences.min_stock_10 : preferences.min_stock;
+      const configuredMinimum = coverageDays === 10 ? preferences.min_stock_10 : preferences.min_stock;
       const minimumStock = configuredMinimum == null ? 0 : Number(configuredMinimum);
       const targetStock = Math.max(orderUpTo, minimumStock);
       const rawBaseQty = Math.max(0, targetStock - stockAtReview);
@@ -460,12 +460,14 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       daysLeft, expectedStockoutDate, recommendedReorderDate,
       movement, movementManual: !!preferences.movement_override, lowData: eligible.length < 28 || weekdayAverages.some((value) => value == null),
       usableDays: eligible.length, historyWeeks: settings.historyWeeks,
-      minStock: preferences.min_stock ?? null, minStock10: preferences.min_stock_10 ?? preferences.min_stock ?? null, leadDays,
+      minStock: preferences.min_stock ?? null, minStock10: preferences.min_stock_10 ?? null, leadDays,
       belowMinStock: preferences.min_stock != null && stockAtReview != null && stockAtReview < Number(preferences.min_stock),
       movementOverride: preferences.movement_override || null, selectedSupplier: selectedSupplierName,
       supplier, suppliers, purchasingUnit: purchaseUnit,
       historySuppliers: orderHistory ? [...orderHistory.suppliers.values()] : [],
       historyUnits: orderHistory ? [...orderHistory.units.values()] : [], baseUnit, conversionQty,
+      suggestedMinStock7: recommendation7 ? Math.ceil(recommendation7.forecastOrderUpTo) : null,
+      suggestedMinStock10: recommendation10 ? Math.ceil(recommendation10.forecastOrderUpTo) : null,
       holidayEvents, holidayConflict, forecast, recommendation7, recommendation10,
       maximumProjectedStock7, maximumProjectedStock10,
       holidayReference,

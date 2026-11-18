@@ -199,8 +199,8 @@ watch(selected, (row) => {
   if (!row) return;
   productEdits.value = {
     movement: row.movementOverride || '',
-    minStock: row.minStock ?? '',
-    minStock10: row.minStock10 ?? '',
+    minStock: row.minStock ?? row.suggestedMinStock7 ?? '',
+    minStock10: row.minStock10 ?? row.suggestedMinStock10 ?? '',
   };
   manualSupplier.value = false;
   manualUnit.value = false;
@@ -435,53 +435,44 @@ async function purchaseImported() {
   await refresh();
 }
 
-async function saveProductEdits() {
+const minStockPayload = (value, suggested) => value === '' || value == null || Number(value) === suggested ? null : Number(value);
+
+async function saveProductDetails() {
   if (!selected.value) return;
+  productError.value = '';
+  supplierError.value = '';
+  const row = selected.value;
+  const hasSupplier = !!String(supplierEdit.value.supplierName || '').trim();
+  const product = {
+    storeId: row.storeId, productId: row.productId,
+    minStock: minStockPayload(productEdits.value.minStock, row.suggestedMinStock7),
+    minStock10: minStockPayload(productEdits.value.minStock10, row.suggestedMinStock10),
+    movement: productEdits.value.movement || null,
+    supplier: hasSupplier ? supplierEdit.value.supplierName : row.selectedSupplier || null,
+  };
   try {
+    if (hasSupplier) {
+      await authFetchJson('/api/purchasing/supplier', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          storeId: row.storeId, productId: row.productId,
+          supplierName: supplierEdit.value.supplierName,
+          leadDays: supplierEdit.value.leadDays === '' ? null : Number(supplierEdit.value.leadDays),
+          moq: supplierEdit.value.moq === '' ? null : Number(supplierEdit.value.moq),
+          purchasingUnit: supplierEdit.value.purchasingUnit,
+          conversionQty: Number(supplierEdit.value.conversionQty),
+          baseUnit: supplierEdit.value.baseUnit,
+          selected: true,
+        }),
+      });
+      rememberSupplierInputs();
+    }
     await authFetchJson('/api/purchasing/product-settings', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        storeId: selected.value.storeId, productId: selected.value.productId,
-        minStock: productEdits.value.minStock === '' ? null : Number(productEdits.value.minStock),
-        minStock10: productEdits.value.minStock10 === '' ? null : Number(productEdits.value.minStock10),
-        movement: productEdits.value.movement || null,
-        supplier: selected.value.selectedSupplier || null,
-      }),
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(product),
     });
     rememberProductInputs();
     await loadPurchasing();
   } catch (err) { productError.value = err.message; }
-}
-
-async function saveSupplier() {
-  if (!selected.value) return;
-  try {
-    await authFetchJson('/api/purchasing/supplier', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        storeId: selected.value.storeId, productId: selected.value.productId,
-        supplierName: supplierEdit.value.supplierName,
-        leadDays: supplierEdit.value.leadDays === '' ? null : Number(supplierEdit.value.leadDays),
-        moq: supplierEdit.value.moq === '' ? null : Number(supplierEdit.value.moq),
-        purchasingUnit: supplierEdit.value.purchasingUnit,
-        conversionQty: Number(supplierEdit.value.conversionQty),
-        baseUnit: supplierEdit.value.baseUnit,
-        selected: true,
-      }),
-    });
-    await authFetchJson('/api/purchasing/product-settings', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        storeId: selected.value.storeId, productId: selected.value.productId,
-        minStock: productEdits.value.minStock === '' ? null : Number(productEdits.value.minStock),
-        minStock10: productEdits.value.minStock10 === '' ? null : Number(productEdits.value.minStock10),
-        movement: productEdits.value.movement || null, supplier: supplierEdit.value.supplierName,
-      }),
-    });
-    rememberSupplierInputs();
-    rememberProductInputs();
-    await loadPurchasing();
-  } catch (err) { supplierError.value = err.message; }
 }
 
 async function saveSettings() {
@@ -803,10 +794,10 @@ onUnmounted(() => { clearInterval(clockTimer); });
             <p v-if="selected.reason" class="mt-3 rounded bg-amber-50 p-3 text-sm text-amber-900">{{ selected.reason }}. System quantities are unavailable until this data issue is resolved.</p>
             <p v-if="selected.lowData" class="mt-3 text-sm text-amber-800">Low data: some weekdays or historical days are missing; review the demand estimate.</p>
             <p v-if="selected.holidayConflict" class="mt-2 text-sm text-red-700">Overlapping holiday adjustments are not combined. Set the same explicit combined group for overlapping occasions before using the affected forecast.</p>
-            <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Pick a supplier and unit from purchase order history (or enter them manually). Use Save supplier settings &amp; select for supplier, lead time, MOQ and units; Save product settings only saves movement and minimum stock. Inputs you type are remembered as suggestions. MOQ is configured per product and outlet.</p><div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Pick a supplier and unit from purchase order history (or enter them manually). Minimum stock defaults to the system recommendation for that coverage and can be edited; clear it to return to automatic. Use Save product details to save everything. Inputs you type are remembered as suggestions. MOQ is configured per product and outlet.</p><div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label class="text-xs font-semibold">Movement classification<select v-model="productEdits.movement" class="mt-1 block w-full rounded border p-2"><option value="">Automatic ({{ selected.movement }})</option><option>Fast Moving</option><option>Slow Moving</option></select></label>
-              <label class="text-xs font-semibold">Minimum stock · 7-day coverage<input v-model="productEdits.minStock" list="hist-minStock" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Minimum stock · 10-day coverage<input v-model="productEdits.minStock10" list="hist-minStock10" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Minimum stock · 7-day (default = recommendation)<input v-model="productEdits.minStock" list="hist-minStock" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Minimum stock · 10-day (default = recommendation)<input v-model="productEdits.minStock10" list="hist-minStock10" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Supplier name<select v-model="supplierChoice" class="mt-1 block w-full rounded border p-2"><option value="">Select supplier…</option><option v-for="name in supplierOptions" :key="name" :value="name">{{ name }}</option><option :value="MANUAL_OPTION">Enter manually…</option></select><input v-if="supplierChoice === MANUAL_OPTION" v-model.trim="supplierEdit.supplierName" list="hist-supplierName" maxlength="200" placeholder="Type supplier name" class="mt-2 block w-full rounded border p-2"><span v-if="!supplierOptions.length" class="mt-1 block text-[10px] font-normal text-slate-500">No supplier found in purchase order history for this product.</span></label>
               <label class="text-xs font-semibold">Supplier lead time (days)<input v-model="supplierEdit.leadDays" list="hist-leadDays" type="number" min="1" max="365" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Minimum order quantity (supplier units)<input v-model="supplierEdit.moq" list="hist-moq" type="number" min="0" step="any" class="mt-1 block w-full rounded border p-2"></label>
@@ -815,7 +806,7 @@ onUnmounted(() => { clearInterval(clockTimer); });
               <label class="text-xs font-semibold">Base unit<input v-model.trim="supplierEdit.baseUnit" list="hist-baseUnit" maxlength="80" placeholder="Can, bottle, piece…" class="mt-1 block w-full rounded border p-2"></label>
               <datalist v-for="field in ['minStock','minStock10','supplierName','leadDays','moq','purchasingUnit','conversionQty','baseUnit']" :id="`hist-${field}`" :key="field"><option v-for="value in suggestionsFor(field)" :key="value" :value="value" /></datalist>
             </div><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p>
-              <div class="mt-3 flex flex-wrap gap-2"><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="saveProductEdits">Save product settings</button><button class="rounded border px-3 py-2 text-xs font-bold" @click="saveSupplier">Save supplier settings & select</button></div><p v-if="productError || supplierError" role="alert" class="mt-2 text-xs text-red-700">{{ productError || supplierError }}</p>
+              <div class="mt-3 flex flex-wrap gap-2"><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="saveProductDetails">Save product details</button></div><p v-if="productError" role="alert" class="mt-2 text-xs text-red-700">{{ productError }}</p>
             </section>
             <div v-if="selected.forecast && selected.history" class="mt-4 h-72"><Line :data="detailChart" :options="{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{mode:'index',intersect:false}},scales:{sales:{position:'left',beginAtZero:true,title:{display:true,text:'Sales / day'}},stock:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'Stock'}}}}" /></div>
             <p class="mt-2 text-xs text-slate-500">Hover over a date to see all available values. Projected stock starts with Monday stock and subtracts forecast sales each day, assuming no deliveries or transfers; it is not confirmed stock. Snapshot days with observed zero stock are excluded from normal demand; they are observations, not proof of a full-day stockout.</p>
