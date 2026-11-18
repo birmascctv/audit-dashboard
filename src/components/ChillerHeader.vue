@@ -16,6 +16,10 @@ defineProps({
     type: Boolean,
     default: false,
   },
+  desktopNavigation: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 defineEmits(['toggleNavigation']);
@@ -93,7 +97,7 @@ onUnmounted(() => {
     <div class="max-w-[1560px] mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
       <div class="flex items-center justify-between gap-2">
         <div class="flex min-w-0 items-center gap-3">
-          <button id="sidebar-toggle" type="button" class="rounded-lg border p-2 text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500" :aria-label="sidebarOpen ? 'Hide navigation' : 'Show navigation'" aria-controls="main-sidebar" :aria-expanded="sidebarOpen" @click="$emit('toggleNavigation')"><Menu class="h-5 w-5" /></button>
+          <button id="sidebar-toggle" type="button" class="rounded-lg border p-2 text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500" :aria-label="desktopNavigation ? (sidebarOpen ? 'Collapse navigation' : 'Expand navigation') : (sidebarOpen ? 'Hide navigation' : 'Show navigation')" aria-controls="main-sidebar" :aria-expanded="sidebarOpen" @click="$emit('toggleNavigation')"><Menu class="h-5 w-5" /></button>
           <router-link :to="isAdmin ? '/sales' : '/store-audit'" class="flex min-w-0 items-center gap-2.5 group">
             <div class="w-9 h-9 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform p-0.5 shrink-0">
               <img src="/birmas_logo.png" alt="Birmas Logo" class="w-full h-full object-contain" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />

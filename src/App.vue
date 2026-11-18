@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from './composables/useAuth.js';
 import { isSessionExpired, SESSION_MAX_AGE_MS } from './services/authFetch.js';
 import { useToast } from './composables/useToast.js';
+import { CalendarDays, ClipboardCheck, ClipboardList, ShoppingCart, TrendingUp, UploadCloud } from 'lucide-vue-next';
 import ToastHost from './components/ToastHost.vue';
 import ChillerHeader from './components/ChillerHeader.vue';
 
@@ -41,13 +42,13 @@ const pageNames = {
 };
 const crumbs = computed(() => pageNames[route.path] || []);
 const navItems = computed(() => [
-  canAccessStoreAudit.value && { to: '/store-audit', label: 'Store Audit 2026' },
-  canAccessStoreAudit.value && { to: '/store-audit2025', label: 'Store Audit 2025' },
-  canAccessUploadAudits.value && { to: '/upload-audits', label: 'Upload Audits' },
-  canAccessStockAudit.value && { to: canAccessCrewPage.value && currentUser.value?.role === 'crew' ? '/stock-audit-crew' : '/stock-audit', label: 'Stock Audit' },
-  canAccessAuditRecords.value && { to: '/audit-records', label: 'Audit Records' },
-  canAccessSalesReport.value && { to: '/sales', label: 'Sales Report' },
-  canAccessRestockPlanner.value && { to: '/purchasing', label: 'Purchasing' },
+  canAccessStoreAudit.value && { to: '/store-audit', label: 'Store Audit 2026', icon: CalendarDays, year: '26' },
+  canAccessStoreAudit.value && { to: '/store-audit2025', label: 'Store Audit 2025', icon: CalendarDays, year: '25' },
+  canAccessUploadAudits.value && { to: '/upload-audits', label: 'Upload Audits', icon: UploadCloud },
+  canAccessStockAudit.value && { to: canAccessCrewPage.value && currentUser.value?.role === 'crew' ? '/stock-audit-crew' : '/stock-audit', label: 'Stock Audit', icon: ClipboardCheck },
+  canAccessAuditRecords.value && { to: '/audit-records', label: 'Audit Records', icon: ClipboardList },
+  canAccessSalesReport.value && { to: '/sales', label: 'Sales Report', icon: TrendingUp },
+  canAccessRestockPlanner.value && { to: '/purchasing', label: 'Purchasing', icon: ShoppingCart },
 ].filter(Boolean));
 watch(() => route.fullPath, (path, previous) => {
   if (path === '/login' || !desktopNavigation.value) sidebarOpen.value = false;
@@ -98,16 +99,22 @@ onUnmounted(() => {
 <template>
   <div class="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans selection:bg-teal-500 selection:text-white">
     <!-- Header (shown on all pages except login) -->
-    <ChillerHeader v-if="route.path !== '/login'" :sidebar-open="sidebarOpen" @toggle-navigation="sidebarOpen = !sidebarOpen" />
+    <ChillerHeader v-if="route.path !== '/login'" :sidebar-open="sidebarOpen" :desktop-navigation="desktopNavigation" @toggle-navigation="sidebarOpen = !sidebarOpen" />
 
     <div class="flex flex-1 min-w-0">
     <button v-if="sidebarOpen && route.path !== '/login'" type="button" class="fixed inset-0 z-50 bg-slate-950/50 lg:hidden" aria-label="Close navigation" @click="closeSidebar(true)"></button>
-    <aside v-if="route.path !== '/login'" id="main-sidebar" class="fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] overflow-hidden bg-white shadow-xl transition-[width,transform,visibility] duration-200 lg:sticky lg:top-16 lg:z-0 lg:h-[calc(100vh-4rem)] lg:max-w-none lg:shrink-0 lg:shadow-none" :class="sidebarOpen ? 'visible translate-x-0 lg:w-56 lg:border-r lg:border-slate-200' : 'invisible -translate-x-full lg:w-0 lg:translate-x-0'" :inert="!sidebarOpen" :aria-hidden="!sidebarOpen">
-      <div class="h-full w-64 max-w-[85vw] overflow-y-auto p-4 lg:w-56 lg:max-w-none">
-      <div class="mb-4 flex items-center justify-between"><span class="text-xs font-bold uppercase tracking-wider text-slate-500">Navigation</span><button class="rounded border px-3 py-1 text-sm" type="button" @click="closeSidebar(true)">Close</button></div>
-      <nav class="space-y-1" aria-label="Main navigation">
-        <router-link v-for="n in navItems" :key="n.to" :to="n.to" class="block rounded-lg px-3 py-3 text-sm font-bold focus-visible:outline-2 focus-visible:outline-teal-600" :class="route.path === n.to || (n.to === '/sales' && route.path.startsWith('/sales/')) ? 'bg-teal-700 text-white' : 'text-slate-700 hover:bg-slate-100'" :aria-current="route.path === n.to ? 'page' : undefined" @click="!desktopNavigation && closeSidebar()">{{ n.label }}</router-link>
-      </nav>
+    <aside v-if="route.path !== '/login'" id="main-sidebar" class="fixed inset-y-0 left-0 z-50 w-64 max-w-[85vw] overflow-hidden border-r border-gray-300 bg-gray-100 text-gray-700 shadow-xl transition-[width,transform,visibility] duration-200 lg:sticky lg:top-16 lg:z-0 lg:h-[calc(100vh-4rem)] lg:max-w-none lg:shrink-0 lg:shadow-none" :class="sidebarOpen ? 'visible translate-x-0 lg:w-56' : 'invisible -translate-x-full lg:visible lg:w-[72px] lg:translate-x-0'" :inert="!sidebarOpen && !desktopNavigation" :aria-hidden="!sidebarOpen && !desktopNavigation">
+      <div class="flex h-full flex-col overflow-y-auto px-2 py-4">
+        <div v-if="sidebarOpen" class="mb-3 flex items-center justify-between px-3">
+          <span class="text-xs font-bold uppercase tracking-wider text-gray-500">Navigation</span>
+          <button type="button" class="rounded-md px-2 py-1 text-sm font-semibold hover:bg-gray-200 focus-visible:outline-2 focus-visible:outline-teal-600" :aria-label="desktopNavigation ? 'Collapse navigation' : 'Close navigation'" @click="closeSidebar(true)">{{ desktopNavigation ? 'Collapse' : 'Close' }}</button>
+        </div>
+        <nav class="space-y-1 border-t border-gray-300 pt-2" aria-label="Main navigation">
+          <router-link v-for="n in navItems" :key="n.to" :to="n.to" class="flex min-h-12 items-center gap-3 rounded-lg px-3 text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-teal-600" :class="[route.path === n.to || (n.to === '/sales' && route.path.startsWith('/sales/')) ? 'bg-gray-300 text-gray-900' : 'text-gray-700 hover:bg-gray-200 hover:text-gray-900', !sidebarOpen && desktopNavigation ? 'justify-center px-1' : '']" :aria-label="n.label" :title="!sidebarOpen && desktopNavigation ? n.label : undefined" :aria-current="route.path === n.to || (n.to === '/sales' && route.path.startsWith('/sales/')) ? 'page' : undefined" @click="!desktopNavigation && closeSidebar()">
+            <span class="relative flex h-6 w-6 shrink-0 items-center justify-center" aria-hidden="true"><component :is="n.icon" class="h-5 w-5" /><span v-if="n.year && !sidebarOpen && desktopNavigation" class="absolute -bottom-1 -right-2 rounded bg-gray-100 px-0.5 text-[9px] font-bold leading-none">{{ n.year }}</span></span>
+            <span v-if="sidebarOpen || !desktopNavigation" class="min-w-0">{{ n.label }}</span>
+          </router-link>
+        </nav>
       </div>
     </aside>
     <div class="flex min-w-0 flex-1 flex-col">
