@@ -3,6 +3,8 @@ import { ensurePurchasingSchema, isExcludedPurchasingCategory, calculateHolidayW
 const DAY_MS = 86400000;
 const pair = (a, b) => JSON.stringify([a, b]);
 const cleanName = (value) => String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+const supplierArea = (storeId) => ['birmas-kuningan', 'birmas-kwitang', 'birmas-sudirman'].includes(storeId) ? 'jakarta' : null;
+const supplierProductKey = (name, variant) => cleanName(name) ? pair(cleanName(name), cleanName(variant)) : '';
 const addDays = (date, days) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 const dayOfWeek = (date) => new Date(`${date}T00:00:00Z`).getUTCDay();
 const daysBetween = (start, end) => Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / DAY_MS);
@@ -43,6 +45,25 @@ export function savePurchasingSettings(db, input) {
   return settings;
 }
 
+function areaSupplierDefaults(db) {
+  const defaults = new Map(db.prepare('SELECT area,product_key,supplier_name FROM purchasing_area_supplier_defaults').all()
+    .map((row) => [pair(row.area, row.product_key), row.supplier_name]));
+  const existing = db.prepare(`SELECT ps.store_id, ps.selected_supplier, p.product_title, p.varian
+    FROM purchasing_product_settings ps JOIN products p ON p.id=ps.product_id
+    LEFT JOIN purchasing_supplier_settings ss ON ss.store_id=ps.store_id AND ss.product_id=ps.product_id
+      AND ss.supplier_name=ps.selected_supplier
+    WHERE ps.selected_supplier IS NOT NULL AND TRIM(ps.selected_supplier)<>''
+    ORDER BY ss.updated_at IS NULL, ss.updated_at, ps.store_id, ps.product_id`).all();
+  for (const row of existing) {
+    const area = supplierArea(row.store_id);
+    const productKey = supplierProductKey(row.product_title, row.varian);
+    if (area && productKey && !defaults.has(pair(area, productKey))) {
+      defaults.set(pair(area, productKey), row.selected_supplier);
+    }
+  }
+  return defaults;
+}
+
 export function savePurchasingProductSettings(db, { storeId, productId, minStock, minStock10, leadDays, movement, supplier }) {
   ensurePurchasingSchema(db);
   if (typeof storeId !== 'string' || typeof productId !== 'string' || !storeId || !productId ||
@@ -54,6 +75,16 @@ export function savePurchasingProductSettings(db, { storeId, productId, minStock
     throw new Error('Provide valid product purchasing settings.');
   }
   if (!db.prepare('SELECT 1 FROM store_stocks WHERE store_id=? AND product_id=?').get(storeId, productId)) throw new Error('Product and outlet not found.');
+  const area = supplierArea(storeId);
+  if (area && typeof supplier === 'string' && supplier.trim()) {
+    const product = db.prepare('SELECT product_title,varian FROM products WHERE id=?').get(productId);
+    const productKey = supplierProductKey(product?.product_title, product?.varian);
+    if (productKey) {
+      const defaultSupplier = areaSupplierDefaults(db).get(pair(area, productKey)) || supplier.trim();
+      db.prepare('INSERT OR IGNORE INTO purchasing_area_supplier_defaults(area,product_key,supplier_name) VALUES(?,?,?)')
+        .run(area, productKey, defaultSupplier);
+    }
+  }
   const current = db.prepare('SELECT * FROM purchasing_product_settings WHERE store_id=? AND product_id=?').get(storeId, productId) || {};
   const next = {
     minStock: minStock === undefined ? current.min_stock ?? null : minStock,
@@ -262,6 +293,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
   })).sort((a, b) => a.store.localeCompare(b.store) || a.salesName.localeCompare(b.salesName));
   const productSettings = new Map(stockDb.prepare('SELECT * FROM purchasing_product_settings').all()
     .map((row) => [pair(row.store_id, row.product_id), row]));
+  const areaDefaults = areaSupplierDefaults(stockDb);
   const holidayWindows = holidays.map((event) => ({ start: event.window_start, end: event.window_end }));
   const validHolidays = holidays.filter((event) => event.end_date < today);
   const holidayAnalysis = [];
@@ -379,8 +411,13 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
         supplierName: saved.supplier_name, leadDays: saved.lead_days, moq: saved.moq, purchasingUnit: saved.purchasing_unit,
         conversionQty: saved.conversion_qty, baseUnit: saved.base_unit, configured: true,
       }));
-    const selectedSupplierName = preferences.selected_supplier || '';
-    const supplier = suppliers.find((item) => item.supplierName === selectedSupplierName) || null;
+    const defaultSupplier = areaDefaults.get(pair(supplierArea(stock.storeId), supplierProductKey(stock.productName, stock.productVariant)));
+    const selectedSupplierName = preferences.selected_supplier || defaultSupplier || '';
+    let supplier = suppliers.find((item) => item.supplierName === selectedSupplierName) || null;
+    if (!supplier && selectedSupplierName && !preferences.selected_supplier) {
+      supplier = { supplierName: selectedSupplierName, leadDays: null, moq: null, purchasingUnit: null, conversionQty: 1, baseUnit: null, configured: false };
+      suppliers.push(supplier);
+    }
     const leadDays = supplier?.leadDays ?? settings.defaultLeadDays;
     const conversionQty = supplier?.conversionQty || 1;
     const purchaseUnit = supplier?.purchasingUnit || stock.default_unit || 'Piece';

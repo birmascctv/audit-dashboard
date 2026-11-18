@@ -142,6 +142,58 @@ test('supplier settings and selection remain independent per outlet and product'
   stock.close(); sales.close();
 });
 
+test('Jakarta supplier defaults apply to matching products without overwriting outlet overrides', () => {
+  const { stock, sales } = fixture();
+  stock.exec(`
+    INSERT INTO stores VALUES ('birmas-kuningan','Kuningan'),('birmas-kwitang','Kwitang'),
+      ('birmas-sudirman','Sudirman'),('birmas-nomadic','Nomadic');
+    INSERT INTO products VALUES ('p2','Product','Product variant','BEER','SKU-2','Can');
+    INSERT INTO products VALUES ('p3','Product','Different variant','BEER','SKU-3','Can');
+    INSERT INTO store_stocks VALUES ('birmas-kuningan','p',5,5,'2026-01-30T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('birmas-kwitang','p',5,5,'2026-01-30T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('birmas-sudirman','p2',5,5,'2026-01-30T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('birmas-sudirman','p3',5,5,'2026-01-30T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('birmas-nomadic','p',5,5,'2026-01-30T12:00:00Z');
+  `);
+  const save = (storeId, productId, supplierName, leadDays) => {
+    saveSupplierSettings(stock, { storeId, productId, supplierName, leadDays });
+    savePurchasingProductSettings(stock, { storeId, productId, supplier: supplierName });
+  };
+  const getRow = (storeId, productId) => getPurchasingPlanner(stock, sales, () => null, '2026-01-30').rows
+    .find((row) => row.storeId === storeId && row.productId === productId);
+  save('birmas-kuningan', 'p', 'Jakarta supplier', 5);
+  assert.equal(getRow('birmas-kwitang', 'p').supplier.supplierName, 'Jakarta supplier');
+  assert.equal(getRow('birmas-kwitang', 'p').supplier.leadDays, null);
+  assert.equal(getRow('birmas-sudirman', 'p2').selectedSupplier, 'Jakarta supplier');
+  assert.equal(getRow('birmas-sudirman', 'p3').supplier, null);
+  assert.equal(getRow('birmas-nomadic', 'p').supplier, null);
+  save('birmas-kwitang', 'p', 'Local supplier', 3);
+  save('birmas-kuningan', 'p', 'Changed supplier', 2);
+  assert.equal(getRow('birmas-kwitang', 'p').supplier.supplierName, 'Local supplier');
+  assert.equal(getRow('birmas-kwitang', 'p').supplier.leadDays, 3);
+  assert.equal(getRow('birmas-sudirman', 'p2').selectedSupplier, 'Jakarta supplier');
+  assert.equal(getRow('birmas-kuningan', 'p').selectedSupplier, 'Changed supplier');
+  stock.close(); sales.close();
+});
+
+test('existing Jakarta supplier is used as the default without overwriting saved suppliers', () => {
+  const { stock, sales } = fixture();
+  stock.exec(`
+    INSERT INTO stores VALUES ('birmas-kuningan','Kuningan'),('birmas-kwitang','Kwitang'),('birmas-sudirman','Sudirman');
+    INSERT INTO store_stocks VALUES ('birmas-kuningan','p',5,5,'2026-01-30T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('birmas-kwitang','p',5,5,'2026-01-30T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('birmas-sudirman','p',5,5,'2026-01-30T12:00:00Z');
+  `);
+  getPurchasingPlanner(stock, sales, () => null, '2026-01-30');
+  stock.prepare("INSERT INTO purchasing_product_settings(store_id,product_id,selected_supplier) VALUES('birmas-kuningan','p','Original')").run();
+  saveSupplierSettings(stock, { storeId: 'birmas-kwitang', productId: 'p', supplierName: 'Override' });
+  savePurchasingProductSettings(stock, { storeId: 'birmas-kwitang', productId: 'p', supplier: 'Override' });
+  const rows = getPurchasingPlanner(stock, sales, () => null, '2026-01-30').rows;
+  assert.equal(rows.find((row) => row.storeId === 'birmas-sudirman').selectedSupplier, 'Original');
+  assert.equal(rows.find((row) => row.storeId === 'birmas-kwitang').selectedSupplier, 'Override');
+  stock.close(); sales.close();
+});
+
 test('purchasing settings persist and validate the 8-week movement threshold', () => {
   const { stock, sales } = fixture();
   assert.deepEqual(savePurchasingSettings(stock, { ...DEFAULT_PURCHASING_SETTINGS, fastMovingThreshold: 14 }), DEFAULT_PURCHASING_SETTINGS);

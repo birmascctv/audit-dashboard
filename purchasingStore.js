@@ -83,6 +83,10 @@ export function ensurePurchasingSchema(db) {
       base_unit TEXT, updated_at TEXT NOT NULL,
       PRIMARY KEY (store_id, product_id, supplier_name)
     );
+    CREATE TABLE IF NOT EXISTS purchasing_area_supplier_defaults (
+      area TEXT NOT NULL, product_key TEXT NOT NULL, supplier_name TEXT NOT NULL,
+      PRIMARY KEY (area, product_key)
+    );
     CREATE TABLE IF NOT EXISTS purchasing_qty_overrides (
       store_id TEXT NOT NULL, product_id TEXT NOT NULL, review_date TEXT NOT NULL,
       supplier_name TEXT NOT NULL DEFAULT '', coverage_days INTEGER NOT NULL,

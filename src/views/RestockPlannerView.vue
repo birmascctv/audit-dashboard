@@ -235,8 +235,8 @@ watch(() => supplierEdit.value.supplierName, (name) => {
   if (!supplier) return;
   supplierEdit.value = {
     supplierName: name, leadDays: supplier.leadDays ?? '',
-    moq: supplier.moq ?? '', purchasingUnit: unitValue(supplier.purchasingUnit, purchasingUnitOptions),
-    conversionQty: supplier.conversionQty || 1, baseUnit: unitValue(supplier.baseUnit, baseUnitOptions),
+    moq: supplier.moq ?? '', purchasingUnit: unitValue(supplier.purchasingUnit || selected.value.purchasingUnit, purchasingUnitOptions),
+    conversionQty: supplier.conversionQty || 1, baseUnit: unitValue(supplier.baseUnit || selected.value.baseUnit, baseUnitOptions),
   };
 });
 
