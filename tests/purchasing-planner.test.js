@@ -6,6 +6,17 @@ import {
   savePurchasingProductSettings, savePurchasingSettings, saveSupplierSettings,
 } from '../purchasingPlanner.js';
 import { normalizePurchasingPreferences, summarizeOutletSync } from '../src/utils/purchasingPreferences.js';
+import { useToast } from '../src/composables/useToast.js';
+
+test('loading notifications remain visible until dismissed while other toasts expire', async () => {
+  const toast = useToast();
+  const id = toast.loading('Saving…');
+  toast.info('Updated', 5);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.deepEqual(toast.toasts.value.map((item) => item.id), [id]);
+  toast.dismiss(id);
+  assert.equal(toast.toasts.value.length, 0);
+});
 
 test('saved purchasing preferences restore valid filters and reject invalid dates and options', () => {
   const saved = normalizePurchasingPreferences({

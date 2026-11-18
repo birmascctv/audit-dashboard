@@ -1,7 +1,7 @@
 <script setup>
 import { useToast } from '../composables/useToast.js';
 const { toasts, dismiss } = useToast();
-const tone = { success: 'bg-emerald-600', error: 'bg-rose-600', info: 'bg-slate-800' };
+const tone = { success: 'bg-emerald-600', error: 'bg-rose-600', info: 'bg-slate-800', loading: 'bg-slate-800' };
 </script>
 
 <template>
@@ -12,10 +12,11 @@ const tone = { success: 'bg-emerald-600', error: 'bg-rose-600', info: 'bg-slate-
         :key="t.id"
         class="pointer-events-auto rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg flex items-start gap-3"
         :class="tone[t.type] || tone.info"
-        role="status"
+        :role="t.type === 'error' ? 'alert' : 'status'"
       >
+        <span v-if="t.type === 'loading'" aria-hidden="true" class="mt-0.5 h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white"></span>
         <span class="flex-1">{{ t.message }}</span>
-        <button class="opacity-70 hover:opacity-100" aria-label="Dismiss" @click="dismiss(t.id)">✕</button>
+        <button v-if="t.type !== 'loading'" class="opacity-70 hover:opacity-100" aria-label="Dismiss" @click="dismiss(t.id)">✕</button>
       </div>
     </TransitionGroup>
   </div>

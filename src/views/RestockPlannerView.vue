@@ -1,13 +1,31 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Line } from 'vue-chartjs';
 import 'chart.js/auto';
 import { authFetchJson, getAuthToken } from '../services/authFetch.js';
 import { useAuth } from '../composables/useAuth.js';
 import PurchasingHistoryUpload from '../components/PurchasingHistoryUpload.vue';
 import { normalizePurchasingPreferences } from '../utils/purchasingPreferences.js';
+import { useToast } from '../composables/useToast.js';
 
 const { currentUser } = useAuth();
+const toast = useToast();
+const activeNotices = new Set();
+function startNotice(message) {
+  const id = toast.loading(message);
+  activeNotices.add(id);
+  return id;
+}
+function finishNotice(id, message, failed = false) {
+  toast.dismiss(id);
+  activeNotices.delete(id);
+  if (message) (failed ? toast.error : toast.success)(message);
+}
+const rangeLoading = ref(false);
+const productSaving = ref(false);
+let filterReady = false;
+let filterNotice;
+let filterTimer;
 const empty = { rows: [], stores: [], holidays: [], holidayAnalysis: [], upcomingHolidays: [], imports: [], ambiguousMatches: [], settings: {} };
 const data = ref({ ...empty });
 const loading = ref(true);
@@ -172,6 +190,16 @@ const statusClass = (status) => ({
 }[status] || 'bg-slate-100 text-slate-700');
 
 watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage], () => { page.value = 1; });
+watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage, holidayStoreFilter], () => {
+  if (!filterReady || rangeLoading.value) return;
+  if (filterNotice == null) filterNotice = startNotice('Updating filters…');
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(async () => {
+    await nextTick();
+    finishNotice(filterNotice, preferenceError.value || 'Filters updated.', !!preferenceError.value);
+    filterNotice = undefined;
+  }, 400);
+});
 watch([selectedHolidayStore, data], () => initializeHolidayAdjustments());
 watch([selectedHolidayStore, selectedHolidayId, data, tab], loadHolidayForecast);
 function loadProductForm(row) {
@@ -260,16 +288,21 @@ function rangeQuery() {
 }
 
 async function applyRange() {
+  if (rangeLoading.value) return;
   rangeError.value = '';
   if (!historyStart.value || !historyEnd.value || historyStart.value > historyEnd.value || historyEnd.value > data.value.today ||
       (Date.parse(`${historyEnd.value}T00:00:00Z`) - Date.parse(`${historyStart.value}T00:00:00Z`)) / 86400000 >= 730) {
     rangeError.value = 'Choose a valid date range of up to 730 days, ending no later than today.';
+    toast.error(rangeError.value);
     return;
   }
+  rangeLoading.value = true;
+  const notice = startNotice('Updating sales date filter…');
   const previous = appliedRange.value;
   appliedRange.value = { historyStart: historyStart.value, historyEnd: historyEnd.value };
-  try { await loadPurchasing(); page.value = 1; }
-  catch (err) { appliedRange.value = previous; rangeError.value = err.message; }
+  try { await loadPurchasing(); page.value = 1; finishNotice(notice, 'Sales date filter updated.'); }
+  catch (err) { appliedRange.value = previous; rangeError.value = err.message; finishNotice(notice, err.message, true); }
+  finally { rangeLoading.value = false; }
 }
 
 function chooseRange(preset) {
@@ -287,15 +320,25 @@ function chooseRange(preset) {
 }
 
 async function resetRange() {
+  if (rangeLoading.value) return;
+  rangeLoading.value = true;
+  const notice = startNotice('Resetting filters…');
   appliedRange.value = null;
   historyStart.value = '';
   historyEnd.value = '';
   rangeError.value = '';
-  try { await loadPurchasing(); page.value = 1; }
-  catch (err) { rangeError.value = err.message; }
+  try { await loadPurchasing(); page.value = 1; finishNotice(notice, 'Filters reset.'); }
+  catch (err) { rangeError.value = err.message; finishNotice(notice, err.message, true); }
+  finally { rangeLoading.value = false; }
 }
 
 async function resetFilters() {
+  if (rangeLoading.value) return;
+  clearTimeout(filterTimer);
+  if (filterNotice != null) {
+    finishNotice(filterNotice);
+    filterNotice = undefined;
+  }
   storeFilter.value = 'all';
   statusFilter.value = 'all';
   movementFilter.value = 'all';
@@ -418,7 +461,7 @@ async function purchaseImported() {
 const minStockPayload = (value, suggested) => value === '' || value == null || Number(value) === suggested ? null : Number(value);
 
 async function saveProductDetails() {
-  if (!selected.value) return;
+  if (!selected.value || productSaving.value) return;
   productError.value = '';
   productMessage.value = '';
   supplierError.value = '';
@@ -432,6 +475,7 @@ async function saveProductDetails() {
     Number(edit.conversionQty) !== Number(row.supplier?.conversionQty || row.conversionQty || 1);
   if (!hasSupplier && supplierFieldsChanged) {
     productError.value = 'Select or enter a Supplier name to save lead time, MOQ and units — they are stored per supplier.';
+    toast.error(productError.value);
     return;
   }
   const product = {
@@ -441,6 +485,8 @@ async function saveProductDetails() {
     movement: productEdits.value.movement || null,
     supplier: hasSupplier ? supplierEdit.value.supplierName : row.selectedSupplier || null,
   };
+  productSaving.value = true;
+  const notice = startNotice('Saving product details…');
   try {
     if (hasSupplier) {
       await authFetchJson('/api/purchasing/supplier', {
@@ -465,12 +511,16 @@ async function saveProductDetails() {
     await loadPurchasing();
     loadProductForm(selected.value);
     productMessage.value = 'Product details saved.';
-  } catch (err) { productError.value = err.message; }
+    finishNotice(notice, productMessage.value);
+  } catch (err) { productError.value = err.message; finishNotice(notice, err.message, true); }
+  finally { productSaving.value = false; }
 }
 
 async function saveSettings() {
+  if (busy.value) return;
   busy.value = true;
   settingsError.value = '';
+  const notice = startNotice('Saving forecast settings…');
   try {
     await authFetchJson('/api/purchasing/settings', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -478,45 +528,53 @@ async function saveSettings() {
     });
     await loadPurchasing();
     message.value = 'Purchasing settings saved.';
-  } catch (err) { settingsError.value = err.message; }
+    finishNotice(notice, message.value);
+  } catch (err) { settingsError.value = err.message; finishNotice(notice, err.message, true); }
   finally { busy.value = false; }
 }
 
 async function saveHoliday(holiday) {
   holidayError.value = '';
   const draft = holidayDrafts.value[holiday.id];
+  const notice = startNotice('Saving holiday…');
   try {
     await authFetchJson(`/api/purchasing/holidays/${holiday.id}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft),
     });
     await loadPurchasing();
     holidayError.value = '';
-  } catch (err) { holidayError.value = err.message; }
+    finishNotice(notice, 'Holiday saved.');
+  } catch (err) { holidayError.value = err.message; finishNotice(notice, err.message, true); }
 }
 
 async function addHoliday() {
   holidayError.value = '';
+  const notice = startNotice('Adding holiday…');
   try {
     await authFetchJson('/api/purchasing/holidays', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(holidayNew.value),
     });
     holidayNew.value = { name: '', startDate: '', endDate: '', windowStart: '', windowEnd: '' };
     await loadPurchasing();
-  } catch (err) { holidayError.value = err.message; }
+    finishNotice(notice, 'Holiday added.');
+  } catch (err) { holidayError.value = err.message; finishNotice(notice, err.message, true); }
 }
 
 async function removeHoliday(holiday) {
   if (!window.confirm(`Delete ${holiday.name}?`)) return;
+  const notice = startNotice('Deleting holiday…');
   try {
     await authFetchJson(`/api/purchasing/holidays/${holiday.id}`, { method: 'DELETE' });
     await loadPurchasing();
-  } catch (err) { holidayError.value = err.message; }
+    finishNotice(notice, 'Holiday deleted.');
+  } catch (err) { holidayError.value = err.message; finishNotice(notice, err.message, true); }
 }
 
 async function saveAdjustment(holiday) {
   holidayAdjustmentError.value = '';
   holidayAdjustmentMessage.value = '';
   const draft = holidayAdjustments.value[holiday.id] || {};
+  const notice = startNotice('Saving holiday adjustment…');
   try {
     await authFetchJson('/api/purchasing/holiday-adjustment', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -528,7 +586,8 @@ async function saveAdjustment(holiday) {
     });
     await loadPurchasing();
     holidayAdjustmentMessage.value = 'Holiday forecast adjustment saved. It affects demand, not the order quantity directly.';
-  } catch (err) { holidayAdjustmentError.value = err.message; }
+    finishNotice(notice, holidayAdjustmentMessage.value);
+  } catch (err) { holidayAdjustmentError.value = err.message; finishNotice(notice, err.message, true); }
 }
 
 const detailChart = computed(() => {
@@ -563,8 +622,15 @@ onMounted(async () => {
   if (storeFilter.value !== 'all' && !stores.value.some((store) => store.id === storeFilter.value)) storeFilter.value = 'all';
   clockTimer = setInterval(() => { clockNow.value = Date.now(); }, 60000);
   loading.value = false;
+  await nextTick();
+  filterReady = true;
 });
-onUnmounted(() => { clearInterval(clockTimer); });
+onUnmounted(() => {
+  clearInterval(clockTimer);
+  clearTimeout(filterTimer);
+  for (const id of activeNotices) toast.dismiss(id);
+  activeNotices.clear();
+});
 </script>
 
 <template>
@@ -604,10 +670,10 @@ onUnmounted(() => { clearInterval(clockTimer); });
           <form class="flex flex-wrap items-end gap-2 border-t pt-3" @submit.prevent="applyRange">
             <label class="text-xs font-bold">Sales from<input v-model="historyStart" type="date" :max="data.today" required class="mt-1 block rounded border p-2"></label>
             <label class="text-xs font-bold">Sales to<input v-model="historyEnd" type="date" :max="data.today" required class="mt-1 block rounded border p-2"></label>
-            <button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white">Apply range</button>
-            <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="chooseRange('week')">Last 7 days</button>
-            <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="chooseRange('month')">Last month</button>
-            <button type="button" class="rounded border px-3 py-2 text-xs font-bold" @click="resetFilters">Reset</button>
+            <button :disabled="rangeLoading" class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{{ rangeLoading ? 'Updating…' : 'Apply range' }}</button>
+            <button type="button" :disabled="rangeLoading" class="rounded border px-3 py-2 text-xs font-bold disabled:opacity-50" @click="chooseRange('week')">Last 7 days</button>
+            <button type="button" :disabled="rangeLoading" class="rounded border px-3 py-2 text-xs font-bold disabled:opacity-50" @click="chooseRange('month')">Last month</button>
+            <button type="button" :disabled="rangeLoading" class="rounded border px-3 py-2 text-xs font-bold disabled:opacity-50" @click="resetFilters">Reset</button>
             <p class="ml-auto text-xs text-slate-500">Monday: {{ data.reviewDate || 'missing' }} · Sales: {{ dateDisplay(data.historyStart) }}–{{ dateDisplay(data.historyEnd) }}</p>
           </form>
           <p class="text-xs text-slate-500">Last 7 days ends yesterday; last month is the previous calendar month. Days without outlet sales records, holiday windows and observed zero-stock days are excluded.</p>
@@ -765,9 +831,9 @@ onUnmounted(() => { clearInterval(clockTimer); });
     </Teleport>
     <Teleport to="body">
       <Transition name="purchasing-pop">
-        <div v-if="selected" class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4" @click.self="selected = null" @keydown.esc="selected = null">
+        <div v-if="selected" class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4" @click.self="!productSaving && (selected = null)" @keydown.esc="!productSaving && (selected = null)">
           <section role="dialog" aria-modal="true" aria-label="Purchasing recommendation details" class="max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
-            <header class="flex justify-between gap-3"><div><h2 class="text-lg font-extrabold">{{ selected.productName }} · {{ selected.productVariant || selected.sku || 'No variant identifier' }}</h2><p class="text-sm text-slate-600">{{ outletName(selected.store,selected.storeId) }} · {{ selected.movement }} · Monday stock {{ number(selected.reviewStock) }} ({{ selected.reviewDate }}) · current stock {{ number(selected.currentStock) }}</p></div><button class="shrink-0 rounded border px-3 py-1" aria-label="Close details" @click="selected = null">Close</button></header>
+            <header class="flex justify-between gap-3"><div><h2 class="text-lg font-extrabold">{{ selected.productName }} · {{ selected.productVariant || selected.sku || 'No variant identifier' }}</h2><p class="text-sm text-slate-600">{{ outletName(selected.store,selected.storeId) }} · {{ selected.movement }} · Monday stock {{ number(selected.reviewStock) }} ({{ selected.reviewDate }}) · current stock {{ number(selected.currentStock) }}</p></div><button :disabled="productSaving" class="shrink-0 rounded border px-3 py-1 disabled:opacity-50" aria-label="Close details" @click="selected = null">Close</button></header>
             <div class="mt-4 grid gap-2 sm:grid-cols-3">
               <article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Supplier lead time</p><strong class="tabular-nums">{{ selected.leadDays }} days</strong></article>
               <article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">MOQ · pack unit</p><strong>{{ selected.supplier?.moq == null ? 'MOQ not set' : number(selected.supplier.moq) }} {{ selected.purchasingUnit }} · {{ number(selected.conversionQty) }} {{ selected.baseUnit }}/pack</strong></article>
@@ -779,7 +845,7 @@ onUnmounted(() => { clearInterval(clockTimer); });
             <p v-if="selected.reason" class="mt-3 rounded bg-amber-50 p-3 text-sm text-amber-900">{{ selected.reason }}. System quantities are unavailable until this data issue is resolved.</p>
             <p v-if="selected.lowData" class="mt-3 text-sm text-amber-800">Low data: some weekdays or historical days are missing; review the demand estimate.</p>
             <p v-if="selected.holidayConflict" class="mt-2 text-sm text-red-700">Overlapping holiday adjustments are not combined. Set the same explicit combined group for overlapping occasions before using the affected forecast.</p>
-            <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Pick a supplier and unit from purchase order history (or enter them manually). Minimum stock defaults to the system recommendation for that coverage and can be edited; clear it to return to automatic. Use Save product details to save everything. Inputs you type are remembered as suggestions. MOQ is configured per product and outlet.</p><div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Pick a supplier and unit from purchase order history (or enter them manually). Minimum stock defaults to the system recommendation for that coverage and can be edited; clear it to return to automatic. Use Save product details to save everything. Inputs you type are remembered as suggestions. MOQ is configured per product and outlet.</p><fieldset :disabled="productSaving" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 disabled:opacity-50">
               <label class="text-xs font-semibold">Movement classification<select v-model="productEdits.movement" class="mt-1 block w-full rounded border p-2"><option value="">Automatic ({{ selected.movement }})</option><option>Fast Moving</option><option>Slow Moving</option></select></label>
               <label class="text-xs font-semibold">Minimum stock · 7-day (default = recommendation)<input v-model="productEdits.minStock" list="hist-minStock" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Minimum stock · 10-day (default = recommendation)<input v-model="productEdits.minStock10" list="hist-minStock10" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
@@ -790,8 +856,8 @@ onUnmounted(() => { clearInterval(clockTimer); });
               <label class="text-xs font-semibold">Base units per purchasing unit<input v-model="supplierEdit.conversionQty" list="hist-conversionQty" type="number" min="0.0001" step="any" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Base unit<select v-model="baseUnitChoice" class="mt-1 block w-full rounded border p-2"><option value="">Select base unit…</option><option v-for="unit in baseUnitOptions" :key="unit" :value="unit">{{ unit }}</option><option :value="MANUAL_OPTION">Enter manually…</option></select><input v-if="baseUnitChoice === MANUAL_OPTION" v-model.trim="supplierEdit.baseUnit" list="hist-baseUnit" maxlength="80" placeholder="Can, bottle, piece…" class="mt-2 block w-full rounded border p-2"></label>
               <datalist v-for="field in ['minStock','minStock10','supplierName','leadDays','moq','purchasingUnit','conversionQty','baseUnit']" :id="`hist-${field}`" :key="field"><option v-for="value in suggestionsFor(field)" :key="value" :value="value" /></datalist>
-            </div><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p>
-              <div class="mt-3 flex flex-wrap gap-2"><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="saveProductDetails">Save product details</button></div><p v-if="productError" role="alert" class="mt-2 text-xs text-red-700">{{ productError }}</p><p v-if="productMessage" role="status" class="mt-2 text-xs text-green-700">{{ productMessage }}</p>
+            </fieldset><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p>
+              <div class="mt-3 flex flex-wrap gap-2"><button :disabled="productSaving" class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50" @click="saveProductDetails">{{ productSaving ? 'Saving…' : 'Save product details' }}</button></div><p v-if="productError" role="alert" class="mt-2 text-xs text-red-700">{{ productError }}</p><p v-if="productMessage" role="status" class="mt-2 text-xs text-green-700">{{ productMessage }}</p>
             </section>
             <div v-if="selected.forecast && selected.history" class="mt-4 h-72"><Line :data="detailChart" :options="{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{mode:'index',intersect:false}},scales:{sales:{position:'left',beginAtZero:true,title:{display:true,text:'Sales / day'}},stock:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'Stock'}}}}" /></div>
             <p class="mt-2 text-xs text-slate-500">Hover over a date to see all available values. Projected stock starts with Monday stock and subtracts forecast sales each day, assuming no deliveries or transfers; it is not confirmed stock. Snapshot days with observed zero stock are excluded from normal demand; they are observations, not proof of a full-day stockout.</p>

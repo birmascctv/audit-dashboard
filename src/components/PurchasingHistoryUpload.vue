@@ -1,11 +1,15 @@
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { UploadCloud, FileSpreadsheet, X, AlertCircle, CheckCircle2 } from 'lucide-vue-next';
 import { parsePurchasingCsv } from '../../purchasingCsv.js';
 import { authFetchJson, getAuthToken } from '../services/authFetch.js';
+import { useToast } from '../composables/useToast.js';
 
 const props = defineProps({ isOpen: { type: Boolean, default: false } });
 const emit = defineEmits(['close', 'imported']);
+const toast = useToast();
+let uploadNotice;
+onUnmounted(() => { if (uploadNotice != null) toast.dismiss(uploadNotice); });
 const file = ref(null);
 const rows = ref([]);
 const errors = ref([]);
@@ -44,6 +48,7 @@ function chooseFile(event) {
 async function upload() {
   if (!file.value || !rows.value.length || busy.value) return;
   busy.value = true;
+  uploadNotice = toast.loading('Importing purchase history…');
   result.value = null;
   const importId = `purch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let inserted = 0, duplicates = 0, rowsImported = false;
@@ -79,6 +84,7 @@ async function upload() {
     });
     if (!completed.success) throw new Error('Original CSV archive could not be finalized.');
     result.value = { success: true, message: `Imported ${inserted.toLocaleString()} new reference rows; skipped ${duplicates.toLocaleString()} duplicates. The original CSV is archived.` };
+    toast.success(result.value.message);
     emit('imported');
   } catch (error) {
     result.value = {
@@ -87,9 +93,12 @@ async function upload() {
         ? `Purchase-history rows were saved, but the original CSV was not fully archived: ${error.message}`
         : error.message || 'Purchase-history import failed.',
     };
+    toast.error(result.value.message);
   } finally {
     busy.value = false;
     progress.value = '';
+    toast.dismiss(uploadNotice);
+    uploadNotice = undefined;
   }
 }
 
