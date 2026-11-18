@@ -128,7 +128,7 @@ export function ensurePurchasingSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_purchasing_history_import ON purchasing_history_records(import_id);
     CREATE INDEX IF NOT EXISTS idx_purchasing_holidays_dates ON purchasing_holidays(start_date, end_date, window_start, window_end);
   `);
-  for (const [name, type] of [['movement_override', 'TEXT'], ['selected_supplier', 'TEXT']]) {
+  for (const [name, type] of [['movement_override', 'TEXT'], ['selected_supplier', 'TEXT'], ['min_stock_10', 'REAL']]) {
     if (!db.prepare('PRAGMA table_info(purchasing_product_settings)').all().some((column) => column.name === name)) {
       db.exec(`ALTER TABLE purchasing_product_settings ADD COLUMN ${name} ${type}`);
     }

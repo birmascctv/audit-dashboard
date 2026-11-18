@@ -59,6 +59,21 @@ function fixture() {
   return { stock, sales, get };
 }
 
+test('rows expose PO-history suppliers and units, and 10-day minimum stock is separate', () => {
+  const { stock, sales, get } = fixture();
+  const name = get().rows[0].productName;
+  stock.prepare(`INSERT INTO purchasing_history_imports(id,filename,uploaded_at,uploaded_by) VALUES('i','a.csv','2026-01-01','u')`).run();
+  stock.prepare(`INSERT INTO purchasing_history_records(import_id,source_row,record_hash,purchase_number,purchase_date,branch,supplier_name,category,product_name,unit,po_qty,purchasing_unit,conversion_qty,base_unit,equivalent_qty)
+    VALUES('i',1,'h','PO1','2026-01-01','KUNINGAN','Vendor A','Drink',?,'Carton @ 24 Can',2,'Carton',24,'Can',48)`).run(name);
+  savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', minStock: 5, minStock10: 500 });
+  const row = get().rows[0];
+  assert.deepEqual(row.historySuppliers.map((item) => item.supplierName), ['Vendor A']);
+  assert.equal(row.historyUnits[0].purchasingUnit, 'Carton');
+  assert.equal(row.minStock10, 500);
+  if (row.recommendation10) assert.ok(row.recommendation10.orderUpTo >= 500 && row.recommendation7.orderUpTo < 500);
+  stock.close(); sales.close();
+});
+
 test('purchasing settings persist and validate the 8-week movement threshold', () => {
   const { stock, sales } = fixture();
   assert.deepEqual(savePurchasingSettings(stock, { ...DEFAULT_PURCHASING_SETTINGS, fastMovingThreshold: 14 }), DEFAULT_PURCHASING_SETTINGS);

@@ -48,6 +48,68 @@ const holidayNew = ref({ name: '', startDate: '', endDate: '', windowStart: '', 
 const holidayError = ref('');
 const productEdits = ref({});
 const supplierEdit = ref({});
+const manualSupplier = ref(false);
+const manualUnit = ref(false);
+const MANUAL_OPTION = '__manual__';
+const INPUT_HISTORY_LIMIT = 8;
+const inputHistory = ref({});
+
+function inputHistoryKey() { return `purchasing-input-history-v1:${currentUser.value?.id || 'user'}`; }
+function loadInputHistory() {
+  try { inputHistory.value = JSON.parse(localStorage.getItem(inputHistoryKey()) || '{}') || {}; } catch { inputHistory.value = {}; }
+}
+function rememberInputs(values) {
+  const next = { ...inputHistory.value };
+  for (const [field, raw] of Object.entries(values)) {
+    const value = String(raw ?? '').trim();
+    if (!value) continue;
+    next[field] = [value, ...(next[field] || []).filter((item) => item !== value)].slice(0, INPUT_HISTORY_LIMIT);
+  }
+  inputHistory.value = next;
+  try { localStorage.setItem(inputHistoryKey(), JSON.stringify(next)); } catch { /* history is a convenience only */ }
+}
+const suggestionsFor = (field) => inputHistory.value[field] || [];
+const supplierOptions = computed(() => [...new Set([
+  ...(selected.value?.historySuppliers || []).map((item) => item.supplierName),
+  ...(selected.value?.suppliers || []).map((item) => item.supplierName),
+])]);
+const unitOptions = computed(() => {
+  const seen = new Set();
+  return [...(selected.value?.historyUnits || []), ...(selected.value?.suppliers || []).filter((item) => item.purchasingUnit)]
+    .filter((item) => { const key = `${item.purchasingUnit}|${item.conversionQty}|${item.baseUnit}`; return !seen.has(key) && seen.add(key); })
+    .map((item) => ({ ...item, label: `${item.purchasingUnit}${item.baseUnit ? ` · ${Number(item.conversionQty) || 1} ${item.baseUnit}` : ''}` }));
+});
+const supplierChoice = computed({
+  get: () => manualSupplier.value || (supplierEdit.value.supplierName && !supplierOptions.value.includes(supplierEdit.value.supplierName))
+    ? MANUAL_OPTION : supplierEdit.value.supplierName || '',
+  set: (value) => {
+    manualSupplier.value = value === MANUAL_OPTION;
+    supplierEdit.value.supplierName = manualSupplier.value ? '' : value;
+  },
+});
+const unitChoice = computed({
+  get: () => {
+    if (manualUnit.value) return MANUAL_OPTION;
+    const index = unitOptions.value.findIndex((item) => item.purchasingUnit === supplierEdit.value.purchasingUnit &&
+      Number(item.conversionQty) === Number(supplierEdit.value.conversionQty) && (item.baseUnit || '') === (supplierEdit.value.baseUnit || ''));
+    return index >= 0 ? String(index) : supplierEdit.value.purchasingUnit ? MANUAL_OPTION : '';
+  },
+  set: (value) => {
+    manualUnit.value = value === MANUAL_OPTION;
+    if (manualUnit.value || value === '') { if (value === '') supplierEdit.value.purchasingUnit = ''; return; }
+    const unit = unitOptions.value[Number(value)];
+    if (!unit) return;
+    supplierEdit.value.purchasingUnit = unit.purchasingUnit;
+    if (unit.conversionQty) supplierEdit.value.conversionQty = unit.conversionQty;
+    if (unit.baseUnit) supplierEdit.value.baseUnit = unit.baseUnit;
+  },
+});
+const rememberProductInputs = () => rememberInputs({ minStock: productEdits.value.minStock, minStock10: productEdits.value.minStock10 });
+const rememberSupplierInputs = () => rememberInputs({
+  supplierName: manualSupplier.value ? supplierEdit.value.supplierName : '', leadDays: supplierEdit.value.leadDays, moq: supplierEdit.value.moq,
+  purchasingUnit: manualUnit.value ? supplierEdit.value.purchasingUnit : '', conversionQty: supplierEdit.value.conversionQty,
+  baseUnit: supplierEdit.value.baseUnit,
+});
 const supplierError = ref('');
 const productError = ref('');
 const purchaseImportError = ref('');
@@ -138,7 +200,10 @@ watch(selected, (row) => {
   productEdits.value = {
     movement: row.movementOverride || '',
     minStock: row.minStock ?? '',
+    minStock10: row.minStock10 ?? '',
   };
+  manualSupplier.value = false;
+  manualUnit.value = false;
   supplierEdit.value = {
     supplierName: row.supplier?.supplierName || '',
     leadDays: row.supplier?.leadDays ?? '',
@@ -378,10 +443,12 @@ async function saveProductEdits() {
       body: JSON.stringify({
         storeId: selected.value.storeId, productId: selected.value.productId,
         minStock: productEdits.value.minStock === '' ? null : Number(productEdits.value.minStock),
+        minStock10: productEdits.value.minStock10 === '' ? null : Number(productEdits.value.minStock10),
         movement: productEdits.value.movement || null,
         supplier: selected.value.selectedSupplier || null,
       }),
     });
+    rememberProductInputs();
     await loadPurchasing();
   } catch (err) { productError.value = err.message; }
 }
@@ -407,9 +474,12 @@ async function saveSupplier() {
       body: JSON.stringify({
         storeId: selected.value.storeId, productId: selected.value.productId,
         minStock: productEdits.value.minStock === '' ? null : Number(productEdits.value.minStock),
+        minStock10: productEdits.value.minStock10 === '' ? null : Number(productEdits.value.minStock10),
         movement: productEdits.value.movement || null, supplier: supplierEdit.value.supplierName,
       }),
     });
+    rememberSupplierInputs();
+    rememberProductInputs();
     await loadPurchasing();
   } catch (err) { supplierError.value = err.message; }
 }
@@ -504,6 +574,7 @@ const detailChart = computed(() => {
 
 onMounted(async () => {
   restorePreferences();
+  loadInputHistory();
   await refresh();
   if (storeFilter.value !== 'all' && !stores.value.some((store) => store.id === storeFilter.value)) storeFilter.value = 'all';
   clockTimer = setInterval(() => { clockNow.value = Date.now(); }, 60000);
@@ -732,15 +803,17 @@ onUnmounted(() => { clearInterval(clockTimer); });
             <p v-if="selected.reason" class="mt-3 rounded bg-amber-50 p-3 text-sm text-amber-900">{{ selected.reason }}. System quantities are unavailable until this data issue is resolved.</p>
             <p v-if="selected.lowData" class="mt-3 text-sm text-amber-800">Low data: some weekdays or historical days are missing; review the demand estimate.</p>
             <p v-if="selected.holidayConflict" class="mt-2 text-sm text-red-700">Overlapping holiday adjustments are not combined. Set the same explicit combined group for overlapping occasions before using the affected forecast.</p>
-            <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Enter a supplier name and MOQ in purchasing units, then choose Save supplier settings &amp; select. MOQ is configured per product and outlet.</p><div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Pick a supplier and unit from purchase order history (or enter them manually). Use Save supplier settings &amp; select for supplier, lead time, MOQ and units; Save product settings only saves movement and minimum stock. Inputs you type are remembered as suggestions. MOQ is configured per product and outlet.</p><div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label class="text-xs font-semibold">Movement classification<select v-model="productEdits.movement" class="mt-1 block w-full rounded border p-2"><option value="">Automatic ({{ selected.movement }})</option><option>Fast Moving</option><option>Slow Moving</option></select></label>
-              <label class="text-xs font-semibold">Minimum stock (optional)<input v-model="productEdits.minStock" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Supplier name<input v-model.trim="supplierEdit.supplierName" list="purchasing-suppliers" class="mt-1 block w-full rounded border p-2"><datalist id="purchasing-suppliers"><option v-for="supplier in selected.suppliers" :key="supplier.supplierName" :value="supplier.supplierName" /></datalist></label>
-              <label class="text-xs font-semibold">Supplier lead time (days)<input v-model="supplierEdit.leadDays" type="number" min="1" max="365" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Minimum order quantity (supplier units)<input v-model="supplierEdit.moq" type="number" min="0" step="any" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Purchasing unit<input v-model.trim="supplierEdit.purchasingUnit" maxlength="80" placeholder="Carton, pack, piece…" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Base units per purchasing unit<input v-model="supplierEdit.conversionQty" type="number" min="0.0001" step="any" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Base unit<input v-model.trim="supplierEdit.baseUnit" maxlength="80" placeholder="Can, bottle, piece…" class="mt-1 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Minimum stock · 7-day coverage<input v-model="productEdits.minStock" list="hist-minStock" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Minimum stock · 10-day coverage<input v-model="productEdits.minStock10" list="hist-minStock10" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Supplier name<select v-model="supplierChoice" class="mt-1 block w-full rounded border p-2"><option value="">Select supplier…</option><option v-for="name in supplierOptions" :key="name" :value="name">{{ name }}</option><option :value="MANUAL_OPTION">Enter manually…</option></select><input v-if="supplierChoice === MANUAL_OPTION" v-model.trim="supplierEdit.supplierName" list="hist-supplierName" maxlength="200" placeholder="Type supplier name" class="mt-2 block w-full rounded border p-2"><span v-if="!supplierOptions.length" class="mt-1 block text-[10px] font-normal text-slate-500">No supplier found in purchase order history for this product.</span></label>
+              <label class="text-xs font-semibold">Supplier lead time (days)<input v-model="supplierEdit.leadDays" list="hist-leadDays" type="number" min="1" max="365" class="mt-1 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Minimum order quantity (supplier units)<input v-model="supplierEdit.moq" list="hist-moq" type="number" min="0" step="any" class="mt-1 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Purchasing unit<select v-model="unitChoice" class="mt-1 block w-full rounded border p-2"><option value="">Select unit…</option><option v-for="(unit, index) in unitOptions" :key="index" :value="String(index)">{{ unit.label }}</option><option :value="MANUAL_OPTION">Enter manually…</option></select><input v-if="unitChoice === MANUAL_OPTION" v-model.trim="supplierEdit.purchasingUnit" list="hist-purchasingUnit" maxlength="80" placeholder="Carton, pack, piece…" class="mt-2 block w-full rounded border p-2"><span v-if="!unitOptions.length" class="mt-1 block text-[10px] font-normal text-slate-500">No unit found in purchase order history for this product.</span></label>
+              <label class="text-xs font-semibold">Base units per purchasing unit<input v-model="supplierEdit.conversionQty" list="hist-conversionQty" type="number" min="0.0001" step="any" class="mt-1 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Base unit<input v-model.trim="supplierEdit.baseUnit" list="hist-baseUnit" maxlength="80" placeholder="Can, bottle, piece…" class="mt-1 block w-full rounded border p-2"></label>
+              <datalist v-for="field in ['minStock','minStock10','supplierName','leadDays','moq','purchasingUnit','conversionQty','baseUnit']" :id="`hist-${field}`" :key="field"><option v-for="value in suggestionsFor(field)" :key="value" :value="value" /></datalist>
             </div><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p>
               <div class="mt-3 flex flex-wrap gap-2"><button class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white" @click="saveProductEdits">Save product settings</button><button class="rounded border px-3 py-2 text-xs font-bold" @click="saveSupplier">Save supplier settings & select</button></div><p v-if="productError || supplierError" role="alert" class="mt-2 text-xs text-red-700">{{ productError || supplierError }}</p>
             </section>

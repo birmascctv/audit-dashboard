@@ -43,10 +43,11 @@ export function savePurchasingSettings(db, input) {
   return settings;
 }
 
-export function savePurchasingProductSettings(db, { storeId, productId, minStock, leadDays, movement, supplier }) {
+export function savePurchasingProductSettings(db, { storeId, productId, minStock, minStock10, leadDays, movement, supplier }) {
   ensurePurchasingSchema(db);
   if (typeof storeId !== 'string' || typeof productId !== 'string' || !storeId || !productId ||
       (minStock !== null && minStock !== undefined && (!Number.isFinite(minStock) || minStock < 0 || minStock > 1000000000)) ||
+      (minStock10 !== null && minStock10 !== undefined && (!Number.isFinite(minStock10) || minStock10 < 0 || minStock10 > 1000000000)) ||
       leadDays != null ||
       (movement !== null && movement !== undefined && !['Fast Moving', 'Slow Moving'].includes(movement)) ||
       (supplier !== null && supplier !== undefined && (typeof supplier !== 'string' || supplier.length > 200))) {
@@ -56,6 +57,7 @@ export function savePurchasingProductSettings(db, { storeId, productId, minStock
   const current = db.prepare('SELECT * FROM purchasing_product_settings WHERE store_id=? AND product_id=?').get(storeId, productId) || {};
   const next = {
     minStock: minStock === undefined ? current.min_stock ?? null : minStock,
+    minStock10: minStock10 === undefined ? current.min_stock_10 ?? null : minStock10,
     leadDays: current.lead_days ?? null,
     movement: movement === undefined ? current.movement_override ?? null : movement,
     supplier: supplier === undefined ? current.selected_supplier ?? null : supplier,
@@ -63,10 +65,10 @@ export function savePurchasingProductSettings(db, { storeId, productId, minStock
   if (Object.values(next).every((value) => value == null || value === '')) {
     db.prepare('DELETE FROM purchasing_product_settings WHERE store_id=? AND product_id=?').run(storeId, productId);
   } else {
-    db.prepare(`INSERT INTO purchasing_product_settings (store_id,product_id,min_stock,lead_days,movement_override,selected_supplier)
-      VALUES(?,?,?,?,?,?) ON CONFLICT(store_id,product_id) DO UPDATE SET min_stock=excluded.min_stock,
+    db.prepare(`INSERT INTO purchasing_product_settings (store_id,product_id,min_stock,min_stock_10,lead_days,movement_override,selected_supplier)
+      VALUES(?,?,?,?,?,?,?) ON CONFLICT(store_id,product_id) DO UPDATE SET min_stock=excluded.min_stock,min_stock_10=excluded.min_stock_10,
       lead_days=excluded.lead_days,movement_override=excluded.movement_override,selected_supplier=excluded.selected_supplier`)
-      .run(storeId, productId, next.minStock, next.leadDays, next.movement, next.supplier);
+      .run(storeId, productId, next.minStock, next.minStock10, next.leadDays, next.movement, next.supplier);
   }
 }
 
@@ -314,8 +316,21 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       classification: salesComplete ? salesClassification(actual) : 'Insufficient data', combined: true,
     });
   }
+  const normalizeName = (value) => String(value || '').trim().replace(/\s+/g, ' ').toUpperCase().replace(/-/g, ' ');
+  const historyOptions = new Map();
+  for (const record of stockDb.prepare(`SELECT product_name name,supplier_name supplier,purchasing_unit unit,conversion_qty conversion,
+      base_unit baseUnit,COUNT(*) uses,MAX(purchase_date) lastDate FROM purchasing_history_records
+      GROUP BY product_name,supplier_name,purchasing_unit,conversion_qty,base_unit ORDER BY lastDate DESC`).all()) {
+    const key = normalizeName(record.name);
+    if (!historyOptions.has(key)) historyOptions.set(key, { suppliers: new Map(), units: new Map() });
+    const entry = historyOptions.get(key);
+    if (record.supplier && !entry.suppliers.has(record.supplier)) entry.suppliers.set(record.supplier, { supplierName: record.supplier, lastDate: record.lastDate });
+    const unitKey = `${record.unit}|${record.conversion}|${record.baseUnit}`;
+    if (record.unit && !entry.units.has(unitKey)) entry.units.set(unitKey, { purchasingUnit: record.unit, conversionQty: record.conversion, baseUnit: record.baseUnit, lastDate: record.lastDate });
+  }
   const rows = stocks.map((stock) => {
     const key = pair(stock.storeId, stock.productId);
+    const orderHistory = historyOptions.get(normalizeName(stock.productName || stock.productVariant));
     const preferences = productSettings.get(key) || {};
     const history = productSales.get(key) || new Map();
     const outletCoverage = coverage.get(stock.storeId) || new Set();
@@ -391,7 +406,8 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       const demand = forecast.slice(0, horizon);
       if (demand.length < horizon || demand.some((day) => day.qty == null || day.conflict)) return null;
       const orderUpTo = demand.reduce((sum, day) => sum + day.qty, 0);
-      const minimumStock = preferences.min_stock == null ? 0 : Number(preferences.min_stock);
+      const configuredMinimum = coverageDays === 10 && preferences.min_stock_10 != null ? preferences.min_stock_10 : preferences.min_stock;
+      const minimumStock = configuredMinimum == null ? 0 : Number(configuredMinimum);
       const targetStock = Math.max(orderUpTo, minimumStock);
       const rawBaseQty = Math.max(0, targetStock - stockAtReview);
       const rawPurchaseQty = rawBaseQty / conversionQty;
@@ -444,10 +460,12 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       daysLeft, expectedStockoutDate, recommendedReorderDate,
       movement, movementManual: !!preferences.movement_override, lowData: eligible.length < 28 || weekdayAverages.some((value) => value == null),
       usableDays: eligible.length, historyWeeks: settings.historyWeeks,
-      minStock: preferences.min_stock ?? null, leadDays,
+      minStock: preferences.min_stock ?? null, minStock10: preferences.min_stock_10 ?? preferences.min_stock ?? null, leadDays,
       belowMinStock: preferences.min_stock != null && stockAtReview != null && stockAtReview < Number(preferences.min_stock),
       movementOverride: preferences.movement_override || null, selectedSupplier: selectedSupplierName,
-      supplier, suppliers, purchasingUnit: purchaseUnit, baseUnit, conversionQty,
+      supplier, suppliers, purchasingUnit: purchaseUnit,
+      historySuppliers: orderHistory ? [...orderHistory.suppliers.values()] : [],
+      historyUnits: orderHistory ? [...orderHistory.units.values()] : [], baseUnit, conversionQty,
       holidayEvents, holidayConflict, forecast, recommendation7, recommendation10,
       maximumProjectedStock7, maximumProjectedStock10,
       holidayReference,
