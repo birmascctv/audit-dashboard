@@ -160,6 +160,14 @@ function salesClassification(total) {
   return 'High';
 }
 
+function threeMonthsBefore(date) {
+  const [year, month, day] = date.split('-').map(Number);
+  const target = new Date(Date.UTC(year, month - 4, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(day, lastDay));
+  return target.toISOString().slice(0, 10);
+}
+
 export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date()), options = {}) {
   ensurePurchasingSchema(stockDb);
   const settings = getSettings(stockDb);
@@ -191,6 +199,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     throw new Error('Choose a valid sales history range of up to 730 days, ending no later than today.');
   }
   const historyDays = daysBetween(historyStart, historyEnd) + 1;
+  const recentSalesStart = threeMonthsBefore(today);
   const selectedHoliday = holidays.find((item) => item.id === Number(options.holidayReferenceId));
   const referenceHoliday = selectedHoliday && holidays.filter((item) => item.name === selectedHoliday.name && item.end_date < today)
     .sort((a, b) => b.start_date.localeCompare(a.start_date))[0];
@@ -457,6 +466,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       stock: stock.stock, currentStock: stock.stock,
       reviewStock: stockAtReview, reviewDate, stockReferenceDate: reviewDate,
       avgDaily: dailySales, avgWeekly: weeklySales, avgDailyRaw, avgWeeklyRaw,
+      hasRecentSales: [...history].some(([date, sale]) => date >= recentSalesStart && date <= today && sale.qty > 0),
       daysLeft, expectedStockoutDate, recommendedReorderDate,
       movement, movementManual: !!preferences.movement_override, lowData: eligible.length < 28 || weekdayAverages.some((value) => value == null),
       usableDays: eligible.length, historyWeeks: settings.historyWeeks,

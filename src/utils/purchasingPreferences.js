@@ -1,5 +1,11 @@
 const statuses = ['all', 'needs-order', 'Critical Stock', 'Low Stock', 'Reorder Required', 'Overstock', 'Sufficient Stock', 'Unknown'];
 
+export function isReorderStockEligible(row) {
+  if (row.currentStock == null || !Number.isFinite(Number(row.currentStock))) return false;
+  const stock = Number(row.currentStock);
+  return stock > 0 || (stock === 0 && row.hasRecentSales === true);
+}
+
 export function normalizePurchasingPreferences(value, today) {
   const input = value && typeof value === 'object' ? value : {};
   const choose = (key, options, fallback) => options.includes(input[key]) ? input[key] : fallback;

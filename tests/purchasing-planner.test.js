@@ -5,7 +5,7 @@ import {
   DEFAULT_PURCHASING_SETTINGS, getPurchasingPlanner,
   savePurchasingProductSettings, savePurchasingSettings, saveSupplierSettings,
 } from '../purchasingPlanner.js';
-import { normalizePurchasingPreferences, summarizeOutletSync } from '../src/utils/purchasingPreferences.js';
+import { isReorderStockEligible, normalizePurchasingPreferences, summarizeOutletSync } from '../src/utils/purchasingPreferences.js';
 import { useToast } from '../src/composables/useToast.js';
 
 test('loading notifications remain visible until dismissed while other toasts expire', async () => {
@@ -69,6 +69,45 @@ function fixture() {
   const get = (today = '2026-01-30') => getPurchasingPlanner(stock, sales, match, today);
   return { stock, sales, get };
 }
+
+test('zero stock requires positive, unambiguous sales at the same outlet within three calendar months', () => {
+  const { stock, sales, get } = fixture();
+  stock.prepare("UPDATE store_stocks SET stock_qty=0 WHERE store_id='s' AND product_id='p'").run();
+  stock.exec(`
+    INSERT INTO stores VALUES ('s2','Other');
+    INSERT INTO store_stocks VALUES ('s2','p',0,0,'2026-01-31T12:00:00Z');
+    INSERT INTO products VALUES ('old','Old Product','Old Product','BEER','OLD','Can');
+    INSERT INTO products VALUES ('return','Return Product','Return Product','BEER','RETURN','Can');
+    INSERT INTO products VALUES ('amb1','Ambiguous','Variant A','BEER','A','Can');
+    INSERT INTO products VALUES ('amb2','Ambiguous','Variant B','BEER','B','Can');
+    INSERT INTO store_stocks VALUES ('s','old',0,0,'2026-01-31T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('s','return',0,0,'2026-01-31T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('s','amb1',0,0,'2026-01-31T12:00:00Z');
+    INSERT INTO store_stocks VALUES ('s','amb2',0,0,'2026-01-31T12:00:00Z');
+  `);
+  const insert = sales.prepare('INSERT INTO sales_transactions VALUES(?,?,?,?,?)');
+  insert.run('Store', 'Old Product', '2025-10-29 12:00', 1, 10);
+  insert.run('Store', 'Return Product', '2025-11-01 12:00', -1, -10);
+  insert.run('Store', 'Ambiguous', '2025-11-01 12:00', 1, 10);
+  let rows = get().rows;
+  const row = (store, product) => rows.find((item) => item.storeId === store && item.productId === product);
+  assert.equal(isReorderStockEligible(row('s', 'p')), true);
+  assert.equal(isReorderStockEligible(row('s2', 'p')), false);
+  assert.equal(isReorderStockEligible(row('s', 'old')), false);
+  assert.equal(isReorderStockEligible(row('s', 'return')), false);
+  assert.equal(isReorderStockEligible(row('s', 'amb1')), false);
+  assert.equal(isReorderStockEligible(row('s', 'amb2')), false);
+  insert.run('Store', 'Old Product', '2025-10-30 12:00', 1, 10);
+  rows = get().rows;
+  assert.equal(isReorderStockEligible(row('s', 'old')), true);
+  const custom = getPurchasingPlanner(stock, sales, (branch) => branch === 'Store' ? 's' : null, '2026-01-30',
+    { historyStart: '2025-12-01', historyEnd: '2025-12-02' });
+  assert.equal(isReorderStockEligible(custom.rows.find((item) => item.productId === 'old')), true);
+  assert.equal(isReorderStockEligible({ currentStock: 1, hasRecentSales: false }), true);
+  assert.equal(isReorderStockEligible({ currentStock: -1, hasRecentSales: true }), false);
+  assert.equal(isReorderStockEligible({ currentStock: null, hasRecentSales: true }), false);
+  stock.close(); sales.close();
+});
 
 test('rows expose PO-history suppliers and units, and 10-day minimum stock is separate', () => {
   const { stock, sales, get } = fixture();

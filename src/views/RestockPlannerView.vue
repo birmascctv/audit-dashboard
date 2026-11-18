@@ -5,7 +5,7 @@ import 'chart.js/auto';
 import { authFetchJson, getAuthToken } from '../services/authFetch.js';
 import { useAuth } from '../composables/useAuth.js';
 import PurchasingHistoryUpload from '../components/PurchasingHistoryUpload.vue';
-import { normalizePurchasingPreferences } from '../utils/purchasingPreferences.js';
+import { isReorderStockEligible, normalizePurchasingPreferences } from '../utils/purchasingPreferences.js';
 import { useToast } from '../composables/useToast.js';
 
 const { currentUser } = useAuth();
@@ -125,7 +125,7 @@ const stores = computed(() => {
 const productNames = computed(() => [...new Set(data.value.rows.map((row) => row.productName || row.product).filter(Boolean))]
   .sort((a, b) => a.localeCompare(b)));
 const baseRows = computed(() => data.value.rows.filter((row) =>
-  row.currentStock != null && Number(row.currentStock) > 0 &&
+  isReorderStockEligible(row) &&
   (storeFilter.value === 'all' || row.storeId === storeFilter.value) &&
   (movementFilter.value === 'all' || row.movement === movementFilter.value) &&
   `${row.productName || row.product || ''} ${row.productVariant || ''} ${row.sku || ''}`.toLowerCase().includes(productSearch.value.trim().toLowerCase())));
@@ -677,7 +677,7 @@ onUnmounted(() => {
           <p v-if="rangeError" role="alert" class="text-xs text-red-700">{{ rangeError }}</p>
           <p v-if="preferenceError" role="alert" class="text-xs text-red-700">{{ preferenceError }}</p>
         </section>
-        <p v-if="storeFilter === 'birmas-nomadic' && !data.rows.some(row => row.storeId === 'birmas-nomadic')" role="status" class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">No Nomadic products with positive stock are available for recommendations. Check the inventory feed and stock quantities; zero and negative stock are excluded.</p>
+        <p v-if="storeFilter === 'birmas-nomadic' && !data.rows.some(row => row.storeId === 'birmas-nomadic')" role="status" class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">No Nomadic inventory products are available for recommendations. Check the inventory feed.</p>
         <section class="overflow-hidden rounded-xl border bg-white shadow-sm">
           <header class="flex flex-wrap items-center justify-between gap-2 border-b p-4"><div><h2 class="font-bold">Reorder recommendations</h2><p class="text-xs text-slate-500">Order quantities are supplier purchasing units. Open Details &amp; MOQ to edit supplier settings.</p></div><button type="button" class="rounded border border-teal-700 px-3 py-2 text-xs font-bold text-teal-800" @click="printSummary">Print summary</button></header>
           <details class="mx-4 my-3 rounded-lg bg-slate-50 p-3 text-xs">
