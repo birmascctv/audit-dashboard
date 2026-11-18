@@ -529,6 +529,11 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     (a.daysLeft ?? Infinity) - (b.daysLeft ?? Infinity) || a.product.localeCompare(b.product));
   return {
     today, reviewDate, reviewIsStale, historyStart, historyEnd, settings, rows, holidays,
+    historyOptions: {
+      suppliers: stockDb.prepare("SELECT DISTINCT TRIM(supplier_name) v FROM purchasing_history_records WHERE TRIM(supplier_name)<>'' ORDER BY v COLLATE NOCASE").all().map((r) => r.v),
+      purchasingUnits: stockDb.prepare("SELECT DISTINCT TRIM(purchasing_unit) v FROM purchasing_history_records WHERE TRIM(purchasing_unit)<>'' ORDER BY v COLLATE NOCASE").all().map((r) => r.v),
+      baseUnits: stockDb.prepare("SELECT DISTINCT TRIM(base_unit) v FROM purchasing_history_records WHERE TRIM(base_unit)<>'' ORDER BY v COLLATE NOCASE").all().map((r) => r.v),
+    },
     holidayAnalysis, upcomingHolidays: upcoming, imports, snapshotSync, weeklyReview, ambiguousMatches, stores: allStores,
     excludedCategories: [...excludedCategories],
   };
