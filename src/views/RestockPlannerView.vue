@@ -7,6 +7,7 @@ import { useAuth } from '../composables/useAuth.js';
 import PurchasingHistoryUpload from '../components/PurchasingHistoryUpload.vue';
 import { isReorderStockEligible, normalizePurchasingPreferences } from '../utils/purchasingPreferences.js';
 import { useToast } from '../composables/useToast.js';
+import { recommendationGroup, sameUnit, unitConversionIssue } from '../utils/reorderDecision.js';
 
 const { currentUser } = useAuth();
 const toast = useToast();
@@ -48,6 +49,9 @@ const clockNow = ref(Date.now());
 let clockTimer;
 const page = ref(1);
 const selected = ref(null);
+const detailTab = ref('overview');
+const groupFilter = ref('all');
+const chartSeries = ref({ projected: true, actualSales: false, forecastSales: false, observed: false });
 const settingsOpen = ref(false);
 const settingsDraft = ref({});
 const settingsError = ref('');
@@ -129,9 +133,14 @@ const baseRows = computed(() => data.value.rows.filter((row) =>
   (storeFilter.value === 'all' || row.storeId === storeFilter.value) &&
   (movementFilter.value === 'all' || row.movement === movementFilter.value) &&
   `${row.productName || row.product || ''} ${row.productVariant || ''} ${row.sku || ''}`.toLowerCase().includes(productSearch.value.trim().toLowerCase())));
+const groups = ['Urgent', 'Reorder Soon', 'Healthy', 'Data Issues'];
+const groupFor = (row) => recommendationGroup(row, coverage.value, data.value.today);
 const filteredRows = computed(() => baseRows.value.filter((row) =>
-  statusFilter.value === 'all' || (statusFilter.value === 'needs-order' ? needsOrder(row) : row.status === statusFilter.value)));
+  (groupFilter.value === 'all' || groupFor(row) === groupFilter.value) &&
+  (statusFilter.value === 'all' || (statusFilter.value === 'needs-order' ? needsOrder(row) : row.status === statusFilter.value))));
 const rows = computed(() => [...filteredRows.value].sort((a, b) => {
+  const groupPriority = groups.indexOf(groupFor(a)) - groups.indexOf(groupFor(b));
+  if (groupPriority) return groupPriority;
   if (sortMode.value === 'urgent') {
     const urgency = (row) => row.recommendedReorderDate && row.recommendedReorderDate <= data.value.today ? 0 :
       row.daysLeft == null ? 2 : 1;
@@ -146,12 +155,9 @@ const rows = computed(() => [...filteredRows.value].sort((a, b) => {
 }));
 const pages = computed(() => Math.max(1, Math.ceil(rows.value.length / 30)));
 const visibleRows = computed(() => rows.value.slice((page.value - 1) * 30, page.value * 30));
-const counts = computed(() => ({
-  reorder: baseRows.value.filter(needsOrder).length,
-  critical: baseRows.value.filter((row) => row.status === 'Critical Stock').length,
-  low: baseRows.value.filter((row) => row.status === 'Low Stock').length,
-  overstock: baseRows.value.filter((row) => row.status === 'Overstock').length,
-}));
+const visibleGroups = computed(() => groups.map((name) => ({ name, rows: visibleRows.value.filter((row) => groupFor(row) === name) })).filter((group) => group.rows.length));
+const groupCounts = computed(() => Object.fromEntries(groups.map((group) => [group, baseRows.value.filter((row) => groupFor(row) === group).length])));
+const badgeClass = (group) => ({ Urgent: 'bg-red-100 text-red-800', 'Reorder Soon': 'bg-orange-100 text-orange-800', Healthy: 'bg-green-50 text-green-800', 'Data Issues': 'bg-slate-100 text-slate-700' }[group]);
 const holidayAnalysis = computed(() => data.value.holidayAnalysis.filter((row) =>
   holidayStoreFilter.value === 'all' || row.storeId === holidayStoreFilter.value)
   .sort((a, b) => b.startDate.localeCompare(a.startDate) || a.name.localeCompare(b.name)));
@@ -173,23 +179,10 @@ const qtyLabel = (row, recommendation) => {
   if (!recommendation) return '—';
   const quantity = recommendation.orderQty;
   const unit = row.purchasingUnit || 'Piece';
-  const equivalent = quantity * (row.conversionQty || 1);
-  return row.conversionQty > 1
-    ? `${number(quantity)} ${unit} (${number(equivalent)} ${row.baseUnit}/${unit})`
-    : `${number(quantity)} ${unit}`;
+  return quantity > 0 ? `${number(quantity)} ${unit}` : 'No order';
 };
-const statusClass = (status) => ({
-  'Critical Stock': 'bg-red-100 text-red-800',
-  'Low Stock': 'bg-amber-100 text-amber-800',
-  'Reorder Required': 'bg-orange-100 text-orange-800',
-  Overstock: 'bg-blue-100 text-blue-800',
-  'Sufficient Stock': 'bg-green-100 text-green-800',
-  'Slow Moving': 'bg-violet-100 text-violet-800',
-  Unknown: 'bg-slate-100 text-slate-700',
-}[status] || 'bg-slate-100 text-slate-700');
-
-watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage], () => { page.value = 1; });
-watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage, holidayStoreFilter], () => {
+watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage, groupFilter], () => { page.value = 1; });
+watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage, groupFilter, holidayStoreFilter], () => {
   if (!filterReady || rangeLoading.value) return;
   if (filterNotice == null) filterNotice = startNotice('Updating filters…');
   clearTimeout(filterTimer);
@@ -239,6 +232,9 @@ watch(() => supplierEdit.value.supplierName, (name) => {
     conversionQty: supplier.conversionQty || 1, baseUnit: unitValue(supplier.baseUnit || selected.value.baseUnit, baseUnitOptions),
   };
 });
+function updateUnitConversion() {
+  if (sameUnit(supplierEdit.value.purchasingUnit, supplierEdit.value.baseUnit)) supplierEdit.value.conversionQty = 1;
+}
 
 function initializeHolidayAdjustments() {
   if (!selectedHolidayStore.value && stores.value.length) selectedHolidayStore.value = stores.value[0].id;
@@ -338,6 +334,7 @@ async function resetFilters() {
   }
   storeFilter.value = 'all';
   statusFilter.value = 'all';
+  groupFilter.value = 'all';
   movementFilter.value = 'all';
   productSearch.value = '';
   coverage.value = '7';
@@ -353,7 +350,7 @@ function savePreferences() {
   preferenceError.value = '';
   try {
     localStorage.setItem(preferenceKey(), JSON.stringify({
-      store: storeFilter.value, status: statusFilter.value, movement: movementFilter.value,
+      store: storeFilter.value, status: statusFilter.value, group: groupFilter.value, movement: movementFilter.value,
       search: productSearch.value, coverage: coverage.value, sort: sortMode.value,
       ...appliedRange.value,
     }));
@@ -363,7 +360,7 @@ function savePreferences() {
 }
 
 // The last used filters are remembered automatically; the sales range is saved once applied.
-watch([storeFilter, statusFilter, movementFilter, productSearch, coverage, sortMode, appliedRange], savePreferences, { deep: true });
+watch([storeFilter, statusFilter, groupFilter, movementFilter, productSearch, coverage, sortMode, appliedRange], savePreferences, { deep: true });
 
 function restorePreferences() {
   try {
@@ -373,6 +370,7 @@ function restorePreferences() {
     const saved = normalizePurchasingPreferences(JSON.parse(raw), today);
     storeFilter.value = saved.store;
     statusFilter.value = saved.status;
+    groupFilter.value = saved.group;
     movementFilter.value = saved.movement;
     productSearch.value = saved.search;
     coverage.value = saved.coverage;
@@ -383,10 +381,6 @@ function restorePreferences() {
   } catch {
     preferenceError.value = 'Saved preferences could not be loaded.';
   }
-}
-
-function toggleStatus(status) {
-  statusFilter.value = statusFilter.value === status ? 'all' : status;
 }
 
 function printSummary() {
@@ -411,6 +405,8 @@ async function loadProductDetails(row) {
 }
 
 function openDetails(row) {
+  detailTab.value = 'overview';
+  chartSeries.value = { projected: true, actualSales: false, forecastSales: false, observed: false };
   selected.value = row;
   loadProductDetails(row);
 }
@@ -474,6 +470,10 @@ async function saveProductDetails() {
     productError.value = 'Select or enter a Supplier name to save lead time, MOQ and units — they are stored per supplier.';
     toast.error(productError.value);
     return;
+  }
+  if (hasSupplier) {
+    const issue = unitConversionIssue(edit.purchasingUnit, edit.baseUnit, edit.conversionQty);
+    if (issue) { productError.value = issue; toast.error(issue); return; }
   }
   const product = {
     storeId: row.storeId, productId: row.productId,
@@ -594,7 +594,7 @@ const detailChart = computed(() => {
   let stock = row.reviewStock == null ? NaN : Number(row.reviewStock);
   const projected = future.map((day) => {
     if (!Number.isFinite(stock) || day.qty == null) return null;
-    const beforeDemand = stock;
+    const beforeDemand = Math.round(stock);
     stock = Math.max(0, stock - day.qty);
     return beforeDemand;
   });
@@ -604,10 +604,10 @@ const detailChart = computed(() => {
   return {
     labels,
     datasets: [
-      { label: 'Actual daily sales', data: labels.map((date) => actual.get(date)?.qty ?? null), borderColor: '#0f766e', yAxisID: 'sales', pointRadius: 1, tension: 0.15, spanGaps: false },
-      { label: 'Forecast sales', data: labels.map((date) => forecast.get(date)?.qty ?? null), borderColor: '#ea580c', yAxisID: 'sales', borderDash: [6, 4], pointRadius: 1 },
-      { label: 'Observed stock', data: labels.map((date) => actual.get(date)?.stock ?? null), borderColor: '#2563eb', yAxisID: 'stock', pointRadius: 2, spanGaps: false },
-      { label: 'Projected stock', data: labels.map((date) => forecast.get(date)?.stock ?? null), borderColor: '#2563eb', yAxisID: 'stock', borderDash: [6, 4], pointRadius: 1 },
+      ...(chartSeries.value.actualSales ? [{ label: 'Actual sales', data: labels.map((date) => actual.get(date)?.qty ?? null), borderColor: '#64748b', yAxisID: 'sales', pointRadius: 1, spanGaps: false }] : []),
+      ...(chartSeries.value.forecastSales ? [{ label: 'Forecast sales', data: labels.map((date) => forecast.get(date)?.qty ?? null), borderColor: '#9a3412', yAxisID: 'sales', borderDash: [6, 4], pointRadius: 1 }] : []),
+      ...(chartSeries.value.observed ? [{ label: 'Observed stock', data: labels.map((date) => actual.get(date)?.stock == null ? null : Math.round(actual.get(date).stock)), borderColor: '#475569', yAxisID: 'stock', pointRadius: 2, spanGaps: false }] : []),
+      ...(chartSeries.value.projected ? [{ label: 'Projected stock', data: labels.map((date) => forecast.get(date)?.stock ?? null), borderColor: '#0f766e', yAxisID: 'stock', borderDash: [6, 4], pointRadius: 1 }] : []),
     ],
   };
 });
@@ -650,10 +650,7 @@ onUnmounted(() => {
 
       <template v-if="tab === 'recommendations'">
         <section class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <button type="button" class="rounded-xl bg-red-100 p-4 text-left text-red-800 ring-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-600" :class="statusFilter === 'Critical Stock' ? 'ring-2 ring-red-600' : ''" @click="toggleStatus('Critical Stock')"><span class="text-sm font-bold">Critical stock</span><span class="mt-1 block text-3xl font-extrabold tabular-nums">{{ counts.critical }}</span><span class="mt-1 block text-xs">Expected to run out within 7 days.</span></button>
-          <button type="button" class="rounded-xl bg-amber-100 p-4 text-left text-amber-800 ring-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-600" :class="statusFilter === 'Low Stock' ? 'ring-2 ring-amber-600' : ''" @click="toggleStatus('Low Stock')"><span class="text-sm font-bold">Low stock</span><span class="mt-1 block text-3xl font-extrabold tabular-nums">{{ counts.low }}</span><span class="mt-1 block text-xs">Expected to run out within 14 days.</span></button>
-          <button type="button" class="rounded-xl bg-orange-100 p-4 text-left text-orange-800 ring-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-600" :class="statusFilter === 'needs-order' ? 'ring-2 ring-orange-600' : ''" @click="toggleStatus('needs-order')"><span class="text-sm font-bold">Reorder required</span><span class="mt-1 block text-3xl font-extrabold tabular-nums">{{ counts.reorder }}</span><span class="mt-1 block text-xs">System recommends a positive order.</span></button>
-          <button type="button" class="rounded-xl bg-blue-100 p-4 text-left text-blue-800 ring-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600" :class="statusFilter === 'Overstock' ? 'ring-2 ring-blue-600' : ''" @click="toggleStatus('Overstock')"><span class="text-sm font-bold">Overstock</span><span class="mt-1 block text-3xl font-extrabold tabular-nums">{{ counts.overstock }}</span><span class="mt-1 block text-xs">Estimated stock covers over {{ data.settings.overstockDays }} days.</span></button>
+          <button v-for="group in groups" :key="group" type="button" class="rounded-xl border p-4 text-left focus-visible:outline focus-visible:outline-2" :class="[badgeClass(group), groupFilter === group ? 'ring-2 ring-slate-600' : '']" :aria-pressed="groupFilter === group" @click="groupFilter = groupFilter === group ? 'all' : group; statusFilter = 'all'"><span class="text-sm font-bold">{{ group }}</span><span class="mt-1 block text-2xl font-extrabold tabular-nums">{{ groupCounts[group] }}</span></button>
         </section>
         <section class="space-y-3 rounded-xl border bg-white p-4">
           <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
@@ -679,52 +676,44 @@ onUnmounted(() => {
         </section>
         <p v-if="storeFilter === 'birmas-nomadic' && !data.rows.some(row => row.storeId === 'birmas-nomadic')" role="status" class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">No Nomadic inventory products are available for recommendations. Check the inventory feed.</p>
         <section class="overflow-hidden rounded-xl border bg-white shadow-sm">
-          <header class="flex flex-wrap items-center justify-between gap-2 border-b p-4"><div><h2 class="font-bold">Reorder recommendations</h2><p class="text-xs text-slate-500">Order quantities are supplier purchasing units. Open Details &amp; MOQ to edit supplier settings.</p></div><button type="button" class="rounded border border-teal-700 px-3 py-2 text-xs font-bold text-teal-800" @click="printSummary">Print summary</button></header>
+          <header class="flex flex-wrap items-center justify-between gap-2 border-b p-4"><div><h2 class="font-bold">Reorder recommendations</h2><p class="text-xs text-slate-500">Review urgent products first. Quantities are recommendations, not purchase orders.</p></div><button type="button" class="rounded border px-3 py-2 text-xs font-bold text-slate-700" @click="printSummary">Print summary</button></header>
           <details class="mx-4 my-3 rounded-lg bg-slate-50 p-3 text-xs">
             <summary class="cursor-pointer font-bold text-teal-800">How calculations work</summary>
-            <ol class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <li><strong>1. Monday baseline:</strong> recommendations start from Monday's saved stock snapshot; current synced stock is shown for comparison.</li>
-              <li><strong>2. Demand:</strong> weekday sales averages exclude configured holiday windows, days without sales coverage, and observed zero-stock days.</li>
-              <li><strong>3. Order quantity:</strong> forecast demand through lead time, Tuesday buffer and selected coverage; subtract Monday stock, then apply MOQ and pack conversion.</li>
-              <li><strong>4. Review:</strong> configured holiday adjustments affect future demand. Quantities are read-only system recommendations; no incoming PO stock is assumed.</li>
+            <ol class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <li>1. Start with Monday stock</li>
+              <li>2. Forecast demand</li>
+              <li>3. Apply lead time and coverage</li>
+              <li>4. Apply MOQ and units</li>
+              <li>5. Recommend quantity</li>
             </ol>
           </details>
-          <p class="px-4 pb-3 text-xs text-amber-800">Order recommendations use Monday stock, not current stock. No incoming quantities or active orders are included.</p>
-          <div class="hidden overflow-x-auto xl:block">
-            <table class="w-full min-w-[1040px] table-fixed text-left text-xs">
-              <colgroup><col style="width:25%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:15%"><col style="width:20%"><col style="width:8%"></colgroup>
-              <thead class="bg-slate-50 text-[10px] uppercase text-slate-600"><tr>
-                <th v-for="heading in ['Product','Status','Stock','Sales pace','Order by & runway','Order qty','Details']" :key="heading" class="p-3">{{ heading }}</th>
-              </tr></thead>
-              <tbody>
-                <tr v-for="row in visibleRows" :key="`${row.storeId}-${row.productId}`" class="cursor-pointer border-t hover:bg-teal-50" tabindex="0" @click="openDetails(row)" @keydown.enter="openDetails(row)" @keydown.space.prevent="openDetails(row)">
-                  <td class="p-3 align-top"><strong class="block break-words text-sm">{{ row.productName || row.product }}</strong><span class="mt-1 block text-slate-500">{{ outletName(row.store,row.storeId) }} · <span :class="row.movement === 'Fast Moving' ? 'text-teal-800' : row.movement === 'Slow Moving' ? 'text-violet-800' : ''">{{ row.movement }}<template v-if="row.movementManual"> · Manual</template></span></span><span v-if="row.reason" class="mt-1 block whitespace-normal text-[10px] text-amber-800">{{ row.reason }}</span><span v-else-if="row.lowData" class="mt-1 block text-[10px] text-amber-700">Low data · {{ row.usableDays }} days</span><span v-for="holiday in row.holidayEvents" :key="holiday.id" class="block break-words text-[10px] text-purple-800">{{ holiday.name }} {{ holiday.adjustmentPct > 0 ? '+' : '' }}{{ number(holiday.adjustmentPct) }}%</span><span v-if="row.holidayConflict" class="block text-[10px] text-red-700">Holiday overlap needs review</span></td>
-                  <td class="p-3 align-top"><span class="inline-block rounded-full px-2 py-1 font-bold" :class="statusClass(row.status)">{{ row.status }}</span></td>
-                  <td class="p-3 align-top text-right tabular-nums"><strong class="block text-sm">{{ number(row.currentStock) }}</strong><span class="mt-1 block text-[10px] text-slate-500">Mon {{ number(row.reviewStock) }} · {{ dateDisplay(row.stockReferenceDate) }}</span></td>
-                  <td class="p-3 align-top text-right tabular-nums"><strong class="block">{{ number(row.avgDaily) }} / day</strong><span class="mt-1 block text-[10px] text-slate-500">{{ number(row.avgWeekly) }} / week</span></td>
-                  <td class="p-3 align-top tabular-nums"><strong class="block" :class="row.recommendedReorderDate && row.recommendedReorderDate <= data.today ? 'text-red-700' : ''">Order {{ dateLabel(row.recommendedReorderDate) }}</strong><span class="mt-1 block text-[10px] text-slate-600">{{ dayLabel(row.daysLeft) }} left · run out {{ dateDisplay(row.expectedStockoutDate) }}</span></td>
-                  <td class="p-3 align-top tabular-nums"><template v-for="entry in recommendationsFor(row)" :key="entry.label"><span class="block font-bold">{{ entry.label }} · {{ qtyLabel(row,entry.value) }}</span><span class="mt-1 block text-[10px] text-slate-500">Up to {{ number(entry.value?.orderUpTo) }} {{ row.baseUnit }} · {{ row.leadDays }}d lead</span></template><span class="mt-1 block text-[10px] text-slate-500">MOQ {{ row.supplier?.moq == null ? 'not set' : number(row.supplier.moq) }} {{ row.purchasingUnit }} · pack {{ number(row.conversionQty) }} {{ row.baseUnit }}</span></td>
-                  <td class="p-3 align-top"><button type="button" class="font-bold text-teal-800 underline" @click.stop="openDetails(row)">Details &amp; MOQ ›</button></td>
-                </tr>
-                <tr v-if="!visibleRows.length"><td colspan="7" class="p-8 text-center text-slate-500">No products match these filters.</td></tr>
-              </tbody>
-            </table>
+          <p class="px-4 pb-3 text-xs text-slate-500">Recommendations use Monday stock. Incoming orders are not included.</p>
+          <div v-for="group in visibleGroups" :key="group.name" class="border-t">
+            <h3 class="bg-slate-50 px-4 py-2 text-sm font-bold text-slate-700">{{ group.name }} <span class="font-normal">· {{ groupCounts[group.name] }}</span></h3>
+            <div class="hidden overflow-x-auto md:block">
+              <table class="w-full text-left text-sm">
+                <thead class="text-xs text-slate-500"><tr><th class="p-3">Product / Outlet</th><th class="p-3">Status</th><th class="p-3">Runway</th><th class="p-3">Order by</th><th class="p-3">Recommendation</th><th class="p-3"><span class="sr-only">Details</span></th></tr></thead>
+                <tbody>
+                  <tr v-for="row in group.rows" :key="`${row.storeId}-${row.productId}`" class="cursor-pointer border-t hover:bg-slate-50" tabindex="0" @click="openDetails(row)" @keydown.enter="openDetails(row)" @keydown.space.prevent="openDetails(row)">
+                    <td class="p-3"><strong>{{ row.productName || row.product }}</strong><span class="block text-xs text-slate-500">{{ outletName(row.store,row.storeId) }}</span></td>
+                    <td class="p-3"><span class="rounded-full px-2 py-1 text-xs font-bold" :class="badgeClass(group.name)">{{ group.name }}</span></td>
+                    <td class="p-3 font-semibold tabular-nums">{{ dayLabel(row.daysLeft) }}</td>
+                    <td class="p-3 tabular-nums">{{ needsOrder(row) ? dateLabel(row.recommendedReorderDate) : '—' }}</td>
+                    <td class="p-3 tabular-nums"><template v-for="entry in recommendationsFor(row)" :key="entry.label"><strong class="block">{{ coverage === 'both' ? entry.label + ' · ' : '' }}{{ entry.value ? qtyLabel(row,entry.value) : 'Unavailable' }}</strong></template></td>
+                    <td class="p-3"><button type="button" class="font-bold text-slate-700 underline" @click.stop="openDetails(row)">Details</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="grid gap-2 p-3 md:hidden">
+              <article v-for="row in group.rows" :key="`${row.storeId}-${row.productId}`" class="rounded-lg border p-3" tabindex="0" @click="openDetails(row)" @keydown.enter="openDetails(row)" @keydown.space.prevent="openDetails(row)">
+                <div class="flex items-start justify-between gap-2"><div><h4 class="font-bold">{{ row.productName || row.product }}</h4><p class="text-xs text-slate-500">{{ outletName(row.store,row.storeId) }}</p></div><span class="shrink-0 rounded-full px-2 py-1 text-xs font-bold" :class="badgeClass(group.name)">{{ group.name }}</span></div>
+                <div class="mt-3 flex flex-wrap justify-between gap-3 text-sm"><div><span class="block text-xs text-slate-500">Recommendation</span><strong v-for="entry in recommendationsFor(row)" :key="entry.label" class="block">{{ coverage === 'both' ? entry.label + ' · ' : '' }}{{ entry.value ? qtyLabel(row,entry.value) : 'Unavailable' }}</strong></div><div><span class="block text-xs text-slate-500">Runway</span><strong>{{ dayLabel(row.daysLeft) }}</strong></div><div><span class="block text-xs text-slate-500">Order by</span><strong>{{ needsOrder(row) ? dateLabel(row.recommendedReorderDate) : '—' }}</strong></div></div>
+                <button type="button" class="mt-3 font-bold text-slate-700 underline" @click.stop="openDetails(row)">View details</button>
+              </article>
+            </div>
           </div>
-          <div class="grid gap-3 p-3 xl:hidden">
-            <article v-for="row in visibleRows" :key="`${row.storeId}-${row.productId}`" class="rounded-xl border p-3 shadow-sm" tabindex="0" @click="openDetails(row)" @keydown.enter="openDetails(row)">
-              <div class="flex items-start justify-between gap-2"><div class="min-w-0"><h3 class="break-words font-bold">{{ row.productName || row.product }}</h3><p class="mt-1 text-xs text-slate-500">{{ outletName(row.store,row.storeId) }} · {{ row.movement }}<span v-if="row.movementManual"> · Manual</span></p></div><span class="shrink-0 rounded-full px-2 py-1 text-[10px] font-bold" :class="statusClass(row.status)">{{ row.status }}</span></div>
-              <p v-if="row.reason" class="mt-2 text-xs text-amber-800">{{ row.reason }}</p><p v-else-if="row.lowData" class="mt-2 text-xs text-amber-700">Low data · {{ row.usableDays }} days</p>
-              <p v-for="holiday in row.holidayEvents" :key="holiday.id" class="mt-1 text-xs text-purple-800">{{ holiday.name }} {{ holiday.adjustmentPct > 0 ? '+' : '' }}{{ number(holiday.adjustmentPct) }}%<span v-if="row.holidayConflict" class="text-red-700"> · overlap needs review</span></p>
-              <div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs tabular-nums">
-                <p><span class="block text-slate-500">Stock · Monday</span><strong>{{ number(row.currentStock) }}</strong> · {{ number(row.reviewStock) }}</p>
-                <p><span class="block text-slate-500">Sales pace</span><strong>{{ number(row.avgDaily) }}/day</strong> · {{ number(row.avgWeekly) }}/week</p>
-                <p class="col-span-2"><span class="block text-slate-500">Order by · runway</span><strong :class="row.recommendedReorderDate && row.recommendedReorderDate <= data.today ? 'text-red-700' : ''">{{ dateLabel(row.recommendedReorderDate) }}</strong> · {{ dayLabel(row.daysLeft) }} left, out {{ dateDisplay(row.expectedStockoutDate) }}</p>
-                <p class="col-span-2"><span class="block text-slate-500">Order quantity · system only</span><template v-for="entry in recommendationsFor(row)" :key="entry.label"><strong class="mr-3">{{ entry.label }} · {{ qtyLabel(row,entry.value) }}</strong><span class="mr-3 text-[10px] text-slate-500">Up to {{ number(entry.value?.orderUpTo) }} {{ row.baseUnit }}</span></template><span class="block text-[10px] text-slate-500">{{ row.leadDays }}d lead · MOQ {{ row.supplier?.moq == null ? 'not set' : number(row.supplier.moq) }} {{ row.purchasingUnit }} · pack {{ number(row.conversionQty) }} {{ row.baseUnit }}</span></p>
-              </div>
-              <button type="button" class="mt-3 w-full rounded-lg border border-teal-700 px-3 py-2 text-sm font-bold text-teal-800" @click.stop="openDetails(row)">Details &amp; MOQ ›</button>
-            </article>
-            <p v-if="!visibleRows.length" class="p-8 text-center text-sm text-slate-500">No products match these filters.</p>
-          </div>
+          <p v-if="!visibleRows.length" class="p-8 text-center text-sm text-slate-500">No products match these filters.</p>
           <footer class="flex items-center justify-between border-t p-3 text-xs"><span>{{ rows.length }} outlet/products · Page {{ page }} of {{ pages }}</span><div class="space-x-2"><button class="rounded border px-3 py-1 disabled:opacity-40" :disabled="page <= 1" @click="page--">Previous</button><button class="rounded border px-3 py-1 disabled:opacity-40" :disabled="page >= pages" @click="page++">Next</button></div></footer>
         </section>
       </template>
@@ -831,37 +820,40 @@ onUnmounted(() => {
         <div v-if="selected" class="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4" @click.self="!productSaving && (selected = null)" @keydown.esc="!productSaving && (selected = null)">
           <section role="dialog" aria-modal="true" aria-label="Purchasing recommendation details" class="max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
             <header class="flex justify-between gap-3"><div><h2 class="text-lg font-extrabold">{{ selected.productName }} · {{ selected.productVariant || selected.sku || 'No variant identifier' }}</h2><p class="text-sm text-slate-600">{{ outletName(selected.store,selected.storeId) }} · {{ selected.movement }} · Monday stock {{ number(selected.reviewStock) }} ({{ selected.reviewDate }}) · current stock {{ number(selected.currentStock) }}</p></div><button :disabled="productSaving" class="shrink-0 rounded border px-3 py-1 disabled:opacity-50" aria-label="Close details" @click="selected = null">Close</button></header>
-            <div class="mt-4 grid gap-2 sm:grid-cols-3">
-              <article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Supplier lead time</p><strong class="tabular-nums">{{ selected.leadDays }} days</strong></article>
-              <article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">MOQ · pack unit</p><strong>{{ selected.supplier?.moq == null ? 'MOQ not set' : number(selected.supplier.moq) }} {{ selected.purchasingUnit }} · {{ number(selected.conversionQty) }} {{ selected.baseUnit }}/pack</strong></article>
-              <article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Order up to · 7d / 10d</p><strong class="tabular-nums">{{ number(selected.recommendation7?.orderUpTo) }} / {{ number(selected.recommendation10?.orderUpTo) }} {{ selected.baseUnit }}</strong></article>
-            </div>
-            <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Average sales/week</p><strong>{{ number(selected.avgWeekly) }} {{ selected.baseUnit }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Average sales/day</p><strong>{{ number(selected.avgDaily) }} {{ selected.baseUnit }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Days left · run out</p><strong>{{ dayLabel(selected.daysLeft) }} · {{ dateLabel(selected.expectedStockoutDate) }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Order by</p><strong>{{ dateLabel(selected.recommendedReorderDate) }}</strong></article><article class="rounded-lg bg-slate-50 p-3"><p class="text-xs text-slate-500">Usable history</p><strong>{{ selected.usableDays }} days · {{ dateDisplay(data.historyStart) }}–{{ dateDisplay(data.historyEnd) }}</strong></article></div>
-            <p v-if="detailLoading" role="status" class="mt-3 rounded bg-teal-50 p-3 text-sm text-teal-900">Loading product history and forecast…</p>
-            <p v-if="detailError" role="alert" class="mt-3 rounded bg-red-50 p-3 text-sm text-red-800">{{ detailError }}</p>
-            <p v-if="selected.reason" class="mt-3 rounded bg-amber-50 p-3 text-sm text-amber-900">{{ selected.reason }}. System quantities are unavailable until this data issue is resolved.</p>
-            <p v-if="selected.lowData" class="mt-3 text-sm text-amber-800">Low data: some weekdays or historical days are missing; review the demand estimate.</p>
-            <p v-if="selected.holidayConflict" class="mt-2 text-sm text-red-700">Overlapping holiday adjustments are not combined. Set the same explicit combined group for overlapping occasions before using the affected forecast.</p>
-            <section class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Choose a supplier from purchase order history or enter one manually, and select the units. Settings are saved for this product and outlet only. Minimum stock defaults to the system recommendation for that coverage and can be edited; clear it to return to automatic. Use Save product details to save everything. Inputs you type are remembered as suggestions.</p><fieldset :disabled="productSaving" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 disabled:opacity-50">
+            <nav class="mt-4 flex gap-2 border-b" aria-label="Product detail sections"><button v-for="item in [{id:'overview',label:'Overview'},{id:'forecast',label:'Forecast'},{id:'settings',label:'Settings'}]" :key="item.id" type="button" class="border-b-2 px-3 py-2 text-sm font-bold" :class="detailTab === item.id ? 'border-slate-800 text-slate-900' : 'border-transparent text-slate-500'" :aria-current="detailTab === item.id ? 'page' : undefined" @click="detailTab = item.id">{{ item.label }}</button></nav>
+            <p v-if="detailLoading" role="status" class="mt-3 text-sm text-slate-600">Loading product history and forecast…</p>
+            <p v-if="detailError" role="alert" class="mt-3 text-sm text-red-700">{{ detailError }}</p>
+            <section v-if="detailTab === 'overview'" role="tabpanel" id="detail-overview" class="mt-4 space-y-4">
+              <div class="rounded-xl border p-4"><div class="flex flex-wrap items-center justify-between gap-2"><p class="text-xs font-bold uppercase text-slate-500">Recommended action</p><span class="rounded-full px-2 py-1 text-xs font-bold" :class="badgeClass(groupFor(selected))">{{ groupFor(selected) }}</span></div>
+                <p v-for="entry in recommendationsFor(selected)" :key="entry.label" class="mt-2 text-2xl font-extrabold">{{ coverage === 'both' ? entry.label + ' · ' : '' }}{{ !entry.value ? 'Recommendation unavailable' : entry.value.orderQty > 0 ? 'Order ' + qtyLabel(selected,entry.value) : 'No order recommended' }}</p>
+                <p class="mt-2 text-sm text-slate-600">{{ selected.reason || (recommendationsFor(selected).some(entry => !entry.value) ? 'The recommendation is unavailable for this coverage; review the forecast and data.' : needsOrder(selected) ? 'Forecast demand exceeds the available Monday stock for the selected coverage.' : 'The forecast does not currently indicate a positive order quantity.') }}</p>
+                <p v-if="selected.lowData" class="mt-2 text-xs text-slate-600">Limited sales history; review the forecast before acting.</p>
+              </div>
+              <dl class="grid grid-cols-2 gap-3 sm:grid-cols-3"><div v-for="item in [{label:'Current stock', value:number(selected.currentStock) + ' ' + selected.baseUnit},{label:'Monday stock',value:number(selected.reviewStock) + ' ' + selected.baseUnit},{label:'Days remaining',value:dayLabel(selected.daysLeft)},{label:'Order by',value:needsOrder(selected) ? dateLabel(selected.recommendedReorderDate) : '—'},{label:'Expected stockout',value:dateDisplay(selected.expectedStockoutDate)}]" :key="item.label" class="rounded-lg bg-slate-50 p-3"><dt class="text-xs text-slate-500">{{ item.label }}</dt><dd class="mt-1 font-bold tabular-nums">{{ item.value }}</dd></div></dl>
+              <p class="text-xs text-slate-500">Runway and recommended quantity are based on Monday stock; current stock is shown for comparison. Incoming orders are not included.</p>
+            </section>
+            <section v-if="detailTab === 'forecast'" role="tabpanel" id="detail-forecast" class="mt-4 space-y-4">
+              <div><h3 class="font-bold">Projected stock</h3><p class="text-xs text-slate-500">Starting from Monday stock, forecast sales reduce stock each day. No incoming stock is assumed.</p></div>
+              <fieldset class="flex flex-wrap gap-3 text-xs"><legend class="sr-only">Chart series</legend><label v-for="series in [{key:'projected',label:'Projected stock'},{key:'actualSales',label:'Actual sales'},{key:'forecastSales',label:'Forecast sales'},{key:'observed',label:'Observed stock'}]" :key="series.key"><input v-model="chartSeries[series.key]" type="checkbox"> {{ series.label }}</label></fieldset>
+              <div v-if="selected.forecast && selected.history" class="h-72"><Line :data="detailChart" :options="{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{sales:{position:'left',beginAtZero:true,title:{display:true,text:'Sales / day'}},stock:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},ticks:{precision:0},title:{display:true,text:'Stock'}}}}" /></div>
+              <p class="text-sm text-slate-600">Sales history: {{ dateDisplay(data.historyStart) }}–{{ dateDisplay(data.historyEnd) }} · {{ selected.usableDays }} usable days · {{ number(selected.avgDaily) }} {{ selected.baseUnit }} per day.</p>
+              <div><h3 class="font-bold">Holiday adjustments</h3><p v-if="!selected.holidayEvents.length" class="text-sm text-slate-500">None applied.</p><p v-for="holiday in selected.holidayEvents" :key="holiday.id" class="text-sm text-slate-600">{{ holiday.name }}: {{ holiday.adjustmentPct > 0 ? '+' : '' }}{{ number(holiday.adjustmentPct) }}% ({{ holiday.start_date }}–{{ holiday.end_date }})</p><p v-if="selected.holidayConflict" class="text-sm text-red-700">Overlapping holiday adjustments need review.</p></div>
+              <details class="rounded-lg bg-slate-50 p-3 text-sm"><summary class="cursor-pointer font-bold">Show calculation details</summary><div v-for="entry in recommendationsFor(selected)" :key="entry.label" class="mt-2"><strong>{{ entry.label }}</strong><p>Forecast through lead time: {{ number(entry.value?.demandDuringLead,2) }} · Coverage demand: {{ number(entry.value?.coverageDemand,2) }} · Target: {{ number(entry.value?.orderUpTo,2) }} {{ selected.baseUnit }}</p><p>MOQ: {{ selected.supplier?.moq == null ? 'not set' : number(selected.supplier.moq) + ' ' + selected.purchasingUnit }}<span v-if="!sameUnit(selected.purchasingUnit, selected.baseUnit)"> · 1 {{ selected.purchasingUnit }} = {{ number(selected.conversionQty) }} {{ selected.baseUnit }}</span></p></div></details>
+            </section>
+            <section v-if="detailTab === 'settings'" role="tabpanel" id="detail-settings" class="mt-5 rounded-xl border p-4"><h3 class="font-bold">Supplier and product settings · Edit MOQ</h3><p class="mt-1 text-xs text-slate-600">Choose a supplier from purchase order history or enter one manually, and select the units. Settings are saved for this product and outlet only. Minimum stock defaults to the system recommendation for that coverage and can be edited; clear it to return to automatic. Use Save product details to save everything. Inputs you type are remembered as suggestions.</p><fieldset :disabled="productSaving" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 disabled:opacity-50">
               <label class="text-xs font-semibold">Movement classification<select v-model="productEdits.movement" class="mt-1 block w-full rounded border p-2"><option value="">Automatic ({{ selected.movement }})</option><option>Fast Moving</option><option>Slow Moving</option></select></label>
               <label class="text-xs font-semibold">Minimum stock · 7-day (default = recommendation)<input v-model="productEdits.minStock" list="hist-minStock" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Minimum stock · 10-day (default = recommendation)<input v-model="productEdits.minStock10" list="hist-minStock10" type="number" min="0" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Supplier name<select v-model="supplierChoice" class="mt-1 block w-full rounded border p-2"><option value="">Select supplier…</option><option v-for="name in supplierOptions" :key="name" :value="name">{{ name }}</option><option :value="MANUAL_OPTION">Enter manually…</option></select><input v-if="supplierChoice === MANUAL_OPTION" v-model.trim="supplierEdit.supplierName" list="hist-supplierName" maxlength="200" placeholder="Type supplier name" class="mt-2 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Supplier lead time (days)<input v-model="supplierEdit.leadDays" list="hist-leadDays" type="number" min="1" max="365" class="mt-1 block w-full rounded border p-2"></label>
               <label class="text-xs font-semibold">Minimum order quantity (supplier units)<input v-model="supplierEdit.moq" list="hist-moq" type="number" min="0" step="any" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Purchasing unit<select v-model="supplierEdit.purchasingUnit" class="mt-1 block w-full rounded border p-2"><option value="">Select unit…</option><option v-if="supplierEdit.purchasingUnit && !purchasingUnitOptions.includes(supplierEdit.purchasingUnit)" :value="supplierEdit.purchasingUnit" disabled>Current: {{ supplierEdit.purchasingUnit }} (not in list)</option><option v-for="unit in purchasingUnitOptions" :key="unit" :value="unit">{{ unit }}</option></select></label>
-              <label class="text-xs font-semibold">Base units per purchasing unit<input v-model="supplierEdit.conversionQty" list="hist-conversionQty" type="number" min="0.0001" step="any" class="mt-1 block w-full rounded border p-2"></label>
-              <label class="text-xs font-semibold">Base unit<select v-model="supplierEdit.baseUnit" class="mt-1 block w-full rounded border p-2"><option value="">Select base unit…</option><option v-if="supplierEdit.baseUnit && !baseUnitOptions.includes(supplierEdit.baseUnit)" :value="supplierEdit.baseUnit" disabled>Current: {{ supplierEdit.baseUnit }} (not in list)</option><option v-for="unit in baseUnitOptions" :key="unit" :value="unit">{{ unit }}</option></select></label>
+              <label class="text-xs font-semibold">Purchasing unit<select v-model="supplierEdit.purchasingUnit" class="mt-1 block w-full rounded border p-2" @change="updateUnitConversion"><option value="">Select unit…</option><option v-if="supplierEdit.purchasingUnit && !purchasingUnitOptions.includes(supplierEdit.purchasingUnit)" :value="supplierEdit.purchasingUnit" disabled>Current: {{ supplierEdit.purchasingUnit }} (not in list)</option><option v-for="unit in purchasingUnitOptions" :key="unit" :value="unit">{{ unit }}</option></select></label>
+              <label v-if="!sameUnit(supplierEdit.purchasingUnit, supplierEdit.baseUnit)" class="text-xs font-semibold">Base units per purchasing unit<input v-model="supplierEdit.conversionQty" list="hist-conversionQty" type="number" min="0.0001" step="any" class="mt-1 block w-full rounded border p-2"></label>
+              <label class="text-xs font-semibold">Base unit<select v-model="supplierEdit.baseUnit" class="mt-1 block w-full rounded border p-2" @change="updateUnitConversion"><option value="">Select base unit…</option><option v-if="supplierEdit.baseUnit && !baseUnitOptions.includes(supplierEdit.baseUnit)" :value="supplierEdit.baseUnit" disabled>Current: {{ supplierEdit.baseUnit }} (not in list)</option><option v-for="unit in baseUnitOptions" :key="unit" :value="unit">{{ unit }}</option></select></label>
               <datalist v-for="field in ['minStock','minStock10','supplierName','leadDays','moq','conversionQty']" :id="`hist-${field}`" :key="field"><option v-for="value in suggestionsFor(field)" :key="value" :value="value" /></datalist>
-            </fieldset><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p>
+            </fieldset><p v-if="sameUnit(supplierEdit.purchasingUnit, supplierEdit.baseUnit)" class="mt-3 text-xs text-slate-600">One {{ supplierEdit.baseUnit }} per {{ supplierEdit.purchasingUnit }}. MOQ is the minimum number of units, not a pack size.</p><p v-else class="mt-3 text-xs text-slate-600">Verify the conversion against the supplier's actual packaging before saving.</p><p v-if="selected.unitIssue" role="alert" class="mt-2 text-xs text-red-700">{{ selected.unitIssue }} Set the conversion to 1 after checking the units.</p><button v-if="selected.unitIssue && sameUnit(supplierEdit.purchasingUnit, supplierEdit.baseUnit)" type="button" class="mt-2 rounded border px-3 py-1 text-xs font-bold" @click="supplierEdit.conversionQty = 1">Use conversion 1</button><details v-if="selected.historyUnitReviews?.length" class="mt-3 rounded bg-slate-50 p-3 text-xs"><summary class="cursor-pointer font-bold">{{ selected.historyUnitReviews.length }} historical unit conversion(s) to review</summary><p class="mt-1">Identical units have a conversion other than 1. Historical records remain unchanged; verify against the original purchase files.</p><ul class="mt-2 max-h-40 overflow-auto"><li v-for="(record, index) in selected.historyUnitReviews" :key="index">{{ record.purchaseDate }} · {{ record.purchaseNumber }} · {{ record.branch }} · 1 {{ record.purchasingUnit }} = {{ record.conversionQty }} {{ record.baseUnit }}</li></ul></details><label class="mt-3 block text-xs font-semibold">Coverage<select v-model="coverage" class="ml-2 rounded border p-2"><option value="7">7 days</option><option value="10">10 days</option><option value="both">Both</option></select></label><p class="mt-3 text-xs text-slate-600">The selected supplier's lead time is used; when it is not set, the default supplier lead time applies.</p>
               <div class="mt-3 flex flex-wrap gap-2"><button :disabled="productSaving" class="rounded bg-teal-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50" @click="saveProductDetails">{{ productSaving ? 'Saving…' : 'Save product details' }}</button></div><p v-if="productError" role="alert" class="mt-2 text-xs text-red-700">{{ productError }}</p><p v-if="productMessage" role="status" class="mt-2 text-xs text-green-700">{{ productMessage }}</p>
             </section>
-            <div v-if="selected.forecast && selected.history" class="mt-4 h-72"><Line :data="detailChart" :options="{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{tooltip:{mode:'index',intersect:false}},scales:{sales:{position:'left',beginAtZero:true,title:{display:true,text:'Sales / day'}},stock:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'Stock'}}}}" /></div>
-            <p class="mt-2 text-xs text-slate-500">Hover over a date to see all available values. Projected stock starts with Monday stock and subtracts forecast sales each day, assuming no deliveries or transfers; it is not confirmed stock. Snapshot days with observed zero stock are excluded from normal demand; they are observations, not proof of a full-day stockout.</p>
-            <section class="mt-4 rounded-xl border p-4"><h3 class="font-bold">Transparent order calculation</h3><p class="mt-1 text-xs text-slate-600">Protection horizon = supplier lead time + 1-day Tuesday buffer + stock coverage. The purchase-history file never contributes incoming stock.</p>
-              <div class="mt-3 grid gap-3 md:grid-cols-2"><article v-for="entry in [{days:7,label:'7-day coverage',value:selected.recommendation7,max:selected.maximumProjectedStock7},{days:10,label:'10-day coverage',value:selected.recommendation10,max:selected.maximumProjectedStock10}]" :key="entry.days" class="rounded-lg bg-slate-50 p-3"><h4 class="font-bold">{{ entry.label }}</h4><p class="mt-2 text-xs">Demand through lead time + buffer: {{ number(entry.value?.demandDuringLead,2) }} {{ selected.baseUnit }}</p><p class="text-xs">Target coverage demand: {{ number(entry.value?.coverageDemand,2) }} {{ selected.baseUnit }}</p><p class="text-xs">Order up to: {{ number(entry.value?.orderUpTo,2) }} {{ selected.baseUnit }} · stock available Monday: {{ number(selected.reviewStock) }}<span v-if="entry.value?.minimumStock"> · minimum stock floor: {{ number(entry.value.minimumStock) }}</span></p><p class="text-xs">Calculated purchase qty: {{ number(entry.value?.calculatedQty) }} {{ selected.purchasingUnit }}{{ selected.supplier?.moq == null ? '' : ` · MOQ ${number(selected.supplier.moq)}` }}</p><p class="text-xs">Recommended qty: <strong>{{ qtyLabel(selected,entry.value) }}</strong> · maximum projected stock after arrival: {{ number(entry.max) }} {{ selected.baseUnit }}</p></article></div>
-            </section>
-            <section v-if="selected.holidayEvents.length" class="mt-4 rounded-xl border p-4"><h3 class="font-bold">Manual holiday adjustments</h3><p v-for="holiday in selected.holidayEvents" :key="holiday.id" class="mt-1 text-xs">{{ holiday.name }} ({{ holiday.start_date }}–{{ holiday.end_date }}): {{ holiday.adjustmentPct > 0 ? '+' : '' }}{{ number(holiday.adjustmentPct) }}% applied to forecast demand for this outlet only.</p></section>
           </section>
         </div>
       </Transition>

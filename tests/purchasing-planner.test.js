@@ -7,6 +7,53 @@ import {
 } from '../purchasingPlanner.js';
 import { isReorderStockEligible, normalizePurchasingPreferences, summarizeOutletSync } from '../src/utils/purchasingPreferences.js';
 import { useToast } from '../src/composables/useToast.js';
+import { recommendationGroup, unitConversionIssue } from '../src/utils/reorderDecision.js';
+
+test('decision groups follow selected coverage and surface unavailable data', () => {
+  const row = { daysLeft: 20, recommendation7: { orderQty: 0 }, recommendation10: { orderQty: 2 } };
+  assert.equal(recommendationGroup(row, '7', '2026-01-30'), 'Healthy');
+  assert.equal(recommendationGroup(row, '10', '2026-01-30'), 'Reorder Soon');
+  assert.equal(recommendationGroup({ ...row, daysLeft: 2 }, '7', '2026-01-30'), 'Urgent');
+  assert.equal(recommendationGroup({ ...row, recommendation10: null }, 'both', '2026-01-30'), 'Data Issues');
+  assert.equal(recommendationGroup({ ...row, unitIssue: 'Review conversion' }, '7', '2026-01-30'), 'Data Issues');
+});
+
+test('same-unit conversion must be one while MOQ remains independent', () => {
+  assert.equal(unitConversionIssue('BOTOL', 'botol', 1), '');
+  assert.match(unitConversionIssue('BOTOL', 'BOTOL', 6), /equals one/);
+  assert.equal(unitConversionIssue('CARTON', 'CAN', 24), '');
+  const { stock, sales, get } = fixture();
+  assert.throws(() => saveSupplierSettings(stock, { storeId: 's', productId: 'p', supplierName: 'Vendor',
+    moq: 6, purchasingUnit: 'BOTOL', baseUnit: 'BOTOL', conversionQty: 6 }), /equals one/);
+  saveSupplierSettings(stock, { storeId: 's', productId: 'p', supplierName: 'Vendor',
+    moq: 6, purchasingUnit: 'BOTOL', baseUnit: 'BOTOL', conversionQty: 1 });
+  savePurchasingProductSettings(stock, { storeId: 's', productId: 'p', supplier: 'Vendor' });
+  const row = get().rows[0];
+  assert.equal(row.conversionQty, 1);
+  assert.equal(row.supplier.moq, 6);
+  assert.equal(row.recommendation7.equivalentQty, row.recommendation7.orderQty);
+  stock.prepare("UPDATE purchasing_supplier_settings SET conversion_qty=6").run();
+  const flagged = get().rows[0];
+  assert.match(flagged.unitIssue, /review/);
+  assert.equal(flagged.recommendation7, null);
+  stock.close(); sales.close();
+});
+
+test('historical same-unit conversion discrepancies are reported without changing records', () => {
+  const { stock, sales, get } = fixture();
+  get();
+  stock.prepare("INSERT INTO purchasing_history_imports(id,filename,uploaded_at,uploaded_by) VALUES('i','a.csv','2026-01-01','u')").run();
+  const insert = stock.prepare(`INSERT INTO purchasing_history_records(import_id,source_row,record_hash,purchase_number,purchase_date,branch,
+    supplier_name,category,product_name,unit,po_qty,purchasing_unit,conversion_qty,base_unit,equivalent_qty)
+    VALUES('i',?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  insert.run(1, 'h1', 'PO-1', '2026-01-01', 'Store', 'Vendor', 'Drink', 'Product', 'BOTOL', 6, 'BOTOL', 1, 'BOTOL', 6);
+  insert.run(2, 'h2', 'PO-2', '2026-01-02', 'Store', 'Vendor', 'Drink', 'Product', 'BOTOL', 6, 'BOTOL', 6, 'BOTOL', 36);
+  const records = get().rows[0].historyUnitReviews;
+  assert.equal(records.length, 1);
+  assert.equal(records[0].purchaseNumber, 'PO-2');
+  assert.equal(stock.prepare("SELECT conversion_qty FROM purchasing_history_records WHERE purchase_number='PO-2'").get().conversion_qty, 6);
+  stock.close(); sales.close();
+});
 
 test('loading notifications remain visible until dismissed while other toasts expire', async () => {
   const toast = useToast();

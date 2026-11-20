@@ -1,4 +1,5 @@
 import { ensurePurchasingSchema, isExcludedPurchasingCategory, calculateHolidayWindow } from './purchasingStore.js';
+import { sameUnit, unitConversionIssue } from './src/utils/reorderDecision.js';
 
 const DAY_MS = 86400000;
 const pair = (a, b) => JSON.stringify([a, b]);
@@ -141,6 +142,9 @@ export function saveSupplierSettings(db, input) {
       (moq != null && (!Number.isFinite(moq) || moq < 0 || moq > 1000000000)) ||
       !Number.isFinite(conversionQty) || conversionQty <= 0 || conversionQty > 1000000) {
     throw new Error('Enter a valid supplier, lead time, MOQ and unit conversion.');
+  }
+  if (sameUnit(purchasingUnit, baseUnit) && conversionQty !== 1) {
+    throw new Error(unitConversionIssue(purchasingUnit, baseUnit, conversionQty));
   }
   if (!db.prepare('SELECT 1 FROM store_stocks WHERE store_id=? AND product_id=?').get(storeId, productId)) throw new Error('Product and outlet not found.');
   db.prepare(`INSERT INTO purchasing_supplier_settings(store_id,product_id,supplier_name,lead_days,moq,purchasing_unit,conversion_qty,base_unit,updated_at)
@@ -393,6 +397,15 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     const unitKey = `${record.unit}|${record.conversion}|${record.baseUnit}`;
     if (record.unit && !entry.units.has(unitKey)) entry.units.set(unitKey, { purchasingUnit: record.unit, conversionQty: record.conversion, baseUnit: record.baseUnit, lastDate: record.lastDate });
   }
+  const historyUnitReviews = new Map();
+  for (const record of stockDb.prepare(`SELECT product_name name,purchase_number purchaseNumber,purchase_date purchaseDate,
+      branch,purchasing_unit purchasingUnit,base_unit baseUnit,conversion_qty conversionQty
+    FROM purchasing_history_records WHERE UPPER(TRIM(purchasing_unit))=UPPER(TRIM(base_unit))
+      AND TRIM(purchasing_unit)<>'' AND conversion_qty<>1 ORDER BY purchase_date DESC,id DESC`).all()) {
+    const key = normalizeName(record.name);
+    if (!historyUnitReviews.has(key)) historyUnitReviews.set(key, []);
+    historyUnitReviews.get(key).push(record);
+  }
   const rows = stocks.map((stock) => {
     const key = pair(stock.storeId, stock.productId);
     const orderHistory = historyOptions.get(normalizeName(stock.productName || stock.productVariant));
@@ -406,7 +419,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
         !(snapshotByKey.get(key)?.has(date) && snapshotByKey.get(key).get(date) != null && Number(snapshotByKey.get(key).get(date)) <= 0));
     const syncedAt = new Date(stock.lastSynced || '');
     const syncedDate = Number.isNaN(syncedAt.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(syncedAt);
-    const reason = isExcludedPurchasingCategory(stock.category) ? 'Excluded category' :
+    let reason = isExcludedPurchasingCategory(stock.category) ? 'Excluded category' :
       !reviewDate || reviewIsStale ? 'No recent Monday stock snapshot' :
         mondayStocks.get(key) == null ? 'Product missing from Monday stock snapshot' :
           syncedDate < reviewDate ? 'Stock not synced since the Monday review' :
@@ -446,6 +459,9 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     const conversionQty = supplier?.conversionQty || 1;
     const purchaseUnit = supplier?.purchasingUnit || stock.default_unit || 'Piece';
     const baseUnit = supplier?.baseUnit || stock.defaultUnit || 'Piece';
+    const unitIssue = sameUnit(purchaseUnit, baseUnit) && conversionQty !== 1
+      ? 'Unit conversion needs review: identical units must have a conversion of 1.' : '';
+    if (!reason && unitIssue) reason = unitIssue;
     const holidayEvents = holidays.filter((holiday) => holiday.end_date >= (reviewDate || today) &&
       holidayAdjustments.has(pair(stock.storeId, holiday.id)))
       .map((holiday) => {
@@ -471,7 +487,7 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
     const holidayConflict = forecast.some((day) => day.conflict);
     const stockAtReview = mondayStocks.get(key) == null ? null : Number(mondayStocks.get(key));
     const expected = (coverageDays) => {
-      if (avgDailyRaw == null || stockAtReview == null) return null;
+      if (avgDailyRaw == null || stockAtReview == null || unitIssue) return null;
       const horizon = leadDays + 1 + coverageDays;
       const demand = forecast.slice(0, horizon);
       if (demand.length < horizon || demand.some((day) => day.qty == null || day.conflict)) return null;
@@ -530,13 +546,16 @@ export function getPurchasingPlanner(stockDb, salesDb, matchStore, today = new I
       hasRecentSales: [...history].some(([date, sale]) => date >= recentSalesStart && date <= today && sale.qty > 0),
       daysLeft, expectedStockoutDate, recommendedReorderDate,
       movement, movementManual: !!preferences.movement_override, lowData: eligible.length < 28 || weekdayAverages.some((value) => value == null),
+      unitIssue,
       usableDays: eligible.length, historyWeeks: settings.historyWeeks,
       minStock: preferences.min_stock ?? null, minStock10: preferences.min_stock_10 ?? null, leadDays,
       belowMinStock: preferences.min_stock != null && stockAtReview != null && stockAtReview < Number(preferences.min_stock),
       movementOverride: preferences.movement_override || null, selectedSupplier: selectedSupplierName,
       supplier, suppliers, purchasingUnit: purchaseUnit,
       historySuppliers: orderHistory ? [...orderHistory.suppliers.values()] : [],
-      historyUnits: orderHistory ? [...orderHistory.units.values()] : [], baseUnit, conversionQty,
+      historyUnits: orderHistory ? [...orderHistory.units.values()] : [],
+      historyUnitReviews: historyUnitReviews.get(normalizeName(stock.productName || stock.productVariant)) || [],
+      baseUnit, conversionQty,
       suggestedMinStock7: recommendation7 ? Math.ceil(recommendation7.forecastOrderUpTo) : null,
       suggestedMinStock10: recommendation10 ? Math.ceil(recommendation10.forecastOrderUpTo) : null,
       holidayEvents, holidayConflict, forecast, recommendation7, recommendation10,

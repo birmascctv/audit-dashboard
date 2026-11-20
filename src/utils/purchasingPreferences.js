@@ -18,6 +18,7 @@ export function normalizePurchasingPreferences(value, today) {
   return {
     store: typeof input.store === 'string' && input.store.length <= 200 ? input.store : 'all',
     status: choose('status', statuses, 'all'),
+    group: choose('group', ['all', 'Urgent', 'Reorder Soon', 'Healthy', 'Data Issues'], 'all'),
     movement: choose('movement', ['all', 'Fast Moving', 'Slow Moving', 'Unknown'], 'all'),
     search: typeof input.search === 'string' ? input.search.slice(0, 200) : '',
     coverage: choose('coverage', ['7', '10', 'both'], '7'),
