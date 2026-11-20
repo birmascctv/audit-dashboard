@@ -1,4 +1,4 @@
-const statuses = ['all', 'needs-order', 'Critical Stock', 'Low Stock', 'Reorder Required', 'Overstock', 'Sufficient Stock', 'Unknown'];
+import { recommendationStatuses } from './reorderDecision.js';
 
 export function isReorderStockEligible(row) {
   if (row.currentStock == null || !Number.isFinite(Number(row.currentStock))) return false;
@@ -17,8 +17,8 @@ export function normalizePurchasingPreferences(value, today) {
     (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000 < 730;
   return {
     store: typeof input.store === 'string' && input.store.length <= 200 ? input.store : 'all',
-    status: choose('status', statuses, 'all'),
-    group: choose('group', ['all', 'Urgent', 'Reorder Soon', 'Healthy', 'Data Issues'], 'all'),
+    status: recommendationStatuses.includes(input.group) ? input.group
+      : choose('status', ['all', ...recommendationStatuses], 'all'),
     movement: choose('movement', ['all', 'Fast Moving', 'Slow Moving', 'Unknown'], 'all'),
     search: typeof input.search === 'string' ? input.search.slice(0, 200) : '',
     coverage: choose('coverage', ['7', '10', 'both'], '7'),

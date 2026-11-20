@@ -1,3 +1,5 @@
+export const recommendationStatuses = ['Urgent', 'Reorder Soon', 'Healthy', 'Data Issues'];
+
 export function sameUnit(purchasingUnit, baseUnit) {
   const normalize = (value) => String(value || '').trim().toUpperCase();
   return !!normalize(purchasingUnit) && normalize(purchasingUnit) === normalize(baseUnit);
@@ -22,4 +24,8 @@ export function recommendationGroup(row, coverage, today) {
       (needsOrder && row.recommendedReorderDate && row.recommendedReorderDate <= today)) return 'Urgent';
   if (needsOrder || (row.daysLeft != null && row.daysLeft <= 14)) return 'Reorder Soon';
   return 'Healthy';
+}
+
+export function matchesRecommendationStatus(row, status, coverage, today) {
+  return status === 'all' || recommendationGroup(row, coverage, today) === status;
 }

@@ -7,7 +7,7 @@ import {
 } from '../purchasingPlanner.js';
 import { isReorderStockEligible, normalizePurchasingPreferences, summarizeOutletSync } from '../src/utils/purchasingPreferences.js';
 import { useToast } from '../src/composables/useToast.js';
-import { recommendationGroup, unitConversionIssue } from '../src/utils/reorderDecision.js';
+import { matchesRecommendationStatus, recommendationGroup, unitConversionIssue } from '../src/utils/reorderDecision.js';
 
 test('decision groups follow selected coverage and surface unavailable data', () => {
   const row = { daysLeft: 20, recommendation7: { orderQty: 0 }, recommendation10: { orderQty: 2 } };
@@ -16,6 +16,20 @@ test('decision groups follow selected coverage and surface unavailable data', ()
   assert.equal(recommendationGroup({ ...row, daysLeft: 2 }, '7', '2026-01-30'), 'Urgent');
   assert.equal(recommendationGroup({ ...row, recommendation10: null }, 'both', '2026-01-30'), 'Data Issues');
   assert.equal(recommendationGroup({ ...row, unitIssue: 'Review conversion' }, '7', '2026-01-30'), 'Data Issues');
+});
+
+test('status filter matches displayed decision groups for the selected coverage', () => {
+  const rows = [
+    { daysLeft: 2, recommendation7: { orderQty: 1 }, recommendation10: { orderQty: 1 } },
+    { daysLeft: 20, recommendation7: { orderQty: 0 }, recommendation10: { orderQty: 2 } },
+    { daysLeft: 20, recommendation7: null, recommendation10: null },
+  ];
+  const filtered = (status, coverage) => rows.filter((row) => matchesRecommendationStatus(row, status, coverage, '2026-01-30'));
+  assert.deepEqual(filtered('all', '7'), rows);
+  assert.deepEqual(filtered('Urgent', '7'), [rows[0]]);
+  assert.deepEqual(filtered('Healthy', '7'), [rows[1]]);
+  assert.deepEqual(filtered('Reorder Soon', '10'), [rows[1]]);
+  assert.deepEqual(filtered('Data Issues', 'both'), [rows[2]]);
 });
 
 test('same-unit conversion must be one while MOQ remains independent', () => {
@@ -67,16 +81,20 @@ test('loading notifications remain visible until dismissed while other toasts ex
 
 test('saved purchasing preferences restore valid filters and reject invalid dates and options', () => {
   const saved = normalizePurchasingPreferences({
-    store: 's', status: 'needs-order', movement: 'Fast Moving', search: 'IPA',
+    store: 's', status: 'Urgent', movement: 'Fast Moving', search: 'IPA',
     coverage: 'both', sort: 'product', historyStart: '2026-01-01', historyEnd: '2026-01-25',
   }, '2026-01-30');
   assert.deepEqual(saved.range, { historyStart: '2026-01-01', historyEnd: '2026-01-25' });
   assert.equal(saved.coverage, 'both');
   assert.equal(saved.store, 's');
+  assert.equal(saved.status, 'Urgent');
   const invalid = normalizePurchasingPreferences({ coverage: '20', status: 'bad', historyStart: '2026-02-31', historyEnd: '2026-03-01' }, '2026-03-01');
   assert.equal(invalid.coverage, '7');
   assert.equal(invalid.status, 'all');
   assert.equal(invalid.range, null);
+  assert.equal(normalizePurchasingPreferences({ status: 'Low Stock' }, '2026-01-30').status, 'all');
+  assert.equal(normalizePurchasingPreferences({ status: 'needs-order', group: 'Reorder Soon' }, '2026-01-30').status, 'Reorder Soon');
+  assert.equal(normalizePurchasingPreferences({ status: 'Healthy', group: 'all' }, '2026-01-30').status, 'Healthy');
 });
 
 test('outlet sync ages identify missing, future, and older product observations', () => {

@@ -7,7 +7,7 @@ import { useAuth } from '../composables/useAuth.js';
 import PurchasingHistoryUpload from '../components/PurchasingHistoryUpload.vue';
 import { isReorderStockEligible, normalizePurchasingPreferences } from '../utils/purchasingPreferences.js';
 import { useToast } from '../composables/useToast.js';
-import { recommendationGroup, sameUnit, unitConversionIssue } from '../utils/reorderDecision.js';
+import { matchesRecommendationStatus, recommendationGroup, recommendationStatuses, sameUnit, unitConversionIssue } from '../utils/reorderDecision.js';
 
 const { currentUser } = useAuth();
 const toast = useToast();
@@ -50,7 +50,6 @@ let clockTimer;
 const page = ref(1);
 const selected = ref(null);
 const detailTab = ref('overview');
-const groupFilter = ref('all');
 const chartSeries = ref({ projected: true, actualSales: false, forecastSales: false, observed: false });
 const settingsOpen = ref(false);
 const settingsDraft = ref({});
@@ -118,7 +117,6 @@ const detailError = ref('');
 const detailLoading = ref(false);
 let detailRequestId = 0;
 let holidayForecastRequestId = 0;
-const statuses = ['Critical Stock', 'Low Stock', 'Reorder Required', 'Overstock', 'Sufficient Stock', 'Unknown'];
 const outletName = (name, id) => id === 'birmas-nomadic' ? 'Nomadic' : String(name || '').replace(/^birmas\s+/i, '').trim();
 
 const stores = computed(() => {
@@ -133,11 +131,10 @@ const baseRows = computed(() => data.value.rows.filter((row) =>
   (storeFilter.value === 'all' || row.storeId === storeFilter.value) &&
   (movementFilter.value === 'all' || row.movement === movementFilter.value) &&
   `${row.productName || row.product || ''} ${row.productVariant || ''} ${row.sku || ''}`.toLowerCase().includes(productSearch.value.trim().toLowerCase())));
-const groups = ['Urgent', 'Reorder Soon', 'Healthy', 'Data Issues'];
+const groups = recommendationStatuses;
 const groupFor = (row) => recommendationGroup(row, coverage.value, data.value.today);
 const filteredRows = computed(() => baseRows.value.filter((row) =>
-  (groupFilter.value === 'all' || groupFor(row) === groupFilter.value) &&
-  (statusFilter.value === 'all' || (statusFilter.value === 'needs-order' ? needsOrder(row) : row.status === statusFilter.value))));
+  matchesRecommendationStatus(row, statusFilter.value, coverage.value, data.value.today)));
 const rows = computed(() => [...filteredRows.value].sort((a, b) => {
   const groupPriority = groups.indexOf(groupFor(a)) - groups.indexOf(groupFor(b));
   if (groupPriority) return groupPriority;
@@ -181,8 +178,8 @@ const qtyLabel = (row, recommendation) => {
   const unit = row.purchasingUnit || 'Piece';
   return quantity > 0 ? `${number(quantity)} ${unit}` : 'No order';
 };
-watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage, groupFilter], () => { page.value = 1; });
-watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage, groupFilter, holidayStoreFilter], () => {
+watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage], () => { page.value = 1; });
+watch([storeFilter, statusFilter, movementFilter, productSearch, sortMode, coverage, holidayStoreFilter], () => {
   if (!filterReady || rangeLoading.value) return;
   if (filterNotice == null) filterNotice = startNotice('Updating filters…');
   clearTimeout(filterTimer);
@@ -334,7 +331,6 @@ async function resetFilters() {
   }
   storeFilter.value = 'all';
   statusFilter.value = 'all';
-  groupFilter.value = 'all';
   movementFilter.value = 'all';
   productSearch.value = '';
   coverage.value = '7';
@@ -350,7 +346,7 @@ function savePreferences() {
   preferenceError.value = '';
   try {
     localStorage.setItem(preferenceKey(), JSON.stringify({
-      store: storeFilter.value, status: statusFilter.value, group: groupFilter.value, movement: movementFilter.value,
+      store: storeFilter.value, status: statusFilter.value, movement: movementFilter.value,
       search: productSearch.value, coverage: coverage.value, sort: sortMode.value,
       ...appliedRange.value,
     }));
@@ -360,7 +356,7 @@ function savePreferences() {
 }
 
 // The last used filters are remembered automatically; the sales range is saved once applied.
-watch([storeFilter, statusFilter, groupFilter, movementFilter, productSearch, coverage, sortMode, appliedRange], savePreferences, { deep: true });
+watch([storeFilter, statusFilter, movementFilter, productSearch, coverage, sortMode, appliedRange], savePreferences, { deep: true });
 
 function restorePreferences() {
   try {
@@ -370,7 +366,6 @@ function restorePreferences() {
     const saved = normalizePurchasingPreferences(JSON.parse(raw), today);
     storeFilter.value = saved.store;
     statusFilter.value = saved.status;
-    groupFilter.value = saved.group;
     movementFilter.value = saved.movement;
     productSearch.value = saved.search;
     coverage.value = saved.coverage;
@@ -650,15 +645,15 @@ onUnmounted(() => {
 
       <template v-if="tab === 'recommendations'">
         <section class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <button v-for="group in groups" :key="group" type="button" class="rounded-xl border p-4 text-left focus-visible:outline focus-visible:outline-2" :class="[badgeClass(group), groupFilter === group ? 'ring-2 ring-slate-600' : '']" :aria-pressed="groupFilter === group" @click="groupFilter = groupFilter === group ? 'all' : group; statusFilter = 'all'"><span class="text-sm font-bold">{{ group }}</span><span class="mt-1 block text-2xl font-extrabold tabular-nums">{{ groupCounts[group] }}</span></button>
+          <button v-for="group in groups" :key="group" type="button" class="rounded-xl border p-4 text-left focus-visible:outline focus-visible:outline-2" :class="[badgeClass(group), statusFilter === group ? 'ring-2 ring-slate-600' : '']" :aria-pressed="statusFilter === group" @click="statusFilter = statusFilter === group ? 'all' : group"><span class="text-sm font-bold">{{ group }}</span><span class="mt-1 block text-2xl font-extrabold tabular-nums">{{ groupCounts[group] }}</span></button>
         </section>
         <section class="space-y-3 rounded-xl border bg-white p-4">
           <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <label class="text-xs font-bold">Search product<input v-model="productSearch" list="purchasing-product-list" type="search" placeholder="Type or pick a product ( / )" class="mt-1 block w-full rounded-lg border p-2 font-normal"><datalist id="purchasing-product-list"><option v-for="name in productNames" :key="name" :value="name" /></datalist></label>
             <label class="text-xs font-bold">Outlet<select v-model="storeFilter" class="mt-1 block w-full rounded-lg border p-2"><option value="all">All outlets</option><option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option></select></label>
-            <label class="text-xs font-bold">Status<select v-model="statusFilter" class="mt-1 block w-full rounded-lg border p-2"><option value="all">All statuses</option><option value="needs-order">Reorder required</option><option v-for="status in statuses" :key="status">{{ status }}</option></select></label>
-            <label class="text-xs font-bold">Movement<select v-model="movementFilter" class="mt-1 block w-full rounded-lg border p-2"><option value="all">Fast & slow</option><option>Fast Moving</option><option>Slow Moving</option><option>Unknown</option></select></label>
-            <label class="text-xs font-bold">Sort<select v-model="sortMode" class="mt-1 block w-full rounded-lg border p-2"><option value="urgent">Most urgent</option><option value="product">Product A–Z</option></select></label>
+            <label class="text-xs font-bold">Status<select v-model="statusFilter" class="mt-1 block w-full rounded-lg border p-2"><option value="all">All statuses</option><option v-for="status in groups" :key="status">{{ status }}</option></select></label>
+            <label class="text-xs font-bold">Movement<select v-model="movementFilter" class="mt-1 block w-full rounded-lg border p-2"><option value="all">All movement</option><option>Fast Moving</option><option>Slow Moving</option><option>Unknown</option></select></label>
+            <label class="text-xs font-bold">Sort within status<select v-model="sortMode" class="mt-1 block w-full rounded-lg border p-2"><option value="urgent">Most urgent</option><option value="product">Product A–Z</option></select></label>
             <fieldset class="text-xs font-bold"><legend>Coverage</legend><div class="mt-1 flex rounded-lg border p-1"><button v-for="item in [{value:'7',label:'7 days'},{value:'10',label:'10 days'},{value:'both',label:'Both'}]" :key="item.value" type="button" class="flex-1 rounded px-2 py-1.5" :class="coverage === item.value ? 'bg-teal-700 text-white' : 'text-slate-700'" :aria-pressed="coverage === item.value" @click="coverage = item.value">{{ item.label }}</button></div></fieldset>
           </div>
           <form class="flex flex-wrap items-end gap-2 border-t pt-3" @submit.prevent="applyRange">
@@ -804,7 +799,7 @@ onUnmounted(() => {
           <tbody>
             <tr v-for="row in rows" :key="`${row.storeId}-${row.productId}`">
               <td>{{ row.productName || row.product }}<br>{{ outletName(row.store,row.storeId) }}</td>
-              <td>{{ row.status }}<span v-if="row.reason"><br>{{ row.reason }}</span></td>
+              <td>{{ groupFor(row) }}<span v-if="row.reason"><br>{{ row.reason }}</span></td>
               <td>{{ number(row.currentStock) }} / {{ number(row.reviewStock) }}</td>
               <td>{{ number(row.avgDaily) }}</td>
               <td>{{ dateLabel(row.recommendedReorderDate) }}<br>{{ dayLabel(row.daysLeft) }}</td>
