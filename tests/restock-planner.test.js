@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { canAccessRestock, getRestockPlanner, DEFAULT_RESTOCK_SETTINGS, validateRestockConfig } from '../restockPlanner.js';
+import { canAccessPurchasing } from '../src/utils/purchasingAccess.js';
 
 function fixture() {
   const stock = new DatabaseSync(':memory:');
@@ -87,6 +88,14 @@ test('planner access is limited to Bertha even for superadmins', () => {
   assert.equal(canAccessRestock({ userId: 'other', role: 'superadmin' }), false);
   assert.equal(canAccessRestock({ userId: 'other', role: 'owner' }), false);
   assert.equal(canAccessRestock({ userId: 'other', role: 'admin' }), false);
+  assert.equal(canAccessRestock({ userId: 'user-superadmin', role: 'superadmin' }), false);
+});
+
+test('purchasing access is limited to Bertha and the superadmin account', () => {
+  assert.equal(canAccessPurchasing('user-bertha'), true);
+  assert.equal(canAccessPurchasing('user-superadmin'), true);
+  assert.equal(canAccessPurchasing('other'), false);
+  assert.equal(canAccessPurchasing(undefined), false);
 });
 
 test('weekday forecast and occasion adjustments change periodic order-up-to quantities', () => {

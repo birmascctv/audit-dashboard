@@ -9,6 +9,7 @@ import EsbAnalyticsView from '../views/EsbAnalyticsView.vue';
 import RestockPlannerView from '../views/RestockPlannerView.vue';
 import LoginView from '../views/LoginView.vue';
 import { isSessionExpired } from '../services/authFetch.js';
+import { canAccessPurchasing } from '../utils/purchasingAccess.js';
 
 const routes = [
   {
@@ -132,7 +133,7 @@ router.beforeEach((to, from, next) => {
     return next('/store-audit');
   }
 
-  if (to.meta?.restockAccess && user?.id !== 'user-bertha') {
+  if (to.meta?.restockAccess && !canAccessPurchasing(user?.id)) {
     return next(userRole === 'admin' ? '/sales' : userRole === 'crew' ? '/stock-audit-crew' : '/store-audit');
   }
 

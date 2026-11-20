@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue';
 import { getAuthToken, setAuthToken, isSessionExpired } from '../services/authFetch.js';
+import { canAccessPurchasing } from '../utils/purchasingAccess.js';
 
 const AUTH_STORAGE_KEY = 'birmas_audit_session_v4';
 
@@ -11,7 +12,7 @@ export const DEFAULT_ACCOUNTS = [
     name: 'Super Admin',
     role: 'superadmin',
     roleLabel: 'Super Admin',
-    accessScope: 'Store Audit, Audit Records & Sales Report',
+    accessScope: 'Store Audit, Audit Records, Sales Report & Purchasing',
   },
   {
     id: 'user-admin',
@@ -119,7 +120,7 @@ export function useAuth() {
   const canAccessCrewPage = computed(() => ['owner', 'crew'].includes(role.value));
   const canAccessAuditRecords = computed(() => ['auditor', 'superadmin', 'owner'].includes(role.value));
   const canAccessSalesReport = computed(() => ['admin', 'superadmin', 'owner'].includes(role.value));
-  const canAccessRestockPlanner = computed(() => currentUser.value?.id === 'user-bertha');
+  const canAccessRestockPlanner = computed(() => canAccessPurchasing(currentUser.value?.id));
 
   return {
     currentUser,

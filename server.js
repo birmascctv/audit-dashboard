@@ -14,6 +14,7 @@ import * as stockPeriodCsv from './stockPeriodCsv.js';
 import * as stockPeriodCsvStore from './stockPeriodCsvStore.js';
 import { captureStockSnapshot, ensureStockSnapshots, recordStockSnapshotStatus } from './stockSnapshots.js';
 import { getRestockPlanner, canAccessRestock, DEFAULT_RESTOCK_SETTINGS, validateRestockConfig } from './restockPlanner.js';
+import { canAccessPurchasing } from './src/utils/purchasingAccess.js';
 import {
   getPurchasingPlanner, savePurchasingProductSettings, savePurchasingSettings,
   saveSupplierSettings, savePurchasingHoliday,
@@ -2922,7 +2923,7 @@ async function startServer() {
   });
 
   app.get('/api/purchasing', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       const sqlite = db.getDb();
       ensureStockSnapshots(sqlite);
@@ -2938,7 +2939,7 @@ async function startServer() {
   });
 
   app.get('/api/purchasing/product-details', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       const storeId = String(req.query.storeId || '');
       const productId = String(req.query.productId || '');
@@ -2956,7 +2957,7 @@ async function startServer() {
   });
 
   app.get('/api/purchasing/holiday-forecast', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       const storeId = String(req.query.storeId || '');
       const holidayId = Number(req.query.holidayId);
@@ -2994,7 +2995,7 @@ async function startServer() {
   });
 
   app.put('/api/purchasing/product-settings', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       savePurchasingProductSettings(db.getDb(), req.body || {});
       res.json({ success: true });
@@ -3004,13 +3005,13 @@ async function startServer() {
   });
 
   app.put('/api/purchasing/settings', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try { res.json({ success: true, settings: savePurchasingSettings(db.getDb(), req.body || {}) }); }
     catch (err) { res.status(400).json({ success: false, error: err.message }); }
   });
 
   app.put('/api/purchasing/supplier', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       saveSupplierSettings(db.getDb(), req.body || {});
       if (req.body?.selected) savePurchasingProductSettings(db.getDb(), {
@@ -3021,24 +3022,24 @@ async function startServer() {
   });
 
   app.put('/api/purchasing/order-quantity', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     res.status(410).json({ success: false, error: 'Order quantities are calculated automatically and cannot be edited.' });
   });
 
   app.post('/api/purchasing/holidays', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try { res.json({ success: true, id: savePurchasingHoliday(db.getDb(), req.body || {}) }); }
     catch (err) { res.status(400).json({ success: false, error: err.message }); }
   });
 
   app.put('/api/purchasing/holidays/:id', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try { res.json({ success: true, id: savePurchasingHoliday(db.getDb(), { ...req.body, id: Number(req.params.id) }) }); }
     catch (err) { res.status(400).json({ success: false, error: err.message }); }
   });
 
   app.delete('/api/purchasing/holidays/:id', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       if (!deletePurchasingHoliday(db.getDb(), Number(req.params.id))) return res.status(404).json({ success: false, error: 'Holiday not found.' });
       res.json({ success: true });
@@ -3046,7 +3047,7 @@ async function startServer() {
   });
 
   app.put('/api/purchasing/holiday-adjustment', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       saveHolidayAdjustment(db.getDb(), req.body || {});
       res.json({ success: true });
@@ -3054,7 +3055,7 @@ async function startServer() {
   });
 
   app.post('/api/purchasing/history/import', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       const result = insertPurchaseHistoryRows(db.getDb(), {
         importId: req.body?.importId, filename: req.body?.filename, fileSize: req.body?.fileSize,
@@ -3070,7 +3071,7 @@ async function startServer() {
   }
 
   app.put('/api/purchasing/history/:id/archive/:index', express.raw({ type: 'application/octet-stream', limit: '1mb' }), (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       if (!canWritePurchaseArchive(db.getDb(), req.params.id, req.authUser)) return res.status(403).json({ success: false, error: 'Only the uploader can archive this import.' });
       if (!/^(0|[1-9]\d*)$/.test(req.params.index)) throw new Error('Invalid archive chunk index.');
@@ -3080,7 +3081,7 @@ async function startServer() {
   });
 
   app.post('/api/purchasing/history/:id/archive/complete', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       if (!canWritePurchaseArchive(db.getDb(), req.params.id, req.authUser)) return res.status(403).json({ success: false, error: 'Only the uploader can archive this import.' });
       finishPurchaseArchive(db.getDb(), req.params.id, req.body?.byteLength, req.body?.chunkCount);
@@ -3089,13 +3090,13 @@ async function startServer() {
   });
 
   app.get('/api/purchasing/history/imports', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try { res.json({ success: true, imports: listPurchaseHistoryImports(db.getDb()) }); }
     catch (err) { res.status(500).json({ success: false, error: err.message }); }
   });
 
   app.get('/api/purchasing/history/report', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       res.json({ success: true, ...getPurchaseHistoryReport(db.getDb(), {
         startDate: String(req.query.startDate || ''), endDate: String(req.query.endDate || ''), offset: Number(req.query.offset || 0),
@@ -3104,7 +3105,7 @@ async function startServer() {
   });
 
   app.get('/api/purchasing/history/:id/original', (req, res) => {
-    if (!canAccessRestock(req.authUser)) return res.status(403).json({ success: false, error: 'Access denied.' });
+    if (!canAccessPurchasing(req.authUser?.userId)) return res.status(403).json({ success: false, error: 'Access denied.' });
     try {
       const sqlite = db.getDb();
       const archive = sqlite.prepare(`SELECT filename,archive_byte_length byteLength,archive_chunk_count chunkCount
